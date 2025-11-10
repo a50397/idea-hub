@@ -1,0 +1,32 @@
+{
+  "name": "idea-hub",
+  "version": "1.0.0",
+  "description": "IdeaHub - Internal improvement ideas management platform",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "npm run dev --workspace=backend",
+    "dev:frontend": "npm run dev --workspace=frontend",
+    "build": "npm run build --workspace=backend && npm run build --workspace=frontend",
+    "build:backend": "npm run build --workspace=backend",
+    "build:frontend": "npm run build --workspace=frontend",
+    "test": "npm run test --workspace=backend",
+    "prisma:generate": "npm run prisma:generate --workspace=backend",
+    "prisma:migrate": "npm run prisma:migrate --workspace=backend",
+    "prisma:seed": "npm run prisma:seed --workspace=backend",
+    "docker:build": "docker-compose build",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "docker:logs": "docker-compose logs -f"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

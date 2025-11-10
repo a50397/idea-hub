@@ -1,0 +1,24 @@
+node_modules
+dist
+.env
+.env.local
+.git
+.gitignore
+*.log
+.DS_Store
+coverage
+.vscode
+.idea
+
+# Exclude compiled TypeScript files from source
+src/**/*.d.ts
+!src/vite-env.d.ts
+src/**/*.d.ts.map
+src/**/*.js
+src/**/*.js.map
+
+# Exclude compiled vite config
+vite.config.js
+vite.config.js.map
+vite.config.d.ts
+vite.config.d.ts.map

@@ -1,0 +1,16 @@
+node_modules
+dist
+.env
+.env.local
+.git
+.gitignore
+*.log
+.DS_Store
+coverage
+.vscode
+.idea
+
+# Exclude compiled files
+*.d.ts
+*.d.ts.map
+*.js.map

@@ -1,0 +1,28 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Roboto', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.page-container {
+  padding: 24px;
+}
+
+.page-title {
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  height: 100%;
+}
+
+.chart-container {
+  padding: 16px;
+  min-height: 300px;
+}

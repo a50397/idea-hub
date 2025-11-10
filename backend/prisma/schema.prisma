@@ -1,0 +1,104 @@
+// Prisma schema for IdeaHub
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  POWER_USER
+  ADMIN
+}
+
+enum IdeaStatus {
+  SUBMITTED
+  APPROVED
+  IN_PROGRESS
+  DONE
+  REJECTED
+}
+
+enum Effort {
+  LESS_THAN_ONE_DAY
+  ONE_TO_THREE_DAYS
+  MORE_THAN_THREE_DAYS
+}
+
+enum EventType {
+  SUBMITTED
+  APPROVED
+  REJECTED
+  CLAIMED
+  STARTED
+  COMPLETED
+  UPDATED
+  CHANGE_REQUESTED
+}
+
+model User {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(USER)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  submittedIdeas Idea[]      @relation("SubmittedIdeas")
+  approvedIdeas  Idea[]      @relation("ApprovedIdeas")
+  assignedIdeas  Idea[]      @relation("AssignedIdeas")
+  events         IdeaEvent[] @relation("EventUser")
+
+  @@map("users")
+}
+
+model Idea {
+  id          String     @id @default(auto()) @map("_id") @db.ObjectId
+  title       String
+  description String
+  benefits    String
+  effort      Effort
+  status      IdeaStatus @default(SUBMITTED)
+  tags        String[]
+
+  submitterId String @db.ObjectId
+  submitter   User   @relation("SubmittedIdeas", fields: [submitterId], references: [id])
+
+  approverId String? @db.ObjectId
+  approver   User?   @relation("ApprovedIdeas", fields: [approverId], references: [id])
+
+  assigneeId String? @db.ObjectId
+  assignee   User?   @relation("AssignedIdeas", fields: [assigneeId], references: [id])
+
+  submittedAt  DateTime  @default(now())
+  approvedAt   DateTime?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  rejectedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  // Relations
+  events IdeaEvent[]
+
+  @@map("ideas")
+}
+
+model IdeaEvent {
+  id        String    @id @default(auto()) @map("_id") @db.ObjectId
+  ideaId    String    @db.ObjectId
+  idea      Idea      @relation(fields: [ideaId], references: [id], onDelete: Cascade)
+  type      EventType
+  byUserId  String    @db.ObjectId
+  byUser    User      @relation("EventUser", fields: [byUserId], references: [id])
+  timestamp DateTime  @default(now())
+  note      String?
+
+  @@map("idea_events")
+}
