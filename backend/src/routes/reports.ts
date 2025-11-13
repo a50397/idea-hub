@@ -80,37 +80,172 @@ router.get('/summary', requireAuth, async (req, res) => {
 // Get monthly trend data
 router.get('/monthly-trend', requireAuth, async (req, res) => {
   try {
-    const ideas = await prisma.idea.findMany({
-      where: {
-        status: IdeaStatus.DONE,
-        completedAt: {
-          not: null,
-        },
-      },
+    const allIdeas = await prisma.idea.findMany({
       select: {
+        status: true,
+        submittedAt: true,
+        approvedAt: true,
+        rejectedAt: true,
         completedAt: true,
       },
     });
 
-    // Group by month
-    const monthlyData: { [key: string]: number } = {};
-    ideas.forEach((idea) => {
+    // Group by month for each status
+    const submittedData: { [key: string]: number } = {};
+    const approvedData: { [key: string]: number } = {};
+    const rejectedData: { [key: string]: number } = {};
+    const completedData: { [key: string]: number } = {};
+
+    allIdeas.forEach((idea) => {
+      // Track submitted ideas by month
+      if (idea.submittedAt) {
+        const monthKey = `${idea.submittedAt.getFullYear()}-${String(
+          idea.submittedAt.getMonth() + 1
+        ).padStart(2, '0')}`;
+        submittedData[monthKey] = (submittedData[monthKey] || 0) + 1;
+      }
+
+      // Track approved ideas by month
+      if (idea.approvedAt) {
+        const monthKey = `${idea.approvedAt.getFullYear()}-${String(
+          idea.approvedAt.getMonth() + 1
+        ).padStart(2, '0')}`;
+        approvedData[monthKey] = (approvedData[monthKey] || 0) + 1;
+      }
+
+      // Track rejected ideas by month
+      if (idea.rejectedAt) {
+        const monthKey = `${idea.rejectedAt.getFullYear()}-${String(
+          idea.rejectedAt.getMonth() + 1
+        ).padStart(2, '0')}`;
+        rejectedData[monthKey] = (rejectedData[monthKey] || 0) + 1;
+      }
+
+      // Track completed ideas by month
       if (idea.completedAt) {
         const monthKey = `${idea.completedAt.getFullYear()}-${String(
           idea.completedAt.getMonth() + 1
         ).padStart(2, '0')}`;
-        monthlyData[monthKey] = (monthlyData[monthKey] || 0) + 1;
+        completedData[monthKey] = (completedData[monthKey] || 0) + 1;
       }
     });
 
+    // Get all unique months
+    const allMonths = new Set([
+      ...Object.keys(submittedData),
+      ...Object.keys(approvedData),
+      ...Object.keys(rejectedData),
+      ...Object.keys(completedData),
+    ]);
+
     // Convert to array and sort
-    const trend = Object.entries(monthlyData)
-      .map(([month, count]) => ({ month, count }))
-      .sort((a, b) => a.month.localeCompare(b.month));
+    const trend = Array.from(allMonths)
+      .sort((a, b) => a.localeCompare(b))
+      .map((month) => ({
+        month,
+        submitted: submittedData[month] || 0,
+        approved: approvedData[month] || 0,
+        rejected: rejectedData[month] || 0,
+        completed: completedData[month] || 0,
+      }));
 
     res.json(trend);
   } catch (error) {
     console.error('Error fetching monthly trend:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get weekly trend data
+router.get('/weekly-trend', requireAuth, async (req, res) => {
+  try {
+    const allIdeas = await prisma.idea.findMany({
+      select: {
+        status: true,
+        submittedAt: true,
+        approvedAt: true,
+        rejectedAt: true,
+        completedAt: true,
+      },
+    });
+
+    // Helper function to get week key (ISO week format: YYYY-Www)
+    function getWeekKey(date: Date): string {
+      // Create a copy of the date using local time (not UTC)
+      const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+      // ISO 8601 week date: weeks start on Monday
+      // Set to nearest Thursday (current date + 4 - current day number)
+      // Make Sunday's day number 7
+      const dayNum = d.getDay() === 0 ? 7 : d.getDay();
+      d.setDate(d.getDate() + 4 - dayNum);
+
+      // Get year based on the Thursday
+      const yearOfThursday = d.getFullYear();
+
+      // Get first day of that year
+      const yearStart = new Date(yearOfThursday, 0, 1);
+
+      // Calculate the week number
+      const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+
+      return `${yearOfThursday}-W${String(weekNo).padStart(2, '0')}`;
+    }
+
+    // Group by week for each status
+    const submittedData: { [key: string]: number } = {};
+    const approvedData: { [key: string]: number } = {};
+    const rejectedData: { [key: string]: number } = {};
+    const completedData: { [key: string]: number } = {};
+
+    allIdeas.forEach((idea) => {
+      // Track submitted ideas by week
+      if (idea.submittedAt) {
+        const weekKey = getWeekKey(idea.submittedAt);
+        submittedData[weekKey] = (submittedData[weekKey] || 0) + 1;
+      }
+
+      // Track approved ideas by week
+      if (idea.approvedAt) {
+        const weekKey = getWeekKey(idea.approvedAt);
+        approvedData[weekKey] = (approvedData[weekKey] || 0) + 1;
+      }
+
+      // Track rejected ideas by week
+      if (idea.rejectedAt) {
+        const weekKey = getWeekKey(idea.rejectedAt);
+        rejectedData[weekKey] = (rejectedData[weekKey] || 0) + 1;
+      }
+
+      // Track completed ideas by week
+      if (idea.completedAt) {
+        const weekKey = getWeekKey(idea.completedAt);
+        completedData[weekKey] = (completedData[weekKey] || 0) + 1;
+      }
+    });
+
+    // Get all unique weeks
+    const allWeeks = new Set([
+      ...Object.keys(submittedData),
+      ...Object.keys(approvedData),
+      ...Object.keys(rejectedData),
+      ...Object.keys(completedData),
+    ]);
+
+    // Convert to array and sort
+    const trend = Array.from(allWeeks)
+      .sort((a, b) => a.localeCompare(b))
+      .map((week) => ({
+        week,
+        submitted: submittedData[week] || 0,
+        approved: approvedData[week] || 0,
+        rejected: rejectedData[week] || 0,
+        completed: completedData[week] || 0,
+      }));
+
+    res.json(trend);
+  } catch (error) {
+    console.error('Error fetching weekly trend:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

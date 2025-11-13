@@ -99,6 +99,14 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Install backend dependencies
+        working-directory: ./backend
+        run: npm install
+
+      - name: Generate Prisma Client
+        working-directory: ./backend
+        run: npx prisma generate
+
       - name: Check TypeScript (Backend)
         working-directory: ./backend
         run: npx tsc --noEmit

@@ -1,7 +1,7 @@
 <template>
   <v-container fluid class="page-container">
-    <h1 class="text-h4 page-title">Approved Ideas</h1>
-    <p class="text-subtitle-1 mb-4">Pick an idea to work on!</p>
+    <h1 class="text-h4 page-title">{{ t('approvedIdeas.title') }}</h1>
+    <p class="text-subtitle-1 mb-4">{{ t('approvedIdeas.description') }}</p>
 
     <v-row v-if="loading">
       <v-col cols="12" class="text-center">
@@ -20,14 +20,14 @@
                 @click="claimIdea(idea.id)"
                 :loading="claimingId === idea.id"
               >
-                Claim & Start
+                {{ t('approvedIdeas.claimAndStart') }}
               </v-btn>
             </template>
           </IdeaCard>
         </v-col>
       </v-row>
       <v-alert v-else type="info">
-        No approved ideas available. Check back later!
+        {{ t('approvedIdeas.noIdeas') }}
       </v-alert>
     </div>
 
@@ -40,12 +40,14 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { ideasApi } from '../api/ideas';
 import { IdeaStatus } from '../types';
 import type { Idea } from '../types';
 import IdeaCard from '../components/IdeaCard.vue';
 
 const router = useRouter();
+const { t } = useI18n();
 const loading = ref(true);
 const ideas = ref<Idea[]>([]);
 const claimingId = ref<string | null>(null);
@@ -72,12 +74,12 @@ async function claimIdea(id: string) {
   claimingId.value = id;
   try {
     await ideasApi.claim(id);
-    snackbarText.value = 'Idea claimed successfully! Good luck!';
+    snackbarText.value = t('approvedIdeas.claimSuccess');
     snackbarColor.value = 'success';
     snackbar.value = true;
     await loadIdeas();
   } catch (error: any) {
-    snackbarText.value = error.response?.data?.error || 'Failed to claim idea';
+    snackbarText.value = error.response?.data?.error || t('approvedIdeas.claimError');
     snackbarColor.value = 'error';
     snackbar.value = true;
   } finally {

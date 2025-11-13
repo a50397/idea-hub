@@ -1,5 +1,5 @@
 import client from './client';
-import type { DashboardSummary, MonthlyTrend, TopContributor, Idea, IdeaStatus } from '../types';
+import type { DashboardSummary, MonthlyTrend, WeeklyTrend, TopContributor, Idea, IdeaStatus } from '../types';
 
 export const reportsApi = {
   getSummary: async (): Promise<DashboardSummary> => {
@@ -9,6 +9,11 @@ export const reportsApi = {
 
   getMonthlyTrend: async (): Promise<MonthlyTrend[]> => {
     const response = await client.get('/reports/monthly-trend');
+    return response.data;
+  },
+
+  getWeeklyTrend: async (): Promise<WeeklyTrend[]> => {
+    const response = await client.get('/reports/weekly-trend');
     return response.data;
   },
 

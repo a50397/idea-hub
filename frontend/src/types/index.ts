@@ -117,7 +117,18 @@ export interface DashboardSummary {
 
 export interface MonthlyTrend {
   month: string;
-  count: number;
+  submitted: number;
+  approved: number;
+  rejected: number;
+  completed: number;
+}
+
+export interface WeeklyTrend {
+  week: string;
+  submitted: number;
+  approved: number;
+  rejected: number;
+  completed: number;
 }
 
 export interface TopContributor {

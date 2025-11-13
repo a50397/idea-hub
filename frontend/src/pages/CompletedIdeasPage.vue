@@ -1,6 +1,6 @@
 <template>
   <v-container fluid class="page-container">
-    <h1 class="text-h4 page-title">Completed Ideas</h1>
+    <h1 class="text-h4 page-title">{{ t('completedIdeas.title') }}</h1>
 
     <v-row v-if="loading">
       <v-col cols="12" class="text-center">
@@ -15,7 +15,7 @@
         </v-col>
       </v-row>
       <v-alert v-else type="info">
-        No completed ideas yet. Keep working!
+        {{ t('completedIdeas.noIdeas') }}
       </v-alert>
     </div>
   </v-container>
@@ -24,12 +24,14 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { ideasApi } from '../api/ideas';
 import { IdeaStatus } from '../types';
 import type { Idea } from '../types';
 import IdeaCard from '../components/IdeaCard.vue';
 
 const router = useRouter();
+const { t } = useI18n();
 const loading = ref(true);
 const ideas = ref<Idea[]>([]);
 

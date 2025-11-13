@@ -1,12 +1,12 @@
 <template>
   <v-container fluid class="page-container">
-    <h1 class="text-h4 page-title">User Management</h1>
+    <h1 class="text-h4 page-title">{{ t('users.title') }}</h1>
 
     <v-card>
       <v-card-title class="d-flex align-center">
-        <span class="flex-grow-1">Users</span>
+        <span class="flex-grow-1">{{ t('users.users') }}</span>
         <v-btn @click="showCreateDialog" color="primary" prepend-icon="mdi-plus">
-          Create User
+          {{ t('users.createUser') }}
         </v-btn>
       </v-card-title>
       <v-card-text>
@@ -28,13 +28,13 @@
           </template>
           <template v-slot:item.role="{ item }">
             <v-chip :color="getRoleColor(item.role)" size="small">
-              {{ item.role }}
+              {{ t(`roles.${item.role}`) }}
             </v-chip>
           </template>
           <template v-slot:item.stats="{ item }">
             <div class="text-caption">
-              <div>{{ item._count?.submittedIdeas || 0 }} submitted</div>
-              <div>{{ item._count?.assignedIdeas || 0 }} assigned</div>
+              <div>{{ item._count?.submittedIdeas || 0 }} {{ t('users.submitted') }}</div>
+              <div>{{ item._count?.assignedIdeas || 0 }} {{ t('users.assigned') }}</div>
             </div>
           </template>
           <template v-slot:item.actions="{ item }">
@@ -58,32 +58,32 @@
 
     <v-dialog v-model="createDialog" max-width="500">
       <v-card>
-        <v-card-title>Create User</v-card-title>
+        <v-card-title>{{ t('users.createUser') }}</v-card-title>
         <v-card-text>
           <v-form>
             <v-text-field
               v-model="formData.name"
-              label="Name *"
+              :label="t('users.name') + ' *'"
               variant="outlined"
               :error-messages="formErrors.name"
             ></v-text-field>
             <v-text-field
               v-model="formData.email"
-              label="Email *"
+              :label="t('users.email') + ' *'"
               type="email"
               variant="outlined"
               :error-messages="formErrors.email"
             ></v-text-field>
             <v-text-field
               v-model="formData.password"
-              label="Password *"
+              :label="t('users.password') + ' *'"
               type="password"
               variant="outlined"
               :error-messages="formErrors.password"
             ></v-text-field>
             <v-select
               v-model="formData.role"
-              label="Role *"
+              :label="t('users.role') + ' *'"
               :items="roleOptions"
               variant="outlined"
             ></v-select>
@@ -91,9 +91,9 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn @click="createDialog = false">Cancel</v-btn>
+          <v-btn @click="createDialog = false">{{ t('common.cancel') }}</v-btn>
           <v-btn color="primary" @click="createUser" :loading="saving">
-            Create
+            {{ t('common.submit') }}
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -101,32 +101,32 @@
 
     <v-dialog v-model="editDialog" max-width="500">
       <v-card>
-        <v-card-title>Edit User</v-card-title>
+        <v-card-title>{{ t('users.editUser') }}</v-card-title>
         <v-card-text>
           <v-form>
             <v-text-field
               v-model="formData.name"
-              label="Name"
+              :label="t('users.name')"
               variant="outlined"
               :error-messages="formErrors.name"
             ></v-text-field>
             <v-text-field
               v-model="formData.email"
-              label="Email"
+              :label="t('users.email')"
               type="email"
               variant="outlined"
               :error-messages="formErrors.email"
             ></v-text-field>
             <v-text-field
               v-model="formData.password"
-              label="New Password (leave blank to keep current)"
+              :label="t('users.password')"
               type="password"
               variant="outlined"
               :error-messages="formErrors.password"
             ></v-text-field>
             <v-select
               v-model="formData.role"
-              label="Role"
+              :label="t('users.role')"
               :items="roleOptions"
               variant="outlined"
             ></v-select>
@@ -134,9 +134,9 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn @click="editDialog = false">Cancel</v-btn>
+          <v-btn @click="editDialog = false">{{ t('common.cancel') }}</v-btn>
           <v-btn color="primary" @click="updateUser" :loading="saving">
-            Update
+            {{ t('common.save') }}
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -144,15 +144,15 @@
 
     <v-dialog v-model="deleteDialog" max-width="400">
       <v-card>
-        <v-card-title>Delete User</v-card-title>
+        <v-card-title>{{ t('common.delete') }}</v-card-title>
         <v-card-text>
-          Are you sure you want to delete <strong>{{ selectedUser?.name }}</strong>?
+          {{ t('users.deleteConfirm') }}
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn @click="deleteDialog = false">Cancel</v-btn>
+          <v-btn @click="deleteDialog = false">{{ t('common.cancel') }}</v-btn>
           <v-btn color="error" @click="deleteUser" :loading="deleting">
-            Delete
+            {{ t('common.delete') }}
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -165,10 +165,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue';
+import { ref, reactive, onMounted, computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { usersApi } from '../api/users';
 import { Role } from '../types';
 import type { UserWithCounts } from '../types';
+
+const { t } = useI18n();
 
 const loading = ref(false);
 const saving = ref(false);
@@ -195,19 +198,19 @@ const formErrors = reactive({
   password: [] as string[],
 });
 
-const roleOptions = [
-  { title: 'User', value: Role.USER },
-  { title: 'Power User', value: Role.POWER_USER },
-  { title: 'Admin', value: Role.ADMIN },
-];
+const roleOptions = computed(() => [
+  { title: t('roles.USER'), value: Role.USER },
+  { title: t('roles.POWER_USER'), value: Role.POWER_USER },
+  { title: t('roles.ADMIN'), value: Role.ADMIN },
+]);
 
-const headers = [
-  { title: 'Name', key: 'name', sortable: true },
-  { title: 'Email', key: 'email', sortable: true },
-  { title: 'Role', key: 'role', sortable: true },
-  { title: 'Stats', key: 'stats', sortable: false },
-  { title: 'Actions', key: 'actions', sortable: false },
-];
+const headers = computed(() => [
+  { title: t('users.name'), key: 'name', sortable: true },
+  { title: t('users.email'), key: 'email', sortable: true },
+  { title: t('users.role'), key: 'role', sortable: true },
+  { title: t('users.stats'), key: 'stats', sortable: false },
+  { title: t('users.actions'), key: 'actions', sortable: false },
+]);
 
 async function loadUsers() {
   loading.value = true;
@@ -215,6 +218,9 @@ async function loadUsers() {
     users.value = await usersApi.getAll();
   } catch (error) {
     console.error('Error loading users:', error);
+    snackbarText.value = t('users.loadError');
+    snackbarColor.value = 'error';
+    snackbar.value = true;
   } finally {
     loading.value = false;
   }
@@ -245,17 +251,17 @@ function validateForm(isCreate: boolean): boolean {
   let valid = true;
 
   if (!formData.name) {
-    formErrors.name.push('Name is required');
+    formErrors.name.push(t('auth.emailRequired')); // Note: reusing existing translation
     valid = false;
   }
 
   if (!formData.email) {
-    formErrors.email.push('Email is required');
+    formErrors.email.push(t('auth.emailRequired'));
     valid = false;
   }
 
   if (isCreate && !formData.password) {
-    formErrors.password.push('Password is required');
+    formErrors.password.push(t('auth.passwordRequired'));
     valid = false;
   }
 
@@ -278,13 +284,13 @@ async function createUser() {
       password: formData.password,
       role: formData.role,
     });
-    snackbarText.value = 'User created successfully!';
+    snackbarText.value = t('users.createSuccess');
     snackbarColor.value = 'success';
     snackbar.value = true;
     createDialog.value = false;
     await loadUsers();
   } catch (error: any) {
-    snackbarText.value = error.response?.data?.error || 'Failed to create user';
+    snackbarText.value = error.response?.data?.error || t('users.createError');
     snackbarColor.value = 'error';
     snackbar.value = true;
   } finally {
@@ -308,13 +314,13 @@ async function updateUser() {
     }
 
     await usersApi.update(selectedUser.value.id, updateData);
-    snackbarText.value = 'User updated successfully!';
+    snackbarText.value = t('users.updateSuccess');
     snackbarColor.value = 'success';
     snackbar.value = true;
     editDialog.value = false;
     await loadUsers();
   } catch (error: any) {
-    snackbarText.value = error.response?.data?.error || 'Failed to update user';
+    snackbarText.value = error.response?.data?.error || t('users.updateError');
     snackbarColor.value = 'error';
     snackbar.value = true;
   } finally {
@@ -328,13 +334,13 @@ async function deleteUser() {
   deleting.value = true;
   try {
     await usersApi.delete(selectedUser.value.id);
-    snackbarText.value = 'User deleted successfully';
+    snackbarText.value = t('users.deleteSuccess');
     snackbarColor.value = 'success';
     snackbar.value = true;
     deleteDialog.value = false;
     await loadUsers();
   } catch (error: any) {
-    snackbarText.value = error.response?.data?.error || 'Failed to delete user';
+    snackbarText.value = error.response?.data?.error || t('users.deleteError');
     snackbarColor.value = 'error';
     snackbar.value = true;
   } finally {

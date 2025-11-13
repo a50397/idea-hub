@@ -1,7 +1,7 @@
 <template>
   <v-container fluid class="page-container">
-    <h1 class="text-h4 page-title">Review Queue</h1>
-    <p class="text-subtitle-1 mb-4">Review and approve or reject submitted ideas</p>
+    <h1 class="text-h4 page-title">{{ t('reviewQueue.title') }}</h1>
+    <p class="text-subtitle-1 mb-4">{{ t('reviewQueue.description') }}</p>
 
     <v-row v-if="loading">
       <v-col cols="12" class="text-center">
@@ -16,21 +16,21 @@
             <v-card-title>{{ idea.title }}</v-card-title>
             <v-card-subtitle>
               <v-chip size="small" variant="outlined" class="mr-2">
-                {{ effortLabels[idea.effort] }}
+                {{ t(`effort.${idea.effort}`) }}
               </v-chip>
-              <span>Submitted by {{ idea.submitter.name }} on {{ formatDate(idea.submittedAt) }}</span>
+              <span>{{ t('reviewQueue.submittedBy') }} {{ idea.submitter.name }} {{ t('reviewQueue.on') }} {{ formatDate(idea.submittedAt) }}</span>
             </v-card-subtitle>
             <v-card-text>
               <div class="mb-3">
-                <strong>Description:</strong>
+                <strong>{{ t('reviewQueue.description') }}:</strong>
                 <p>{{ idea.description }}</p>
               </div>
               <div class="mb-3">
-                <strong>Benefits:</strong>
+                <strong>{{ t('reviewQueue.benefits') }}:</strong>
                 <p>{{ idea.benefits }}</p>
               </div>
               <div v-if="idea.tags.length">
-                <strong>Tags:</strong>
+                <strong>{{ t('reviewQueue.tags') }}:</strong>
                 <v-chip v-for="tag in idea.tags" :key="tag" size="small" class="mr-1 mt-1">
                   {{ tag }}
                 </v-chip>
@@ -43,7 +43,7 @@
                 @click="showApproveDialog(idea)"
                 prepend-icon="mdi-check"
               >
-                Approve
+                {{ t('reviewQueue.approveButton') }}
               </v-btn>
               <v-btn
                 color="error"
@@ -51,38 +51,38 @@
                 @click="showRejectDialog(idea)"
                 prepend-icon="mdi-close"
               >
-                Reject
+                {{ t('reviewQueue.rejectButton') }}
               </v-btn>
               <v-spacer></v-spacer>
               <v-btn @click="viewIdea(idea.id)">
-                View Full Details
+                {{ t('reviewQueue.viewFullDetails') }}
               </v-btn>
             </v-card-actions>
           </v-card>
         </v-col>
       </v-row>
       <v-alert v-else type="info">
-        No ideas pending review. Great job keeping up!
+        {{ t('reviewQueue.noIdeas') }}
       </v-alert>
     </div>
 
     <v-dialog v-model="approveDialog" max-width="500">
       <v-card>
-        <v-card-title>Approve Idea</v-card-title>
+        <v-card-title>{{ t('reviewQueue.approveDialogTitle') }}</v-card-title>
         <v-card-text>
-          <p class="mb-4">Approve "{{ selectedIdea?.title }}"?</p>
+          <p class="mb-4">{{ t('reviewQueue.approveDialogMessage', { title: selectedIdea?.title }) }}</p>
           <v-textarea
             v-model="reviewNote"
-            label="Approval notes (optional)"
+            :label="t('reviewQueue.approvalNotes')"
             variant="outlined"
             rows="3"
           ></v-textarea>
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn @click="approveDialog = false">Cancel</v-btn>
+          <v-btn @click="approveDialog = false">{{ t('common.cancel') }}</v-btn>
           <v-btn color="success" @click="approveIdea" :loading="processing">
-            Approve
+            {{ t('reviewQueue.approveButton') }}
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -90,21 +90,21 @@
 
     <v-dialog v-model="rejectDialog" max-width="500">
       <v-card>
-        <v-card-title>Reject Idea</v-card-title>
+        <v-card-title>{{ t('reviewQueue.rejectDialogTitle') }}</v-card-title>
         <v-card-text>
-          <p class="mb-4">Reject "{{ selectedIdea?.title }}"?</p>
+          <p class="mb-4">{{ t('reviewQueue.rejectDialogMessage', { title: selectedIdea?.title }) }}</p>
           <v-textarea
             v-model="reviewNote"
-            label="Rejection reason (recommended)"
+            :label="t('reviewQueue.rejectionReason')"
             variant="outlined"
             rows="3"
           ></v-textarea>
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn @click="rejectDialog = false">Cancel</v-btn>
+          <v-btn @click="rejectDialog = false">{{ t('common.cancel') }}</v-btn>
           <v-btn color="error" @click="rejectIdea" :loading="processing">
-            Reject
+            {{ t('reviewQueue.rejectButton') }}
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -119,11 +119,13 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { ideasApi } from '../api/ideas';
-import { IdeaStatus, effortLabels } from '../types';
+import { IdeaStatus } from '../types';
 import type { Idea } from '../types';
 
 const router = useRouter();
+const { t } = useI18n();
 const loading = ref(true);
 const ideas = ref<Idea[]>([]);
 const approveDialog = ref(false);
@@ -173,13 +175,13 @@ async function approveIdea() {
   processing.value = true;
   try {
     await ideasApi.approve(selectedIdea.value.id, { note: reviewNote.value });
-    snackbarText.value = 'Idea approved successfully!';
+    snackbarText.value = t('reviewQueue.approveSuccess');
     snackbarColor.value = 'success';
     snackbar.value = true;
     approveDialog.value = false;
     await loadIdeas();
   } catch (error: any) {
-    snackbarText.value = error.response?.data?.error || 'Failed to approve idea';
+    snackbarText.value = error.response?.data?.error || t('reviewQueue.approveError');
     snackbarColor.value = 'error';
     snackbar.value = true;
   } finally {
@@ -193,13 +195,13 @@ async function rejectIdea() {
   processing.value = true;
   try {
     await ideasApi.reject(selectedIdea.value.id, { note: reviewNote.value });
-    snackbarText.value = 'Idea rejected';
+    snackbarText.value = t('reviewQueue.rejectSuccess');
     snackbarColor.value = 'info';
     snackbar.value = true;
     rejectDialog.value = false;
     await loadIdeas();
   } catch (error: any) {
-    snackbarText.value = error.response?.data?.error || 'Failed to reject idea';
+    snackbarText.value = error.response?.data?.error || t('reviewQueue.rejectError');
     snackbarColor.value = 'error';
     snackbar.value = true;
   } finally {

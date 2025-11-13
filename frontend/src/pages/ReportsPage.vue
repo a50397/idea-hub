@@ -1,15 +1,15 @@
 <template>
   <v-container fluid class="page-container">
-    <h1 class="text-h4 page-title">Reports</h1>
+    <h1 class="text-h4 page-title">{{ t('reports.title') }}</h1>
 
     <v-card class="mb-4">
-      <v-card-title>Filters</v-card-title>
+      <v-card-title>{{ t('reports.filters') }}</v-card-title>
       <v-card-text>
         <v-row>
           <v-col cols="12" md="3">
             <v-select
               v-model="filters.status"
-              label="Status"
+              :label="t('reports.status')"
               :items="statusOptions"
               clearable
               variant="outlined"
@@ -19,7 +19,7 @@
           <v-col cols="12" md="3">
             <v-text-field
               v-model="filters.startDate"
-              label="Start Date"
+              :label="t('reports.startDate')"
               type="date"
               variant="outlined"
               density="compact"
@@ -28,7 +28,7 @@
           <v-col cols="12" md="3">
             <v-text-field
               v-model="filters.endDate"
-              label="End Date"
+              :label="t('reports.endDate')"
               type="date"
               variant="outlined"
               density="compact"
@@ -36,10 +36,10 @@
           </v-col>
           <v-col cols="12" md="3" class="d-flex align-center">
             <v-btn @click="applyFilters" color="primary" class="mr-2">
-              Apply
+              {{ t('reports.apply') }}
             </v-btn>
             <v-btn @click="resetFilters" variant="outlined">
-              Reset
+              {{ t('common.reset') }}
             </v-btn>
           </v-col>
         </v-row>
@@ -50,14 +50,14 @@
       <v-col cols="12">
         <v-card>
           <v-card-title class="d-flex align-center">
-            <span class="flex-grow-1">Filtered Results ({{ ideas.length }})</span>
+            <span class="flex-grow-1">{{ t('reports.filteredResults', { count: ideas.length }) }}</span>
             <v-btn
               @click="exportCSV"
               color="success"
               prepend-icon="mdi-download"
               :loading="exporting"
             >
-              Export CSV
+              {{ t('reports.exportCSV') }}
             </v-btn>
           </v-card-title>
           <v-card-text>
@@ -78,12 +78,12 @@
               </template>
               <template v-slot:item.status="{ item }">
                 <v-chip :color="statusColors[item.status]" size="small">
-                  {{ statusLabels[item.status] }}
+                  {{ t(`status.${item.status}`) }}
                 </v-chip>
               </template>
               <template v-slot:item.effort="{ item }">
                 <v-chip size="small" variant="outlined">
-                  {{ effortLabels[item.effort] }}
+                  {{ t(`effort.${item.effort}`) }}
                 </v-chip>
               </template>
               <template v-slot:item.submitter="{ item }">
@@ -111,13 +111,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue';
+import { ref, reactive, onMounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { reportsApi } from '../api/reports';
-import { IdeaStatus, statusLabels, statusColors, effortLabels } from '../types';
+import { IdeaStatus, statusColors } from '../types';
 import type { Idea } from '../types';
 
 const router = useRouter();
+const { t } = useI18n();
 const loading = ref(false);
 const exporting = ref(false);
 const ideas = ref<Idea[]>([]);
@@ -131,20 +133,20 @@ const filters = reactive({
   endDate: '',
 });
 
-const statusOptions = Object.values(IdeaStatus).map((status) => ({
-  title: statusLabels[status],
+const statusOptions = computed(() => Object.values(IdeaStatus).map((status) => ({
+  title: t(`status.${status}`),
   value: status,
-}));
+})));
 
-const headers = [
-  { title: 'Title', key: 'title', sortable: true },
-  { title: 'Status', key: 'status', sortable: true },
-  { title: 'Effort', key: 'effort', sortable: true },
-  { title: 'Submitter', key: 'submitter', sortable: true },
-  { title: 'Assignee', key: 'assignee', sortable: true },
-  { title: 'Submitted', key: 'submittedAt', sortable: true },
-  { title: 'Duration (days)', key: 'duration', sortable: true },
-];
+const headers = computed(() => [
+  { title: t('reports.tableHeaders.title'), key: 'title', sortable: true },
+  { title: t('reports.tableHeaders.status'), key: 'status', sortable: true },
+  { title: t('reports.tableHeaders.effort'), key: 'effort', sortable: true },
+  { title: t('reports.tableHeaders.submitter'), key: 'submitter', sortable: true },
+  { title: t('reports.tableHeaders.assignee'), key: 'assignee', sortable: true },
+  { title: t('reports.tableHeaders.submitted'), key: 'submittedAt', sortable: true },
+  { title: t('reports.tableHeaders.duration'), key: 'duration', sortable: true },
+]);
 
 async function applyFilters() {
   loading.value = true;
@@ -157,7 +159,7 @@ async function applyFilters() {
     ideas.value = await reportsApi.getFiltered(filterParams);
   } catch (error) {
     console.error('Error applying filters:', error);
-    snackbarText.value = 'Failed to load filtered data';
+    snackbarText.value = t('reports.loadError');
     snackbarColor.value = 'error';
     snackbar.value = true;
   } finally {
@@ -188,12 +190,12 @@ async function exportCSV() {
     link.click();
     window.URL.revokeObjectURL(url);
 
-    snackbarText.value = 'Report exported successfully!';
+    snackbarText.value = t('reports.exportSuccess');
     snackbarColor.value = 'success';
     snackbar.value = true;
   } catch (error) {
     console.error('Error exporting CSV:', error);
-    snackbarText.value = 'Failed to export report';
+    snackbarText.value = t('reports.exportError');
     snackbarColor.value = 'error';
     snackbar.value = true;
   } finally {

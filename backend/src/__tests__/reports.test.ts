@@ -174,9 +174,27 @@ describe('Reports API', () => {
 
       expect(response.status).toBe(200);
       expect(Array.isArray(response.body)).toBe(true);
-      expect(response.body).toContainEqual({ month: '2024-01', count: 2 });
-      expect(response.body).toContainEqual({ month: '2024-02', count: 3 });
-      expect(response.body).toContainEqual({ month: '2024-03', count: 1 });
+      expect(response.body).toContainEqual({ 
+        month: '2024-01', 
+        submitted: 0, 
+        approved: 0, 
+        rejected: 0, 
+        completed: 2 
+      });
+      expect(response.body).toContainEqual({ 
+        month: '2024-02', 
+        submitted: 0, 
+        approved: 0, 
+        rejected: 0, 
+        completed: 3 
+      });
+      expect(response.body).toContainEqual({ 
+        month: '2024-03', 
+        submitted: 0, 
+        approved: 0, 
+        rejected: 0, 
+        completed: 1 
+      });
     });
 
     test('should return empty array when no completed ideas', async () => {

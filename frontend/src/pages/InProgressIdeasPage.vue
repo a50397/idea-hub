@@ -1,6 +1,6 @@
 <template>
   <v-container fluid class="page-container">
-    <h1 class="text-h4 page-title">Ideas In Progress</h1>
+    <h1 class="text-h4 page-title">{{ t('inProgressIdeas.title') }}</h1>
 
     <v-row v-if="loading">
       <v-col cols="12" class="text-center">
@@ -19,34 +19,34 @@
                 variant="elevated"
                 @click="showCompleteDialog(idea)"
               >
-                Mark Complete
+                {{ t('inProgressIdeas.markComplete') }}
               </v-btn>
             </template>
           </IdeaCard>
         </v-col>
       </v-row>
       <v-alert v-else type="info">
-        No ideas in progress. Check the approved ideas to start working!
+        {{ t('inProgressIdeas.noIdeas') }}
       </v-alert>
     </div>
 
     <v-dialog v-model="completeDialog" max-width="500">
       <v-card>
-        <v-card-title>Complete Idea</v-card-title>
+        <v-card-title>{{ t('inProgressIdeas.completeDialogTitle') }}</v-card-title>
         <v-card-text>
-          <p class="mb-4">Are you ready to mark this idea as completed?</p>
+          <p class="mb-4">{{ t('inProgressIdeas.completeDialogMessage') }}</p>
           <v-textarea
             v-model="completeNote"
-            label="Completion notes (optional)"
+            :label="t('inProgressIdeas.completionNotes')"
             variant="outlined"
             rows="3"
           ></v-textarea>
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn @click="completeDialog = false">Cancel</v-btn>
+          <v-btn @click="completeDialog = false">{{ t('common.cancel') }}</v-btn>
           <v-btn color="primary" @click="completeIdea" :loading="completing">
-            Complete
+            {{ t('inProgressIdeas.markComplete') }}
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -61,6 +61,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '../stores/auth';
 import { ideasApi } from '../api/ideas';
 import { IdeaStatus } from '../types';
@@ -68,6 +69,7 @@ import type { Idea } from '../types';
 import IdeaCard from '../components/IdeaCard.vue';
 
 const router = useRouter();
+const { t } = useI18n();
 const authStore = useAuthStore();
 const loading = ref(true);
 const ideas = ref<Idea[]>([]);
@@ -106,13 +108,13 @@ async function completeIdea() {
   completing.value = true;
   try {
     await ideasApi.complete(selectedIdea.value.id, { note: completeNote.value });
-    snackbarText.value = 'Idea marked as completed! Great work!';
+    snackbarText.value = t('inProgressIdeas.completeSuccess');
     snackbarColor.value = 'success';
     snackbar.value = true;
     completeDialog.value = false;
     await loadIdeas();
   } catch (error: any) {
-    snackbarText.value = error.response?.data?.error || 'Failed to complete idea';
+    snackbarText.value = error.response?.data?.error || t('inProgressIdeas.completeError');
     snackbarColor.value = 'error';
     snackbar.value = true;
   } finally {
