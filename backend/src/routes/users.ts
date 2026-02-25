@@ -39,7 +39,7 @@ router.get('/', requireRole(Role.ADMIN), async (req, res) => {
 // Get single user (Admin only)
 router.get('/:id', requireRole(Role.ADMIN), async (req, res) => {
   try {
-    const { id } = req.params;
+    const id = req.params.id as string;
 
     const user = await prisma.user.findUnique({
       where: { id },
@@ -117,7 +117,7 @@ router.post('/', requireRole(Role.ADMIN), async (req, res) => {
 // Update user (Admin only)
 router.patch('/:id', requireRole(Role.ADMIN), async (req, res) => {
   try {
-    const { id } = req.params;
+    const id = req.params.id as string;
     const data = updateUserSchema.parse(req.body);
 
     const existingUser = await prisma.user.findUnique({
@@ -172,7 +172,7 @@ router.patch('/:id', requireRole(Role.ADMIN), async (req, res) => {
 // Delete user (Admin only)
 router.delete('/:id', requireRole(Role.ADMIN), async (req, res) => {
   try {
-    const { id } = req.params;
+    const id = req.params.id as string;
 
     const existingUser = await prisma.user.findUnique({
       where: { id },

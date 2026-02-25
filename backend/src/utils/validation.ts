@@ -1,5 +1,8 @@
 import { z } from 'zod';
-import { Effort } from '@prisma/client';
+import { Effort, IdeaStatus } from '@prisma/client';
+
+const ideaStatusEnum = z.nativeEnum(IdeaStatus);
+const objectIdRegex = /^[a-f\d]{24}$/i;
 
 export const loginSchema = z.object({
   email: z.string().email('Invalid email address'),
@@ -38,4 +41,21 @@ export const updateUserSchema = z.object({
   email: z.string().email().optional(),
   password: z.string().min(6).optional(),
   role: z.enum(['USER', 'POWER_USER', 'ADMIN']).optional(),
+});
+
+export const ideasQuerySchema = z.object({
+  status: ideaStatusEnum.optional(),
+  submitterId: z.string().regex(objectIdRegex, 'Invalid submitter ID').optional(),
+  assigneeId: z.string().regex(objectIdRegex, 'Invalid assignee ID').optional(),
+  tags: z.union([z.string(), z.array(z.string())]).optional(),
+});
+
+export const filteredReportQuerySchema = z.object({
+  status: ideaStatusEnum.optional(),
+  submitterId: z.string().regex(objectIdRegex, 'Invalid submitter ID').optional(),
+  assigneeId: z.string().regex(objectIdRegex, 'Invalid assignee ID').optional(),
+  tags: z.union([z.string(), z.array(z.string())]).optional(),
+  startDate: z.string().datetime({ offset: true }).or(z.string().date()).optional(),
+  endDate: z.string().datetime({ offset: true }).or(z.string().date()).optional(),
+  format: z.enum(['json', 'csv']).optional(),
 });

@@ -163,15 +163,33 @@ describe('Ideas API', () => {
 
       mockPrismaFunctions.idea.findMany.mockResolvedValue([]);
 
-      await agent.get('/api/ideas?submitterId=user123');
+      await agent.get('/api/ideas?submitterId=507f1f77bcf86cd799439011');
 
       expect(mockPrismaFunctions.idea.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            submitterId: 'user123',
+            submitterId: '507f1f77bcf86cd799439011',
           }),
         })
       );
+    });
+
+    test('should return 400 for invalid submitterId', async () => {
+      const { agent } = await loginAsUser(app);
+
+      const response = await agent.get('/api/ideas?submitterId=invalid');
+
+      expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty('error');
+    });
+
+    test('should return 400 for invalid status', async () => {
+      const { agent } = await loginAsUser(app);
+
+      const response = await agent.get('/api/ideas?status=INVALID_STATUS');
+
+      expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty('error');
     });
 
     test('should filter ideas by tags', async () => {
