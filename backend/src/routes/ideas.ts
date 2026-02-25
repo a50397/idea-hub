@@ -13,42 +13,58 @@ router.get('/', requireAuth, async (req, res) => {
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.issues[0].message });
     }
-    const query = parsed.data;
+    const data = parsed.data;
+    const page = data.page as number;
+    const limit = data.limit as number;
+    const skip = (page - 1) * limit;
 
     const where: Record<string, unknown> = {};
 
-    if (query.status) {
-      where.status = query.status;
+    if (data.status) {
+      where.status = data.status;
     }
-    if (query.submitterId) {
-      where.submitterId = query.submitterId;
+    if (data.submitterId) {
+      where.submitterId = data.submitterId;
     }
-    if (query.assigneeId) {
-      where.assigneeId = query.assigneeId;
+    if (data.assigneeId) {
+      where.assigneeId = data.assigneeId;
     }
-    if (query.tags) {
+    if (data.tags) {
       where.tags = {
-        hasSome: Array.isArray(query.tags) ? query.tags : [query.tags],
+        hasSome: Array.isArray(data.tags) ? data.tags : [data.tags],
       };
     }
 
-    const ideas = await prisma.idea.findMany({
-      where,
-      include: {
-        submitter: {
-          select: { id: true, name: true, email: true },
+    const [ideas, total] = await Promise.all([
+      prisma.idea.findMany({
+        where,
+        include: {
+          submitter: {
+            select: { id: true, name: true, email: true },
+          },
+          approver: {
+            select: { id: true, name: true, email: true },
+          },
+          assignee: {
+            select: { id: true, name: true, email: true },
+          },
         },
-        approver: {
-          select: { id: true, name: true, email: true },
-        },
-        assignee: {
-          select: { id: true, name: true, email: true },
-        },
-      },
-      orderBy: { submittedAt: 'desc' },
-    });
+        orderBy: { submittedAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      prisma.idea.count({ where }),
+    ]);
 
-    res.json(ideas);
+    res.json({
+      data: ideas,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    });
   } catch (error) {
     console.error('Error fetching ideas:', error);
     res.status(500).json({ error: 'Internal server error' });

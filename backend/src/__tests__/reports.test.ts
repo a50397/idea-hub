@@ -279,18 +279,25 @@ describe('Reports API', () => {
       ];
 
       mockPrismaFunctions.idea.findMany.mockResolvedValue(mockIdeas);
+      mockPrismaFunctions.idea.count.mockResolvedValue(1);
 
       const response = await agent.get('/api/reports/filtered');
 
       expect(response.status).toBe(200);
-      expect(Array.isArray(response.body)).toBe(true);
-      expect(response.body).toHaveLength(1);
+      expect(response.body.data).toHaveLength(1);
+      expect(response.body.pagination).toEqual({
+        page: 1,
+        limit: 20,
+        total: 1,
+        totalPages: 1,
+      });
     });
 
     test('should filter by status', async () => {
       const { agent } = await loginAsUser(app);
 
       mockPrismaFunctions.idea.findMany.mockResolvedValue([]);
+      mockPrismaFunctions.idea.count.mockResolvedValue(0);
 
       await agent.get('/api/reports/filtered?status=APPROVED');
 
@@ -307,6 +314,7 @@ describe('Reports API', () => {
       const { agent } = await loginAsUser(app);
 
       mockPrismaFunctions.idea.findMany.mockResolvedValue([]);
+      mockPrismaFunctions.idea.count.mockResolvedValue(0);
 
       await agent.get('/api/reports/filtered?startDate=2024-01-01&endDate=2024-12-31');
 
@@ -326,6 +334,7 @@ describe('Reports API', () => {
       const { agent } = await loginAsUser(app);
 
       mockPrismaFunctions.idea.findMany.mockResolvedValue([]);
+      mockPrismaFunctions.idea.count.mockResolvedValue(0);
 
       await agent.get('/api/reports/filtered?submitterId=507f1f77bcf86cd799439011');
 
@@ -360,6 +369,7 @@ describe('Reports API', () => {
       const { agent } = await loginAsUser(app);
 
       mockPrismaFunctions.idea.findMany.mockResolvedValue([]);
+      mockPrismaFunctions.idea.count.mockResolvedValue(0);
 
       await agent.get('/api/reports/filtered?tags=automation&tags=productivity');
 
@@ -395,6 +405,7 @@ describe('Reports API', () => {
       ];
 
       mockPrismaFunctions.idea.findMany.mockResolvedValue(mockIdeas);
+      mockPrismaFunctions.idea.count.mockResolvedValue(1);
 
       const response = await agent.get('/api/reports/filtered?format=csv');
 
@@ -429,6 +440,7 @@ describe('Reports API', () => {
       ];
 
       mockPrismaFunctions.idea.findMany.mockResolvedValue(mockIdeas);
+      mockPrismaFunctions.idea.count.mockResolvedValue(1);
 
       const response = await agent.get('/api/reports/filtered?format=csv');
 

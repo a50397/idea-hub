@@ -16,6 +16,7 @@ const mockPrismaFunctions: Record<string, any> = {
     findMany: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
+    count: jest.fn(),
   },
   ideaEvent: {
     create: jest.fn(),

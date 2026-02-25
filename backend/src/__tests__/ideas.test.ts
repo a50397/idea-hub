@@ -13,6 +13,7 @@ const mockPrismaFunctions: Record<string, any> = {
     findUnique: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
+    count: jest.fn(),
   },
   ideaEvent: {
     create: jest.fn(),
@@ -128,12 +129,19 @@ describe('Ideas API', () => {
       ];
 
       mockPrismaFunctions.idea.findMany.mockResolvedValue(mockIdeas);
+      mockPrismaFunctions.idea.count.mockResolvedValue(1);
 
       const response = await agent.get('/api/ideas');
 
       expect(response.status).toBe(200);
-      expect(response.body).toHaveLength(1);
-      expect(response.body[0]).toHaveProperty('title', 'Test Idea 1');
+      expect(response.body.data).toHaveLength(1);
+      expect(response.body.data[0]).toHaveProperty('title', 'Test Idea 1');
+      expect(response.body.pagination).toEqual({
+        page: 1,
+        limit: 20,
+        total: 1,
+        totalPages: 1,
+      });
     });
 
     test('should return 401 when not authenticated', async () => {

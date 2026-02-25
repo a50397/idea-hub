@@ -457,4 +457,48 @@ describe('Validation Schemas', () => {
       expect(result.success).toBe(false);
     });
   });
+
+  describe('Pagination parameters', () => {
+    test('should use default page and limit', () => {
+      const result = ideasQuerySchema.safeParse({});
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.page).toBe(1);
+        expect(result.data.limit).toBe(20);
+      }
+    });
+
+    test('should accept valid page and limit', () => {
+      const result = ideasQuerySchema.safeParse({ page: '2', limit: '50' });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.page).toBe(2);
+        expect(result.data.limit).toBe(50);
+      }
+    });
+
+    test('should reject page less than 1', () => {
+      const result = ideasQuerySchema.safeParse({ page: '0' });
+      expect(result.success).toBe(false);
+    });
+
+    test('should reject limit greater than 100', () => {
+      const result = ideasQuerySchema.safeParse({ limit: '101' });
+      expect(result.success).toBe(false);
+    });
+
+    test('should coerce string numbers to integers', () => {
+      const result = filteredReportQuerySchema.safeParse({ page: '3', limit: '10' });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.page).toBe(3);
+        expect(result.data.limit).toBe(10);
+      }
+    });
+
+    test('should reject non-integer page', () => {
+      const result = ideasQuerySchema.safeParse({ page: '1.5' });
+      expect(result.success).toBe(false);
+    });
+  });
 });
