@@ -1,9 +1,9 @@
 import { Router } from 'express';
-import { PrismaClient, IdeaStatus } from '@prisma/client';
+import { IdeaStatus } from '@prisma/client';
+import prisma from '../lib/prisma';
 import { requireAuth } from '../middleware/auth';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 // Get dashboard summary statistics
 router.get('/summary', requireAuth, async (req, res) => {

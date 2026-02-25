@@ -1,10 +1,10 @@
 import { Router } from 'express';
-import { PrismaClient, IdeaStatus, EventType, Role } from '@prisma/client';
+import { IdeaStatus, EventType, Role } from '@prisma/client';
+import prisma from '../lib/prisma';
 import { requireAuth, requireRole } from '../middleware/auth';
 import { createIdeaSchema, reviewIdeaSchema, updateIdeaSchema } from '../utils/validation';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 // Get all ideas with filters
 router.get('/', requireAuth, async (req, res) => {

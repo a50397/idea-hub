@@ -1,11 +1,10 @@
 import { Router } from 'express';
 import bcrypt from 'bcrypt';
-import { PrismaClient } from '@prisma/client';
+import prisma from '../lib/prisma';
 import { loginSchema } from '../utils/validation';
 import { requireAuth } from '../middleware/auth';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 // Login
 router.post('/login', async (req, res) => {

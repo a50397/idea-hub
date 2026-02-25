@@ -1,11 +1,11 @@
 import { Router } from 'express';
 import bcrypt from 'bcrypt';
-import { PrismaClient, Role } from '@prisma/client';
+import { Role } from '@prisma/client';
+import prisma from '../lib/prisma';
 import { requireRole } from '../middleware/auth';
 import { createUserSchema, updateUserSchema } from '../utils/validation';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 // Get all users (Admin only)
 router.get('/', requireRole(Role.ADMIN), async (req, res) => {
