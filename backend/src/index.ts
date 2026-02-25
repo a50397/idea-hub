@@ -7,11 +7,14 @@ import authRoutes from './routes/auth';
 import ideasRoutes from './routes/ideas';
 import reportsRoutes from './routes/reports';
 import usersRoutes from './routes/users';
+import { ensureAdminExists } from './utils/init-admin';
 
 dotenv.config({ path: '../.env' });
 
 const app = express();
 const PORT = process.env.BACKEND_PORT || 3001;
+
+app.set('trust proxy', 1);
 
 // Middleware
 app.use(
@@ -36,10 +39,10 @@ app.use(
       ttl: 60 * 60 * 24 * 7, // 7 days
     }),
     cookie: {
-      secure: process.env.NODE_ENV === 'production',
+      secure: process.env.COOKIE_SECURE === 'true',
       httpOnly: true,
       maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
-      sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+      sameSite: process.env.COOKIE_SECURE === 'true' ? 'strict' : 'lax',
     },
   })
 );
@@ -68,10 +71,11 @@ app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`🚀 IdeaHub Backend running on port ${PORT}`);
   console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔗 API available at: http://localhost:${PORT}`);
+  await ensureAdminExists();
 });
 
 export default app;

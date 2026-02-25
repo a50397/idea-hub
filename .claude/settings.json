@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx jest:*)",
+      "Bash(npm test:*)",
+      "Bash(git stash:*)",
+      "Bash(git checkout:*)",
+      "Bash(git reset:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(gh pr create:*)",
+      "Bash(GIT_TRACE=1 git push:*)",
+      "Bash(git fetch:*)",
+      "Bash(GIT_TERMINAL_PROMPT=0 git push:*)"
+    ],
+    "additionalDirectories": [
+      "/tmp"
+    ]
+  }
+}

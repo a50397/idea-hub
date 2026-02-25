@@ -1,6 +1,11 @@
 import { PrismaClient, Role, IdeaStatus, Effort, EventType } from '@prisma/client';
 import bcrypt from 'bcrypt';
 
+if (process.env.NODE_ENV === 'production') {
+  console.error('ERROR: Seed script must not be run in production!');
+  process.exit(1);
+}
+
 const prisma = new PrismaClient();
 
 async function main() {
