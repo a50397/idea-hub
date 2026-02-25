@@ -1,13 +1,23 @@
 import { Router } from 'express';
 import bcrypt from 'bcrypt';
+import rateLimit from 'express-rate-limit';
 import prisma from '../lib/prisma';
 import { loginSchema } from '../utils/validation';
 import { requireAuth } from '../middleware/auth';
 
 const router = Router();
 
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'test',
+  message: { error: 'Too many login attempts. Please try again later.' },
+});
+
 // Login
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter as any, async (req, res) => {
   try {
     const { email, password } = loginSchema.parse(req.body);
 
