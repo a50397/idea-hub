@@ -3,14 +3,14 @@
     <v-card-title class="d-flex align-center">
       <span class="flex-grow-1">{{ idea.title }}</span>
       <v-chip :color="statusColors[idea.status]" size="small">
-        {{ statusLabels[idea.status] }}
+        {{ $t(`status.${statusKeyMap[idea.status]}`) }}
       </v-chip>
     </v-card-title>
     <v-card-subtitle>
       <v-chip size="small" variant="outlined" class="mr-2">
-        {{ effortLabels[idea.effort] }}
+        {{ $t(`effort.${effortKeyMap[idea.effort]}`) }}
       </v-chip>
-      <span class="text-caption">Submitted by {{ idea.submitter.name }}</span>
+      <span class="text-caption">{{ $t('ideas.submittedBy') }} {{ idea.submitter.name }}</span>
     </v-card-subtitle>
     <v-card-text>
       <p class="mb-2">{{ truncate(idea.description, 150) }}</p>
@@ -23,11 +23,11 @@
       <div class="text-caption">
         <div v-if="idea.approver">
           <v-icon size="small">mdi-check</v-icon>
-          Approved by {{ idea.approver.name }}
+          {{ $t('ideas.approvedBy') }} {{ idea.approver.name }}
         </div>
         <div v-if="idea.assignee">
           <v-icon size="small">mdi-account</v-icon>
-          Assigned to {{ idea.assignee.name }}
+          {{ $t('ideas.assignedTo') }} {{ idea.assignee.name }}
         </div>
         <div>
           <v-icon size="small">mdi-calendar</v-icon>
@@ -41,7 +41,7 @@
         color="primary"
         @click="$emit('view', idea.id)"
       >
-        View Details
+        {{ $t('ideas.viewDetails') }}
       </v-btn>
       <v-spacer></v-spacer>
       <slot name="actions"></slot>
@@ -50,8 +50,25 @@
 </template>
 
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n';
 import type { Idea } from '../types';
-import { statusLabels, statusColors, effortLabels } from '../types';
+import { IdeaStatus, Effort, statusColors } from '../types';
+
+const { locale } = useI18n();
+
+const statusKeyMap: Record<IdeaStatus, string> = {
+  [IdeaStatus.SUBMITTED]: 'submitted',
+  [IdeaStatus.APPROVED]: 'approved',
+  [IdeaStatus.IN_PROGRESS]: 'inProgress',
+  [IdeaStatus.DONE]: 'done',
+  [IdeaStatus.REJECTED]: 'rejected',
+};
+
+const effortKeyMap: Record<Effort, string> = {
+  [Effort.LESS_THAN_ONE_DAY]: 'lessThanOneDay',
+  [Effort.ONE_TO_THREE_DAYS]: 'oneToThreeDays',
+  [Effort.MORE_THAN_THREE_DAYS]: 'moreThanThreeDays',
+};
 
 defineProps<{
   idea: Idea;
@@ -68,6 +85,7 @@ function truncate(text: string, length: number): string {
 
 function formatDate(dateString: string): string {
   const date = new Date(dateString);
-  return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  const loc = locale.value === 'sk' ? 'sk-SK' : 'en-US';
+  return date.toLocaleDateString(loc, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 </script>

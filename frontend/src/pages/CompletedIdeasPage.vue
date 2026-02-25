@@ -1,6 +1,6 @@
 <template>
   <v-container fluid class="page-container">
-    <h1 class="text-h4 page-title">Completed Ideas</h1>
+    <h1 class="text-h4 page-title">{{ $t('completed.title') }}</h1>
 
     <v-row v-if="loading">
       <v-col cols="12" class="text-center">
@@ -15,7 +15,7 @@
         </v-col>
       </v-row>
       <v-alert v-else type="info">
-        No completed ideas yet. Keep working!
+        {{ $t('completed.noIdeas') }}
       </v-alert>
     </div>
   </v-container>

@@ -1,6 +1,6 @@
 <template>
   <v-container fluid class="page-container">
-    <h1 class="text-h4 page-title">Submit New Idea</h1>
+    <h1 class="text-h4 page-title">{{ $t('ideas.submitTitle') }}</h1>
 
     <v-row>
       <v-col cols="12" md="8">
@@ -9,39 +9,39 @@
             <v-form @submit.prevent="handleSubmit">
               <v-text-field
                 v-model="formData.title"
-                label="Title *"
+                :label="$t('ideas.title') + ' *'"
                 variant="outlined"
                 :error-messages="errors.title"
                 counter="120"
-                hint="5-120 characters"
+                :hint="$t('ideas.titleHint')"
                 persistent-hint
               ></v-text-field>
 
               <v-textarea
                 v-model="formData.description"
-                label="Description *"
+                :label="$t('ideas.description') + ' *'"
                 variant="outlined"
                 :error-messages="errors.description"
                 counter="3000"
                 rows="5"
-                hint="Describe your idea in detail (10-3000 characters)"
+                :hint="$t('ideas.descriptionHint')"
                 persistent-hint
               ></v-textarea>
 
               <v-textarea
                 v-model="formData.benefits"
-                label="Benefits *"
+                :label="$t('ideas.benefits') + ' *'"
                 variant="outlined"
                 :error-messages="errors.benefits"
                 counter="3000"
                 rows="4"
-                hint="What are the expected benefits? (10-3000 characters)"
+                :hint="$t('ideas.benefitsHint')"
                 persistent-hint
               ></v-textarea>
 
               <v-select
                 v-model="formData.effort"
-                label="Estimated Effort *"
+                :label="$t('ideas.effort') + ' *'"
                 :items="effortOptions"
                 variant="outlined"
                 :error-messages="errors.effort"
@@ -49,12 +49,12 @@
 
               <v-combobox
                 v-model="formData.tags"
-                label="Tags (optional)"
+                :label="$t('ideas.tags')"
                 variant="outlined"
                 multiple
                 chips
                 closable-chips
-                hint="Press Enter to add a tag"
+                :hint="$t('ideas.tagsHint')"
                 persistent-hint
               ></v-combobox>
 
@@ -63,7 +63,7 @@
               </v-alert>
 
               <v-alert v-if="submitSuccess" type="success" class="mt-4">
-                Idea submitted successfully!
+                {{ $t('ideas.submitSuccess') }}
               </v-alert>
 
               <div class="mt-4">
@@ -74,14 +74,14 @@
                   :loading="submitting"
                   prepend-icon="mdi-send"
                 >
-                  Submit Idea
+                  {{ $t('ideas.submitIdea') }}
                 </v-btn>
                 <v-btn
                   class="ml-2"
                   @click="resetForm"
                   variant="outlined"
                 >
-                  Reset
+                  {{ $t('common.reset') }}
                 </v-btn>
               </div>
             </v-form>
@@ -91,38 +91,38 @@
 
       <v-col cols="12" md="4">
         <v-card>
-          <v-card-title>Submission Guidelines</v-card-title>
+          <v-card-title>{{ $t('guidelines.title') }}</v-card-title>
           <v-card-text>
             <v-list density="compact">
               <v-list-item>
                 <template v-slot:prepend>
                   <v-icon>mdi-check-circle</v-icon>
                 </template>
-                <v-list-item-title>Be specific and clear</v-list-item-title>
+                <v-list-item-title>{{ $t('guidelines.specific') }}</v-list-item-title>
               </v-list-item>
               <v-list-item>
                 <template v-slot:prepend>
                   <v-icon>mdi-check-circle</v-icon>
                 </template>
-                <v-list-item-title>Focus on the problem</v-list-item-title>
+                <v-list-item-title>{{ $t('guidelines.problem') }}</v-list-item-title>
               </v-list-item>
               <v-list-item>
                 <template v-slot:prepend>
                   <v-icon>mdi-check-circle</v-icon>
                 </template>
-                <v-list-item-title>Explain the benefits</v-list-item-title>
+                <v-list-item-title>{{ $t('guidelines.benefits') }}</v-list-item-title>
               </v-list-item>
               <v-list-item>
                 <template v-slot:prepend>
                   <v-icon>mdi-check-circle</v-icon>
                 </template>
-                <v-list-item-title>Estimate effort realistically</v-list-item-title>
+                <v-list-item-title>{{ $t('guidelines.effort') }}</v-list-item-title>
               </v-list-item>
               <v-list-item>
                 <template v-slot:prepend>
                   <v-icon>mdi-check-circle</v-icon>
                 </template>
-                <v-list-item-title>Add relevant tags</v-list-item-title>
+                <v-list-item-title>{{ $t('guidelines.tags') }}</v-list-item-title>
               </v-list-item>
             </v-list>
           </v-card-text>
@@ -133,15 +133,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from 'vue';
+import { ref, reactive, computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { ideasApi } from '../api/ideas';
-import { Effort, effortLabels } from '../types';
+import { Effort } from '../types';
 
-const effortOptions = [
-  { title: effortLabels[Effort.LESS_THAN_ONE_DAY], value: Effort.LESS_THAN_ONE_DAY },
-  { title: effortLabels[Effort.ONE_TO_THREE_DAYS], value: Effort.ONE_TO_THREE_DAYS },
-  { title: effortLabels[Effort.MORE_THAN_THREE_DAYS], value: Effort.MORE_THAN_THREE_DAYS },
-];
+const { t } = useI18n();
+
+const effortOptions = computed(() => [
+  { title: t('effort.lessThanOneDay'), value: Effort.LESS_THAN_ONE_DAY },
+  { title: t('effort.oneToThreeDays'), value: Effort.ONE_TO_THREE_DAYS },
+  { title: t('effort.moreThanThreeDays'), value: Effort.MORE_THAN_THREE_DAYS },
+]);
 
 const formData = reactive({
   title: '',
@@ -169,28 +172,28 @@ function validateForm(): boolean {
   errors.effort = [];
 
   if (!formData.title || formData.title.length < 5) {
-    errors.title.push('Title must be at least 5 characters');
+    errors.title.push(t('validation.titleMinLength'));
   }
   if (formData.title.length > 120) {
-    errors.title.push('Title must be at most 120 characters');
+    errors.title.push(t('validation.titleMaxLength'));
   }
 
   if (!formData.description || formData.description.length < 10) {
-    errors.description.push('Description must be at least 10 characters');
+    errors.description.push(t('validation.descriptionMinLength'));
   }
   if (formData.description.length > 3000) {
-    errors.description.push('Description must be at most 3000 characters');
+    errors.description.push(t('validation.descriptionMaxLength'));
   }
 
   if (!formData.benefits || formData.benefits.length < 10) {
-    errors.benefits.push('Benefits must be at least 10 characters');
+    errors.benefits.push(t('validation.benefitsMinLength'));
   }
   if (formData.benefits.length > 3000) {
-    errors.benefits.push('Benefits must be at most 3000 characters');
+    errors.benefits.push(t('validation.benefitsMaxLength'));
   }
 
   if (!formData.effort) {
-    errors.effort.push('Effort estimation is required');
+    errors.effort.push(t('validation.effortRequired'));
   }
 
   return !errors.title.length && !errors.description.length && !errors.benefits.length && !errors.effort.length;

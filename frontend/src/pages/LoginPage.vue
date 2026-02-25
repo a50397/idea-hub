@@ -6,13 +6,13 @@
           <v-col cols="12" sm="8" md="4">
             <v-card elevation="12">
               <v-card-title class="text-h4 text-center pa-6 bg-primary">
-                <span class="text-white">IdeaHub</span>
+                <span class="text-white">{{ $t('common.appName') }}</span>
               </v-card-title>
               <v-card-text class="pa-6">
                 <v-form @submit.prevent="handleLogin">
                   <v-text-field
                     v-model="email"
-                    label="Email"
+                    :label="$t('auth.email')"
                     type="email"
                     prepend-inner-icon="mdi-email"
                     variant="outlined"
@@ -22,7 +22,7 @@
 
                   <v-text-field
                     v-model="password"
-                    label="Password"
+                    :label="$t('auth.password')"
                     :type="showPassword ? 'text' : 'password'"
                     prepend-inner-icon="mdi-lock"
                     :append-inner-icon="showPassword ? 'mdi-eye' : 'mdi-eye-off'"
@@ -43,7 +43,7 @@
                     color="primary"
                     :loading="authStore.loading"
                   >
-                    Login
+                    {{ $t('common.login') }}
                   </v-btn>
                 </v-form>
               </v-card-text>
@@ -65,10 +65,12 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '../stores/auth';
 
 const router = useRouter();
 const authStore = useAuthStore();
+const { t } = useI18n();
 
 const email = ref('');
 const password = ref('');
@@ -81,10 +83,10 @@ async function handleLogin() {
   passwordErrors.value = [];
 
   if (!email.value) {
-    emailErrors.value.push('Email is required');
+    emailErrors.value.push(t('auth.emailRequired'));
   }
   if (!password.value) {
-    passwordErrors.value.push('Password is required');
+    passwordErrors.value.push(t('auth.passwordRequired'));
   }
 
   if (emailErrors.value.length || passwordErrors.value.length) {

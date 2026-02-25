@@ -1,7 +1,7 @@
 <template>
   <v-container fluid class="page-container">
-    <h1 class="text-h4 page-title">Review Queue</h1>
-    <p class="text-subtitle-1 mb-4">Review and approve or reject submitted ideas</p>
+    <h1 class="text-h4 page-title">{{ $t('review.title') }}</h1>
+    <p class="text-subtitle-1 mb-4">{{ $t('review.subtitle') }}</p>
 
     <v-row v-if="loading">
       <v-col cols="12" class="text-center">
@@ -16,21 +16,21 @@
             <v-card-title>{{ idea.title }}</v-card-title>
             <v-card-subtitle>
               <v-chip size="small" variant="outlined" class="mr-2">
-                {{ effortLabels[idea.effort] }}
+                {{ $t(`effort.${effortKeyMap[idea.effort]}`) }}
               </v-chip>
-              <span>Submitted by {{ idea.submitter.name }} on {{ formatDate(idea.submittedAt) }}</span>
+              <span>{{ $t('ideas.submittedBy') }} {{ idea.submitter.name }} — {{ formatDate(idea.submittedAt) }}</span>
             </v-card-subtitle>
             <v-card-text>
               <div class="mb-3">
-                <strong>Description:</strong>
+                <strong>{{ $t('ideas.description') }}:</strong>
                 <p>{{ idea.description }}</p>
               </div>
               <div class="mb-3">
-                <strong>Benefits:</strong>
+                <strong>{{ $t('ideas.benefits') }}:</strong>
                 <p>{{ idea.benefits }}</p>
               </div>
               <div v-if="idea.tags.length">
-                <strong>Tags:</strong>
+                <strong>{{ $t('ideas.tags') }}:</strong>
                 <v-chip v-for="tag in idea.tags" :key="tag" size="small" class="mr-1 mt-1">
                   {{ tag }}
                 </v-chip>
@@ -43,7 +43,7 @@
                 @click="showApproveDialog(idea)"
                 prepend-icon="mdi-check"
               >
-                Approve
+                {{ $t('review.approve') }}
               </v-btn>
               <v-btn
                 color="error"
@@ -51,38 +51,38 @@
                 @click="showRejectDialog(idea)"
                 prepend-icon="mdi-close"
               >
-                Reject
+                {{ $t('review.reject') }}
               </v-btn>
               <v-spacer></v-spacer>
               <v-btn @click="viewIdea(idea.id)">
-                View Full Details
+                {{ $t('ideas.viewFullDetails') }}
               </v-btn>
             </v-card-actions>
           </v-card>
         </v-col>
       </v-row>
       <v-alert v-else type="info">
-        No ideas pending review. Great job keeping up!
+        {{ $t('review.noPending') }}
       </v-alert>
     </div>
 
     <v-dialog v-model="approveDialog" max-width="500">
       <v-card>
-        <v-card-title>Approve Idea</v-card-title>
+        <v-card-title>{{ $t('review.approveTitle') }}</v-card-title>
         <v-card-text>
-          <p class="mb-4">Approve "{{ selectedIdea?.title }}"?</p>
+          <p class="mb-4">{{ $t('review.approveConfirm', { title: selectedIdea?.title }) }}</p>
           <v-textarea
             v-model="reviewNote"
-            label="Approval notes (optional)"
+            :label="$t('review.approvalNotes')"
             variant="outlined"
             rows="3"
           ></v-textarea>
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn @click="approveDialog = false">Cancel</v-btn>
+          <v-btn @click="approveDialog = false">{{ $t('common.cancel') }}</v-btn>
           <v-btn color="success" @click="approveIdea" :loading="processing">
-            Approve
+            {{ $t('review.approve') }}
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -90,21 +90,21 @@
 
     <v-dialog v-model="rejectDialog" max-width="500">
       <v-card>
-        <v-card-title>Reject Idea</v-card-title>
+        <v-card-title>{{ $t('review.rejectTitle') }}</v-card-title>
         <v-card-text>
-          <p class="mb-4">Reject "{{ selectedIdea?.title }}"?</p>
+          <p class="mb-4">{{ $t('review.rejectConfirm', { title: selectedIdea?.title }) }}</p>
           <v-textarea
             v-model="reviewNote"
-            label="Rejection reason (recommended)"
+            :label="$t('review.rejectionReason')"
             variant="outlined"
             rows="3"
           ></v-textarea>
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn @click="rejectDialog = false">Cancel</v-btn>
+          <v-btn @click="rejectDialog = false">{{ $t('common.cancel') }}</v-btn>
           <v-btn color="error" @click="rejectIdea" :loading="processing">
-            Reject
+            {{ $t('review.reject') }}
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -119,10 +119,12 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { ideasApi } from '../api/ideas';
-import { IdeaStatus, effortLabels } from '../types';
+import { IdeaStatus, Effort } from '../types';
 import type { Idea } from '../types';
 
+const { t, locale } = useI18n();
 const router = useRouter();
 const loading = ref(true);
 const ideas = ref<Idea[]>([]);
@@ -134,6 +136,12 @@ const selectedIdea = ref<Idea | null>(null);
 const snackbar = ref(false);
 const snackbarText = ref('');
 const snackbarColor = ref('success');
+
+const effortKeyMap: Record<Effort, string> = {
+  [Effort.LESS_THAN_ONE_DAY]: 'lessThanOneDay',
+  [Effort.ONE_TO_THREE_DAYS]: 'oneToThreeDays',
+  [Effort.MORE_THAN_THREE_DAYS]: 'moreThanThreeDays',
+};
 
 async function loadIdeas() {
   loading.value = true;
@@ -152,7 +160,8 @@ function viewIdea(id: string) {
 
 function formatDate(dateString: string): string {
   const date = new Date(dateString);
-  return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  const loc = locale.value === 'sk' ? 'sk-SK' : 'en-US';
+  return date.toLocaleDateString(loc, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 function showApproveDialog(idea: Idea) {
@@ -173,7 +182,7 @@ async function approveIdea() {
   processing.value = true;
   try {
     await ideasApi.approve(selectedIdea.value.id, { note: reviewNote.value });
-    snackbarText.value = 'Idea approved successfully!';
+    snackbarText.value = t('review.approveSuccess');
     snackbarColor.value = 'success';
     snackbar.value = true;
     approveDialog.value = false;
@@ -193,7 +202,7 @@ async function rejectIdea() {
   processing.value = true;
   try {
     await ideasApi.reject(selectedIdea.value.id, { note: reviewNote.value });
-    snackbarText.value = 'Idea rejected';
+    snackbarText.value = t('review.rejectSuccess');
     snackbarColor.value = 'info';
     snackbar.value = true;
     rejectDialog.value = false;
