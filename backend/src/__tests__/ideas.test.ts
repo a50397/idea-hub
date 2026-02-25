@@ -4,7 +4,7 @@ import session from 'express-session';
 import cors from 'cors';
 
 // Define mock Prisma BEFORE importing routes
-const mockPrismaFunctions = {
+const mockPrismaFunctions: Record<string, any> = {
   user: {
     findUnique: jest.fn(),
   },
@@ -19,6 +19,7 @@ const mockPrismaFunctions = {
     createMany: jest.fn(),
   },
 };
+mockPrismaFunctions.$transaction = jest.fn((fn: (tx: any) => Promise<any>) => fn(mockPrismaFunctions));
 
 jest.mock('@prisma/client', () => {
   return {
