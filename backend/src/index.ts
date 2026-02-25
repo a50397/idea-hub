@@ -1,5 +1,6 @@
 import express from 'express';
 import session from 'express-session';
+import MongoStore from 'connect-mongo';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import authRoutes from './routes/auth';
@@ -29,6 +30,11 @@ app.use(
     secret: process.env.SESSION_SECRET || 'your-super-secret-session-key-change-in-production',
     resave: false,
     saveUninitialized: false,
+    store: MongoStore.create({
+      mongoUrl: process.env.DATABASE_URL,
+      collectionName: 'sessions',
+      ttl: 60 * 60 * 24 * 7, // 7 days
+    }),
     cookie: {
       secure: process.env.NODE_ENV === 'production',
       httpOnly: true,
