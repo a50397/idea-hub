@@ -41,9 +41,6 @@
         <v-btn value="en" size="small">EN</v-btn>
         <v-btn value="sk" size="small">SK</v-btn>
       </v-btn-toggle>
-      <v-chip class="ma-2" color="primary" label>
-        {{ authStore.user?.role }}
-      </v-chip>
     </v-app-bar>
 
     <v-main>

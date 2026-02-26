@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { IdeaStatus, EventType, Role, Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { requireAuth, requireRole } from '../middleware/auth';
-import { createIdeaSchema, reviewIdeaSchema, updateIdeaSchema, ideasQuerySchema } from '../utils/validation';
+import { createIdeaSchema, reviewIdeaSchema, updateIdeaSchema, ideasQuerySchema, createStepSchema } from '../utils/validation';
 
 const router = Router();
 
@@ -95,6 +95,9 @@ router.get('/:id', requireAuth, async (req, res) => {
             },
           },
           orderBy: { timestamp: 'asc' },
+        },
+        steps: {
+          orderBy: { createdAt: 'asc' },
         },
       },
     });
@@ -447,6 +450,46 @@ router.patch('/:id/complete', requireAuth, async (req, res) => {
     });
 
     res.json(updatedIdea);
+  } catch (error) {
+    if (error instanceof Error) {
+      res.status(400).json({ error: error.message });
+    } else {
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+});
+
+// Add a progress step to an idea (assignee only, IN_PROGRESS only)
+router.post('/:id/steps', requireAuth, async (req, res) => {
+  try {
+    const id = req.params.id as string;
+    const userId = req.session.userId!;
+    const data = createStepSchema.parse(req.body);
+
+    const existingIdea = await prisma.idea.findUnique({
+      where: { id },
+    });
+
+    if (!existingIdea) {
+      return res.status(404).json({ error: 'Idea not found' });
+    }
+
+    if (existingIdea.status !== IdeaStatus.IN_PROGRESS) {
+      return res.status(400).json({ error: 'Can only add steps to ideas in IN_PROGRESS status' });
+    }
+
+    if (existingIdea.assigneeId !== userId) {
+      return res.status(403).json({ error: 'Only the assignee can add steps' });
+    }
+
+    const step = await prisma.ideaStep.create({
+      data: {
+        ideaId: id,
+        text: data.text,
+      },
+    });
+
+    res.status(201).json(step);
   } catch (error) {
     if (error instanceof Error) {
       res.status(400).json({ error: error.message });

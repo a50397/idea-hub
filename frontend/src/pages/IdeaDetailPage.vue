@@ -45,27 +45,52 @@
             </v-card-text>
           </v-card>
 
-          <v-card class="mt-4" v-if="idea.events && idea.events.length">
+          <v-card class="mt-4" v-if="timelineItems.length || canManageSteps">
             <v-card-title>{{ $t('ideas.activityTimeline') }}</v-card-title>
             <v-card-text>
-              <v-timeline side="end" density="compact">
+              <v-timeline v-if="timelineItems.length" side="end" density="compact">
                 <v-timeline-item
-                  v-for="event in idea.events"
-                  :key="event.id"
+                  v-for="item in timelineItems"
+                  :key="item.id"
                   size="small"
-                  dot-color="primary"
+                  :dot-color="item.kind === 'step' ? 'success' : 'primary'"
+                  :icon="item.kind === 'step' ? 'mdi-check-circle-outline' : undefined"
                 >
                   <template v-slot:opposite>
                     <div class="text-caption">
-                      {{ formatDateTime(event.timestamp) }}
+                      {{ formatDateTime(item.timestamp) }}
                     </div>
                   </template>
-                  <div>
-                    <strong>{{ event.type }}</strong> by {{ event.byUser.name }}
-                    <p v-if="event.note" class="text-caption mt-1">{{ event.note }}</p>
+                  <div v-if="item.kind === 'event'">
+                    <strong>{{ item.event!.type }}</strong> by {{ item.event!.byUser.name }}
+                    <p v-if="item.event!.note" class="text-caption mt-1">{{ item.event!.note }}</p>
+                  </div>
+                  <div v-else>
+                    <strong>{{ $t('steps.title') }}</strong>
+                    <p class="mt-1">{{ item.step!.text }}</p>
                   </div>
                 </v-timeline-item>
               </v-timeline>
+
+              <div v-if="canManageSteps" class="mt-4 d-flex align-center ga-2">
+                <v-text-field
+                  v-model="newStepText"
+                  :placeholder="$t('steps.textPlaceholder')"
+                  density="compact"
+                  variant="outlined"
+                  hide-details
+                  @keyup.enter="addStep"
+                ></v-text-field>
+                <v-btn
+                  color="primary"
+                  variant="elevated"
+                  @click="addStep"
+                  :loading="addingStep"
+                  :disabled="!newStepText.trim()"
+                >
+                  {{ $t('steps.addStep') }}
+                </v-btn>
+              </div>
             </v-card-text>
           </v-card>
         </v-col>
@@ -105,6 +130,16 @@
                   <v-list-item-subtitle>{{ formatDate(idea.completedAt) }}</v-list-item-subtitle>
                 </v-list-item>
               </v-list>
+              <v-btn
+                v-if="canManageSteps"
+                color="primary"
+                variant="elevated"
+                block
+                class="mt-4"
+                @click="completeDialog = true"
+              >
+                {{ $t('inProgress.markComplete') }}
+              </v-btn>
             </v-card-text>
           </v-card>
         </v-col>
@@ -114,21 +149,90 @@
     <v-alert v-else type="error">
       {{ $t('ideas.ideaNotFound') }}
     </v-alert>
+
+    <v-dialog v-model="completeDialog" max-width="500">
+      <v-card>
+        <v-card-title>{{ $t('inProgress.completeTitle') }}</v-card-title>
+        <v-card-text>
+          <p class="mb-4">{{ $t('inProgress.completeConfirm') }}</p>
+          <v-textarea
+            v-model="completeNote"
+            :label="$t('inProgress.completionNotes')"
+            variant="outlined"
+            rows="3"
+          ></v-textarea>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn @click="completeDialog = false">{{ $t('common.cancel') }}</v-btn>
+          <v-btn color="primary" @click="completeIdea" :loading="completing">
+            {{ $t('inProgress.complete') }}
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <v-snackbar v-model="snackbar" :color="snackbarColor">
+      {{ snackbarText }}
+    </v-snackbar>
   </v-container>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
+import { useAuthStore } from '../stores/auth';
 import { ideasApi } from '../api/ideas';
 import { IdeaStatus, Effort, statusColors } from '../types';
-import type { Idea } from '../types';
+import type { Idea, IdeaStep, IdeaEvent } from '../types';
 
-const { locale } = useI18n();
+interface TimelineItem {
+  id: string;
+  timestamp: string;
+  kind: 'event' | 'step';
+  event?: IdeaEvent;
+  step?: IdeaStep;
+}
+
+const { locale, t } = useI18n();
 const route = useRoute();
+const authStore = useAuthStore();
 const loading = ref(true);
 const idea = ref<Idea | null>(null);
+
+// Steps state
+const newStepText = ref('');
+const addingStep = ref(false);
+
+// Complete dialog state
+const completeDialog = ref(false);
+const completeNote = ref('');
+const completing = ref(false);
+const snackbar = ref(false);
+const snackbarText = ref('');
+const snackbarColor = ref('success');
+
+const canManageSteps = computed(() => {
+  return idea.value?.status === IdeaStatus.IN_PROGRESS &&
+    idea.value?.assigneeId === authStore.user?.id;
+});
+
+const timelineItems = computed<TimelineItem[]>(() => {
+  const items: TimelineItem[] = [];
+  if (idea.value?.events) {
+    for (const event of idea.value.events) {
+      items.push({ id: `event-${event.id}`, timestamp: event.timestamp, kind: 'event', event });
+    }
+  }
+  if (idea.value?.steps) {
+    for (const step of idea.value.steps) {
+      items.push({ id: `step-${step.id}`, timestamp: step.createdAt, kind: 'step', step });
+    }
+  }
+  items.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  return items;
+});
 
 const statusKeyMap: Record<IdeaStatus, string> = {
   [IdeaStatus.SUBMITTED]: 'submitted',
@@ -176,6 +280,40 @@ function formatDateTime(dateString: string): string {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+async function completeIdea() {
+  if (!idea.value) return;
+  completing.value = true;
+  try {
+    await ideasApi.complete(idea.value.id, { note: completeNote.value });
+    snackbarText.value = t('inProgress.completeSuccess');
+    snackbarColor.value = 'success';
+    snackbar.value = true;
+    completeDialog.value = false;
+    await loadIdea();
+  } catch (error: any) {
+    snackbarText.value = error.response?.data?.error || 'Failed to complete idea';
+    snackbarColor.value = 'error';
+    snackbar.value = true;
+  } finally {
+    completing.value = false;
+  }
+}
+
+async function addStep() {
+  if (!idea.value || !newStepText.value.trim()) return;
+  addingStep.value = true;
+  try {
+    const step = await ideasApi.addStep(idea.value.id, { text: newStepText.value.trim() });
+    if (!idea.value.steps) idea.value.steps = [];
+    idea.value.steps.push(step);
+    newStepText.value = '';
+  } catch (error) {
+    console.error('Error adding step:', error);
+  } finally {
+    addingStep.value = false;
+  }
 }
 
 onMounted(() => {

@@ -199,6 +199,18 @@ export default {
     success: 'Password changed successfully!',
     failed: 'Failed to change password',
   },
+  steps: {
+    title: 'Progress Steps',
+    addStep: 'Add Step',
+    editStep: 'Edit Step',
+    deleteStep: 'Delete Step',
+    textPlaceholder: 'Describe what was done...',
+    noSteps: 'No progress steps yet.',
+    deleteConfirm: 'Are you sure you want to delete this step?',
+    addSuccess: 'Step added successfully!',
+    updateSuccess: 'Step updated successfully!',
+    deleteSuccess: 'Step deleted successfully!',
+  },
   guidelines: {
     title: 'Submission Guidelines',
     specific: 'Be specific and clear',

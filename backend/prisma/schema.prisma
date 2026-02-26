@@ -86,6 +86,7 @@ model Idea {
 
   // Relations
   events IdeaEvent[]
+  steps  IdeaStep[]
 
   @@map("ideas")
 }
@@ -101,4 +102,14 @@ model IdeaEvent {
   note      String?
 
   @@map("idea_events")
+}
+
+model IdeaStep {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  ideaId    String   @db.ObjectId
+  idea      Idea     @relation(fields: [ideaId], references: [id], onDelete: Cascade)
+  text      String
+  createdAt DateTime @default(now())
+
+  @@map("idea_steps")
 }

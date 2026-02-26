@@ -68,6 +68,14 @@ export interface Idea {
   createdAt: string;
   updatedAt: string;
   events?: IdeaEvent[];
+  steps?: IdeaStep[];
+}
+
+export interface IdeaStep {
+  id: string;
+  ideaId: string;
+  text: string;
+  createdAt: string;
 }
 
 export interface IdeaEvent {

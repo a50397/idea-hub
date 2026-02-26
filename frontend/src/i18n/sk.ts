@@ -199,6 +199,18 @@ export default {
     success: 'Heslo bolo úspešne zmenené!',
     failed: 'Zmena hesla zlyhala',
   },
+  steps: {
+    title: 'Postup',
+    addStep: 'Pridať krok',
+    editStep: 'Upraviť krok',
+    deleteStep: 'Odstrániť krok',
+    textPlaceholder: 'Opíšte čo bolo urobené...',
+    noSteps: 'Zatiaľ žiadny postup.',
+    deleteConfirm: 'Naozaj chcete odstrániť tento krok?',
+    addSuccess: 'Krok bol úspešne pridaný!',
+    updateSuccess: 'Krok bol úspešne aktualizovaný!',
+    deleteSuccess: 'Krok bol úspešne odstránený!',
+  },
   guidelines: {
     title: 'Pokyny pre odoslanie',
     specific: 'Buďte konkrétni a jasní',

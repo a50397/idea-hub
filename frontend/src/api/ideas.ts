@@ -1,5 +1,5 @@
 import client from './client';
-import type { Idea, CreateIdeaInput, UpdateIdeaInput, ReviewIdeaInput, IdeaStatus } from '../types';
+import type { Idea, IdeaStep, CreateIdeaInput, UpdateIdeaInput, ReviewIdeaInput, IdeaStatus } from '../types';
 
 export const ideasApi = {
   getAll: async (filters?: {
@@ -50,6 +50,11 @@ export const ideasApi = {
 
   complete: async (id: string, data?: ReviewIdeaInput): Promise<Idea> => {
     const response = await client.patch(`/ideas/${id}/complete`, data || {});
+    return response.data;
+  },
+
+  addStep: async (ideaId: string, data: { text: string }): Promise<IdeaStep> => {
+    const response = await client.post(`/ideas/${ideaId}/steps`, data);
     return response.data;
   },
 };
