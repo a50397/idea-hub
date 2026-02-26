@@ -8,6 +8,7 @@ const mockPrismaFunctions = {
   user: {
     findUnique: jest.fn(),
     create: jest.fn(),
+    update: jest.fn(),
   },
 };
 
@@ -291,6 +292,136 @@ describe('Authentication API', () => {
       mockPrismaFunctions.user.findUnique.mockResolvedValueOnce(null);
 
       const response = await agent.get('/api/auth/me');
+
+      expect(response.status).toBe(404);
+      expect(response.body).toHaveProperty('error', 'User not found');
+    });
+  });
+
+  describe('POST /api/auth/change-password', () => {
+    const validUser = {
+      id: 'user123',
+      name: 'Test User',
+      email: 'test@example.com',
+      passwordHash: '$2b$10$hashedpassword',
+      role: 'USER',
+    };
+
+    async function loginAgent() {
+      const agent = request.agent(app);
+      mockPrismaFunctions.user.findUnique.mockResolvedValueOnce(validUser);
+      (bcrypt.compare as jest.Mock).mockResolvedValueOnce(true);
+      await agent.post('/api/auth/login').send({
+        email: 'test@example.com',
+        password: 'oldpassword',
+      });
+      return agent;
+    }
+
+    test('should change password successfully', async () => {
+      const agent = await loginAgent();
+
+      mockPrismaFunctions.user.findUnique.mockResolvedValueOnce(validUser);
+      (bcrypt.compare as jest.Mock).mockResolvedValueOnce(true);
+      (bcrypt.hash as jest.Mock).mockResolvedValueOnce('$2b$10$newhashedpassword');
+      mockPrismaFunctions.user.update.mockResolvedValueOnce({ ...validUser, passwordHash: '$2b$10$newhashedpassword' });
+
+      const response = await agent
+        .post('/api/auth/change-password')
+        .send({
+          currentPassword: 'oldpassword',
+          newPassword: 'newpassword123',
+        });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveProperty('message', 'Password changed successfully');
+      expect(bcrypt.compare).toHaveBeenCalledWith('oldpassword', validUser.passwordHash);
+      expect(bcrypt.hash).toHaveBeenCalledWith('newpassword123', 10);
+      expect(mockPrismaFunctions.user.update).toHaveBeenCalledWith({
+        where: { id: validUser.id },
+        data: { passwordHash: '$2b$10$newhashedpassword' },
+      });
+    });
+
+    test('should fail with incorrect current password', async () => {
+      const agent = await loginAgent();
+
+      mockPrismaFunctions.user.findUnique.mockResolvedValueOnce(validUser);
+      (bcrypt.compare as jest.Mock).mockResolvedValueOnce(false);
+
+      const response = await agent
+        .post('/api/auth/change-password')
+        .send({
+          currentPassword: 'wrongpassword',
+          newPassword: 'newpassword123',
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty('error', 'Current password is incorrect');
+    });
+
+    test('should fail when not authenticated', async () => {
+      const response = await request(app)
+        .post('/api/auth/change-password')
+        .send({
+          currentPassword: 'oldpassword',
+          newPassword: 'newpassword123',
+        });
+
+      expect(response.status).toBe(401);
+    });
+
+    test('should fail with missing currentPassword', async () => {
+      const agent = await loginAgent();
+
+      const response = await agent
+        .post('/api/auth/change-password')
+        .send({
+          newPassword: 'newpassword123',
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty('error');
+    });
+
+    test('should fail with missing newPassword', async () => {
+      const agent = await loginAgent();
+
+      const response = await agent
+        .post('/api/auth/change-password')
+        .send({
+          currentPassword: 'oldpassword',
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty('error');
+    });
+
+    test('should fail with newPassword too short', async () => {
+      const agent = await loginAgent();
+
+      const response = await agent
+        .post('/api/auth/change-password')
+        .send({
+          currentPassword: 'oldpassword',
+          newPassword: '12345',
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty('error');
+    });
+
+    test('should return 404 if user no longer exists', async () => {
+      const agent = await loginAgent();
+
+      mockPrismaFunctions.user.findUnique.mockResolvedValueOnce(null);
+
+      const response = await agent
+        .post('/api/auth/change-password')
+        .send({
+          currentPassword: 'oldpassword',
+          newPassword: 'newpassword123',
+        });
 
       expect(response.status).toBe(404);
       expect(response.body).toHaveProperty('error', 'User not found');

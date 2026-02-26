@@ -20,6 +20,8 @@
         <v-list-item prepend-icon="mdi-chart-bar" :title="$t('nav.reports')" :to="{ name: 'Reports' }"></v-list-item>
 
         <v-list-item v-if="authStore.isAdmin" prepend-icon="mdi-account-group" :title="$t('nav.users')" :to="{ name: 'Users' }"></v-list-item>
+
+        <v-list-item prepend-icon="mdi-lock-reset" :title="$t('nav.changePassword')" :to="{ name: 'ChangePassword' }"></v-list-item>
       </v-list>
 
       <template v-slot:append>

@@ -3,6 +3,7 @@ import {
   createIdeaSchema,
   updateIdeaSchema,
   reviewIdeaSchema,
+  changePasswordSchema,
   createUserSchema,
   updateUserSchema,
   ideasQuerySchema,
@@ -216,6 +217,69 @@ describe('Validation Schemas', () => {
 
       const result = reviewIdeaSchema.safeParse(invalidData);
       expect(result.success).toBe(false);
+    });
+  });
+
+  describe('changePasswordSchema', () => {
+    test('should validate valid change password data', () => {
+      const validData = {
+        currentPassword: 'oldpassword',
+        newPassword: 'newpassword123',
+      };
+
+      const result = changePasswordSchema.safeParse(validData);
+      expect(result.success).toBe(true);
+    });
+
+    test('should reject missing currentPassword', () => {
+      const invalidData = {
+        newPassword: 'newpassword123',
+      };
+
+      const result = changePasswordSchema.safeParse(invalidData);
+      expect(result.success).toBe(false);
+    });
+
+    test('should reject empty currentPassword', () => {
+      const invalidData = {
+        currentPassword: '',
+        newPassword: 'newpassword123',
+      };
+
+      const result = changePasswordSchema.safeParse(invalidData);
+      expect(result.success).toBe(false);
+    });
+
+    test('should reject missing newPassword', () => {
+      const invalidData = {
+        currentPassword: 'oldpassword',
+      };
+
+      const result = changePasswordSchema.safeParse(invalidData);
+      expect(result.success).toBe(false);
+    });
+
+    test('should reject newPassword too short', () => {
+      const invalidData = {
+        currentPassword: 'oldpassword',
+        newPassword: '12345',
+      };
+
+      const result = changePasswordSchema.safeParse(invalidData);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues[0].message).toContain('at least 6 characters');
+      }
+    });
+
+    test('should accept newPassword with exactly 6 characters', () => {
+      const validData = {
+        currentPassword: 'oldpassword',
+        newPassword: '123456',
+      };
+
+      const result = changePasswordSchema.safeParse(validData);
+      expect(result.success).toBe(true);
     });
   });
 

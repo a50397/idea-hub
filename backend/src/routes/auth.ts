@@ -2,7 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcrypt';
 import rateLimit from 'express-rate-limit';
 import prisma from '../lib/prisma';
-import { loginSchema } from '../utils/validation';
+import { loginSchema, changePasswordSchema } from '../utils/validation';
 import { requireAuth } from '../middleware/auth';
 
 const router = Router();
@@ -64,6 +64,40 @@ router.post('/logout', (req, res) => {
     res.clearCookie('connect.sid');
     res.json({ message: 'Logged out successfully' });
   });
+});
+
+// Change password
+router.post('/change-password', requireAuth, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = changePasswordSchema.parse(req.body);
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.session.userId },
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const validPassword = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!validPassword) {
+      return res.status(400).json({ error: 'Current password is incorrect' });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { passwordHash },
+    });
+
+    res.json({ message: 'Password changed successfully' });
+  } catch (error) {
+    if (error instanceof Error) {
+      res.status(400).json({ error: error.message });
+    } else {
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
 });
 
 // Get current user

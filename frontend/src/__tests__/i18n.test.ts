@@ -53,6 +53,7 @@ describe('i18n translation files', () => {
       'common', 'nav', 'auth', 'dashboard', 'ideas', 'effort',
       'status', 'review', 'approved', 'inProgress', 'completed',
       'reports', 'users', 'guidelines', 'validation', 'myIdeas',
+      'changePassword',
     ];
     for (const section of requiredSections) {
       expect(en).toHaveProperty(section);
@@ -187,9 +188,18 @@ describe('translation coverage for components', () => {
       'myIdeas.title', 'myIdeas.subtitle', 'myIdeas.filterByStatus', 'myIdeas.noIdeas',
       'status.submitted', 'status.approved', 'status.inProgress', 'status.done', 'status.rejected',
     ],
+    ChangePasswordPage: [
+      'changePassword.title', 'changePassword.subtitle',
+      'changePassword.currentPassword', 'changePassword.newPassword',
+      'changePassword.confirmPassword', 'changePassword.passwordHint',
+      'changePassword.submit', 'changePassword.currentPasswordRequired',
+      'changePassword.newPasswordRequired', 'changePassword.confirmPasswordRequired',
+      'changePassword.passwordMinLength', 'changePassword.passwordsMismatch',
+      'changePassword.success', 'changePassword.failed',
+    ],
     MainLayout: [
       'nav.dashboard', 'nav.submitIdea', 'nav.myIdeas', 'nav.approved', 'nav.inProgress',
-      'nav.completed', 'nav.reviewQueue', 'nav.reports', 'nav.users',
+      'nav.completed', 'nav.reviewQueue', 'nav.reports', 'nav.users', 'nav.changePassword',
       'common.logout', 'common.appName',
     ],
   };
