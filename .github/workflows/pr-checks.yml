@@ -4,6 +4,9 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
+permissions:
+  pull-requests: read
+
 jobs:
   pr-metadata:
     name: PR Metadata Check

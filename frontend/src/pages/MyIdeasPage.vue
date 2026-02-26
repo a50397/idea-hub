@@ -68,8 +68,7 @@ async function loadIdeas() {
     if (statusFilter.value) {
       filters.status = statusFilter.value;
     }
-    // Standard users see only their own ideas
-    if (!authStore.isPowerUser && !authStore.isAdmin && authStore.user?.id) {
+    if (authStore.user?.id) {
       filters.submitterId = authStore.user.id;
     }
     ideas.value = await ideasApi.getAll(filters);

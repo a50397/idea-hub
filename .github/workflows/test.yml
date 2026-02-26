@@ -25,9 +25,6 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
 
-      - name: Install dependencies
-        run: npm install
-
       - name: Install backend dependencies
         working-directory: ./backend
         run: npm install
@@ -65,9 +62,6 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
 
-      - name: Install dependencies
-        run: npm install
-
       - name: Install frontend dependencies
         working-directory: ./frontend
         run: npm install
@@ -96,7 +90,16 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
 
-      - name: Install dependencies
+      - name: Install backend dependencies
+        working-directory: ./backend
+        run: npm install
+
+      - name: Generate Prisma Client
+        working-directory: ./backend
+        run: npx prisma generate
+
+      - name: Install frontend dependencies
+        working-directory: ./frontend
         run: npm install
 
       - name: Check TypeScript (Backend)

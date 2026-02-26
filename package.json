@@ -30,8 +30,5 @@
   },
   "engines": {
     "node": ">=20.0.0"
-  },
-  "dependencies": {
-    "@rollup/rollup-darwin-arm64": "^4.59.0"
   }
 }
