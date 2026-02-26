@@ -24,6 +24,7 @@ export default {
     approved: 'Schválené',
     inProgress: 'Rozpracované',
     completed: 'Dokončené',
+    myIdeas: 'Moje nápady',
     reviewQueue: 'Na posúdenie',
     reports: 'Reporty',
     users: 'Používatelia',
@@ -174,6 +175,12 @@ export default {
     roleUser: 'Používateľ',
     rolePowerUser: 'Pokročilý používateľ',
     roleAdmin: 'Administrátor',
+  },
+  myIdeas: {
+    title: 'Moje nápady',
+    subtitle: 'Zobraziť všetky vaše odoslané nápady',
+    filterByStatus: 'Filtrovať podľa stavu',
+    noIdeas: 'Zatiaľ ste neodoslali žiadne nápady.',
   },
   guidelines: {
     title: 'Pokyny pre odoslanie',

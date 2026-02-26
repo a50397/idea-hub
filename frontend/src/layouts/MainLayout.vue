@@ -10,6 +10,7 @@
       <v-list density="compact" nav>
         <v-list-item prepend-icon="mdi-view-dashboard" :title="$t('nav.dashboard')" :to="{ name: 'Dashboard' }" exact></v-list-item>
         <v-list-item prepend-icon="mdi-lightbulb-on" :title="$t('nav.submitIdea')" :to="{ name: 'SubmitIdea' }"></v-list-item>
+        <v-list-item prepend-icon="mdi-format-list-bulleted" :title="$t('nav.myIdeas')" :to="{ name: 'MyIdeas' }"></v-list-item>
         <v-list-item prepend-icon="mdi-check-circle" :title="$t('nav.approved')" :to="{ name: 'ApprovedIdeas' }"></v-list-item>
         <v-list-item prepend-icon="mdi-progress-clock" :title="$t('nav.inProgress')" :to="{ name: 'InProgressIdeas' }"></v-list-item>
         <v-list-item prepend-icon="mdi-check-all" :title="$t('nav.completed')" :to="{ name: 'CompletedIdeas' }"></v-list-item>

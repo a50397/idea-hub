@@ -52,7 +52,7 @@ describe('i18n translation files', () => {
     const requiredSections = [
       'common', 'nav', 'auth', 'dashboard', 'ideas', 'effort',
       'status', 'review', 'approved', 'inProgress', 'completed',
-      'reports', 'users', 'guidelines', 'validation',
+      'reports', 'users', 'guidelines', 'validation', 'myIdeas',
     ];
     for (const section of requiredSections) {
       expect(en).toHaveProperty(section);
@@ -183,8 +183,12 @@ describe('translation coverage for components', () => {
       'users.deleteUser', 'users.name', 'users.email', 'users.password',
       'users.role', 'users.nameRequired', 'users.emailRequired',
     ],
+    MyIdeasPage: [
+      'myIdeas.title', 'myIdeas.subtitle', 'myIdeas.filterByStatus', 'myIdeas.noIdeas',
+      'status.submitted', 'status.approved', 'status.inProgress', 'status.done', 'status.rejected',
+    ],
     MainLayout: [
-      'nav.dashboard', 'nav.submitIdea', 'nav.approved', 'nav.inProgress',
+      'nav.dashboard', 'nav.submitIdea', 'nav.myIdeas', 'nav.approved', 'nav.inProgress',
       'nav.completed', 'nav.reviewQueue', 'nav.reports', 'nav.users',
       'common.logout', 'common.appName',
     ],

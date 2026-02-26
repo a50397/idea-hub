@@ -24,6 +24,7 @@ export default {
     approved: 'Approved',
     inProgress: 'In Progress',
     completed: 'Completed',
+    myIdeas: 'My Ideas',
     reviewQueue: 'Review Queue',
     reports: 'Reports',
     users: 'Users',
@@ -174,6 +175,12 @@ export default {
     roleUser: 'User',
     rolePowerUser: 'Power User',
     roleAdmin: 'Admin',
+  },
+  myIdeas: {
+    title: 'My Ideas',
+    subtitle: 'View all ideas you have submitted',
+    filterByStatus: 'Filter by status',
+    noIdeas: 'You have not submitted any ideas yet.',
   },
   guidelines: {
     title: 'Submission Guidelines',

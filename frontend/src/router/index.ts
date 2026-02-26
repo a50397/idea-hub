@@ -27,6 +27,11 @@ const router = createRouter({
           component: () => import('../pages/SubmitIdeaPage.vue'),
         },
         {
+          path: 'my-ideas',
+          name: 'MyIdeas',
+          component: () => import('../pages/MyIdeasPage.vue'),
+        },
+        {
           path: 'ideas/:id',
           name: 'IdeaDetail',
           component: () => import('../pages/IdeaDetailPage.vue'),
