@@ -136,6 +136,56 @@ describe('Reports API', () => {
       expect(response.body.averageTimes).toHaveProperty('approvedToDoneDays');
     });
 
+    test('should filter counts by submitterId for standard USER role but not average times', async () => {
+      const { agent, user } = await loginAsUser(app, 'USER');
+
+      mockPrismaFunctions.idea.count.mockResolvedValue(0);
+      mockPrismaFunctions.idea.findMany.mockResolvedValue([]);
+
+      await agent.get('/api/reports/summary');
+
+      // All count queries should include submitterId filter
+      mockPrismaFunctions.idea.count.mock.calls.forEach((call: any[]) => {
+        expect(call[0].where).toHaveProperty('submitterId', user.id);
+      });
+
+      // findMany (average times) should NOT filter by submitterId - visible to all
+      expect(mockPrismaFunctions.idea.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.not.objectContaining({
+            submitterId: expect.anything(),
+          }),
+        })
+      );
+    });
+
+    test('should not filter by submitterId for ADMIN role', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+
+      mockPrismaFunctions.idea.count.mockResolvedValue(0);
+      mockPrismaFunctions.idea.findMany.mockResolvedValue([]);
+
+      await agent.get('/api/reports/summary');
+
+      // Count queries should NOT include submitterId filter
+      mockPrismaFunctions.idea.count.mock.calls.forEach((call: any[]) => {
+        expect(call[0].where).not.toHaveProperty('submitterId');
+      });
+    });
+
+    test('should not filter by submitterId for POWER_USER role', async () => {
+      const { agent } = await loginAsUser(app, 'POWER_USER');
+
+      mockPrismaFunctions.idea.count.mockResolvedValue(0);
+      mockPrismaFunctions.idea.findMany.mockResolvedValue([]);
+
+      await agent.get('/api/reports/summary');
+
+      mockPrismaFunctions.idea.count.mock.calls.forEach((call: any[]) => {
+        expect(call[0].where).not.toHaveProperty('submitterId');
+      });
+    });
+
     test('should require authentication', async () => {
       const response = await request(app).get('/api/reports/summary');
 
@@ -177,6 +227,38 @@ describe('Reports API', () => {
       expect(response.body).toContainEqual({ month: '2024-01', count: 2 });
       expect(response.body).toContainEqual({ month: '2024-02', count: 3 });
       expect(response.body).toContainEqual({ month: '2024-03', count: 1 });
+    });
+
+    test('should filter by submitterId for standard USER role', async () => {
+      const { agent, user } = await loginAsUser(app, 'USER');
+
+      mockPrismaFunctions.idea.findMany.mockResolvedValue([]);
+
+      await agent.get('/api/reports/monthly-trend');
+
+      expect(mockPrismaFunctions.idea.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            submitterId: user.id,
+          }),
+        })
+      );
+    });
+
+    test('should not filter by submitterId for ADMIN role', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+
+      mockPrismaFunctions.idea.findMany.mockResolvedValue([]);
+
+      await agent.get('/api/reports/monthly-trend');
+
+      expect(mockPrismaFunctions.idea.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.not.objectContaining({
+            submitterId: expect.anything(),
+          }),
+        })
+      );
     });
 
     test('should return empty array when no completed ideas', async () => {
@@ -294,7 +376,7 @@ describe('Reports API', () => {
     });
 
     test('should filter by status', async () => {
-      const { agent } = await loginAsUser(app);
+      const { agent, user } = await loginAsUser(app);
 
       mockPrismaFunctions.idea.findMany.mockResolvedValue([]);
       mockPrismaFunctions.idea.count.mockResolvedValue(0);
@@ -305,13 +387,14 @@ describe('Reports API', () => {
         expect.objectContaining({
           where: expect.objectContaining({
             status: 'APPROVED',
+            submitterId: user.id,
           }),
         })
       );
     });
 
     test('should filter by date range', async () => {
-      const { agent } = await loginAsUser(app);
+      const { agent, user } = await loginAsUser(app);
 
       mockPrismaFunctions.idea.findMany.mockResolvedValue([]);
       mockPrismaFunctions.idea.count.mockResolvedValue(0);
@@ -321,6 +404,7 @@ describe('Reports API', () => {
       expect(mockPrismaFunctions.idea.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
+            submitterId: user.id,
             submittedAt: {
               gte: expect.any(Date),
               lte: expect.any(Date),
@@ -330,8 +414,8 @@ describe('Reports API', () => {
       );
     });
 
-    test('should filter by submitter', async () => {
-      const { agent } = await loginAsUser(app);
+    test('should filter by submitter for ADMIN role', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
 
       mockPrismaFunctions.idea.findMany.mockResolvedValue([]);
       mockPrismaFunctions.idea.count.mockResolvedValue(0);
@@ -342,6 +426,41 @@ describe('Reports API', () => {
         expect.objectContaining({
           where: expect.objectContaining({
             submitterId: '507f1f77bcf86cd799439011',
+          }),
+        })
+      );
+    });
+
+    test('should force submitterId to own user id for standard USER role', async () => {
+      const { agent, user } = await loginAsUser(app, 'USER');
+
+      mockPrismaFunctions.idea.findMany.mockResolvedValue([]);
+      mockPrismaFunctions.idea.count.mockResolvedValue(0);
+
+      await agent.get('/api/reports/filtered');
+
+      expect(mockPrismaFunctions.idea.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            submitterId: user.id,
+          }),
+        })
+      );
+    });
+
+    test('should ignore client-sent submitterId for standard USER role', async () => {
+      const { agent, user } = await loginAsUser(app, 'USER');
+
+      mockPrismaFunctions.idea.findMany.mockResolvedValue([]);
+      mockPrismaFunctions.idea.count.mockResolvedValue(0);
+
+      await agent.get('/api/reports/filtered?submitterId=507f1f77bcf86cd799439011');
+
+      // Should use the logged-in user's ID, not the one from the query string
+      expect(mockPrismaFunctions.idea.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            submitterId: user.id,
           }),
         })
       );
@@ -366,7 +485,7 @@ describe('Reports API', () => {
     });
 
     test('should filter by tags', async () => {
-      const { agent } = await loginAsUser(app);
+      const { agent, user } = await loginAsUser(app);
 
       mockPrismaFunctions.idea.findMany.mockResolvedValue([]);
       mockPrismaFunctions.idea.count.mockResolvedValue(0);
@@ -376,6 +495,7 @@ describe('Reports API', () => {
       expect(mockPrismaFunctions.idea.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
+            submitterId: user.id,
             tags: {
               hasSome: ['automation', 'productivity'],
             },

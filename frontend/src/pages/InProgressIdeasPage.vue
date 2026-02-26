@@ -84,7 +84,11 @@ const snackbarColor = ref('success');
 async function loadIdeas() {
   loading.value = true;
   try {
-    ideas.value = await ideasApi.getAll({ status: IdeaStatus.IN_PROGRESS });
+    const filters: any = { status: IdeaStatus.IN_PROGRESS };
+    if (!authStore.isPowerUser && !authStore.isAdmin && authStore.user?.id) {
+      filters.submitterId = authStore.user.id;
+    }
+    ideas.value = await ideasApi.getAll(filters);
   } catch (error) {
     console.error('Error loading ideas:', error);
   } finally {

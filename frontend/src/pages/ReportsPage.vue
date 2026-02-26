@@ -120,6 +120,7 @@ import { useI18n } from 'vue-i18n';
 import { reportsApi } from '../api/reports';
 import { IdeaStatus, Effort, statusColors } from '../types';
 import type { Idea } from '../types';
+import { useAuthStore } from '../stores/auth';
 
 const { t, locale } = useI18n();
 const router = useRouter();
@@ -175,6 +176,11 @@ async function applyFilters() {
     if (filters.startDate) filterParams.startDate = filters.startDate;
     if (filters.endDate) filterParams.endDate = filters.endDate;
 
+    const authStore = useAuthStore();
+    if (!authStore.isPowerUser && !authStore.isAdmin && authStore.user?.id) {
+      filterParams.submitterId = authStore.user.id;
+    }
+
     ideas.value = await reportsApi.getFiltered(filterParams);
   } catch (error) {
     console.error('Error applying filters:', error);
@@ -200,6 +206,11 @@ async function exportCSV() {
     if (filters.status) filterParams.status = filters.status;
     if (filters.startDate) filterParams.startDate = filters.startDate;
     if (filters.endDate) filterParams.endDate = filters.endDate;
+
+    const authStore = useAuthStore();
+    if (!authStore.isPowerUser && !authStore.isAdmin && authStore.user?.id) {
+      filterParams.submitterId = authStore.user.id;
+    }
 
     const blob = await reportsApi.exportCSV(filterParams);
     const url = window.URL.createObjectURL(blob);

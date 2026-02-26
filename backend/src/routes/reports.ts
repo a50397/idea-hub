@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { IdeaStatus } from '@prisma/client';
+import { IdeaStatus, Role } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { requireAuth } from '../middleware/auth';
 import { filteredReportQuerySchema } from '../utils/validation';
@@ -9,12 +9,15 @@ const router = Router();
 // Get dashboard summary statistics
 router.get('/summary', requireAuth, async (req, res) => {
   try {
+    // Standard users can only see their own ideas
+    const userFilter = req.session.role === Role.USER ? { submitterId: req.session.userId } : {};
+
     const [submitted, approved, inProgress, done, rejected, allIdeas] = await Promise.all([
-      prisma.idea.count({ where: { status: IdeaStatus.SUBMITTED } }),
-      prisma.idea.count({ where: { status: IdeaStatus.APPROVED } }),
-      prisma.idea.count({ where: { status: IdeaStatus.IN_PROGRESS } }),
-      prisma.idea.count({ where: { status: IdeaStatus.DONE } }),
-      prisma.idea.count({ where: { status: IdeaStatus.REJECTED } }),
+      prisma.idea.count({ where: { status: IdeaStatus.SUBMITTED, ...userFilter } }),
+      prisma.idea.count({ where: { status: IdeaStatus.APPROVED, ...userFilter } }),
+      prisma.idea.count({ where: { status: IdeaStatus.IN_PROGRESS, ...userFilter } }),
+      prisma.idea.count({ where: { status: IdeaStatus.DONE, ...userFilter } }),
+      prisma.idea.count({ where: { status: IdeaStatus.REJECTED, ...userFilter } }),
       prisma.idea.findMany({
         where: {
           OR: [
@@ -81,12 +84,15 @@ router.get('/summary', requireAuth, async (req, res) => {
 // Get monthly trend data
 router.get('/monthly-trend', requireAuth, async (req, res) => {
   try {
+    const userFilter = req.session.role === Role.USER ? { submitterId: req.session.userId } : {};
+
     const ideas = await prisma.idea.findMany({
       where: {
         status: IdeaStatus.DONE,
         completedAt: {
           not: null,
         },
+        ...userFilter,
       },
       select: {
         completedAt: true,
@@ -185,7 +191,10 @@ router.get('/filtered', requireAuth, async (req, res) => {
     if (data.status) {
       where.status = data.status;
     }
-    if (data.submitterId) {
+    // Standard users can only see their own ideas - enforce server-side
+    if (req.session.role === Role.USER) {
+      where.submitterId = req.session.userId;
+    } else if (data.submitterId) {
       where.submitterId = data.submitterId;
     }
     if (data.assigneeId) {

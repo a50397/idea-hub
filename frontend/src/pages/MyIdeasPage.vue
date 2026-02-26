@@ -64,11 +64,13 @@ const statusOptions = computed(() => [
 async function loadIdeas() {
   loading.value = true;
   try {
-    const filters: { submitterId: string; status?: IdeaStatus } = {
-      submitterId: authStore.user!.id,
-    };
+    const filters: any = {};
     if (statusFilter.value) {
       filters.status = statusFilter.value;
+    }
+    // Standard users see only their own ideas
+    if (!authStore.isPowerUser && !authStore.isAdmin && authStore.user?.id) {
+      filters.submitterId = authStore.user.id;
     }
     ideas.value = await ideasApi.getAll(filters);
   } catch (error) {

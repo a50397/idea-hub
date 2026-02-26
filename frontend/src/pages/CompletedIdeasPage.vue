@@ -28,6 +28,7 @@ import { ideasApi } from '../api/ideas';
 import { IdeaStatus } from '../types';
 import type { Idea } from '../types';
 import IdeaCard from '../components/IdeaCard.vue';
+import { useAuthStore } from '../stores/auth';
 
 const router = useRouter();
 const loading = ref(true);
@@ -36,7 +37,12 @@ const ideas = ref<Idea[]>([]);
 async function loadIdeas() {
   loading.value = true;
   try {
-    ideas.value = await ideasApi.getAll({ status: IdeaStatus.DONE });
+    const authStore = useAuthStore();
+    const filters: any = { status: IdeaStatus.DONE };
+    if (!authStore.isPowerUser && !authStore.isAdmin && authStore.user?.id) {
+      filters.submitterId = authStore.user.id;
+    }
+    ideas.value = await ideasApi.getAll(filters);
   } catch (error) {
     console.error('Error loading ideas:', error);
   } finally {

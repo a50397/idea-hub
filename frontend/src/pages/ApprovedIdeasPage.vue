@@ -45,6 +45,7 @@ import { ideasApi } from '../api/ideas';
 import { IdeaStatus } from '../types';
 import type { Idea } from '../types';
 import IdeaCard from '../components/IdeaCard.vue';
+import { useAuthStore } from '../stores/auth';
 
 const { t } = useI18n();
 const router = useRouter();
@@ -58,7 +59,12 @@ const snackbarColor = ref('success');
 async function loadIdeas() {
   loading.value = true;
   try {
-    ideas.value = await ideasApi.getAll({ status: IdeaStatus.APPROVED });
+    const authStore = useAuthStore();
+    const filters: any = { status: IdeaStatus.APPROVED };
+    if (!authStore.isPowerUser && !authStore.isAdmin && authStore.user?.id) {
+      filters.submitterId = authStore.user.id;
+    }
+    ideas.value = await ideasApi.getAll(filters);
   } catch (error) {
     console.error('Error loading ideas:', error);
   } finally {
