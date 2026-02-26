@@ -459,6 +459,33 @@ router.patch('/:id/complete', requireAuth, async (req, res) => {
   }
 });
 
+// Delete idea (Admin only)
+router.delete('/:id', requireRole(Role.ADMIN), async (req, res) => {
+  try {
+    const id = req.params.id as string;
+
+    const existingIdea = await prisma.idea.findUnique({
+      where: { id },
+    });
+
+    if (!existingIdea) {
+      return res.status(404).json({ error: 'Idea not found' });
+    }
+
+    await prisma.idea.delete({
+      where: { id },
+    });
+
+    res.json({ message: 'Idea deleted' });
+  } catch (error) {
+    if (error instanceof Error) {
+      res.status(400).json({ error: error.message });
+    } else {
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+});
+
 // Add a progress step to an idea (assignee only, IN_PROGRESS only)
 router.post('/:id/steps', requireAuth, async (req, res) => {
   try {

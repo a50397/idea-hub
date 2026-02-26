@@ -13,11 +13,15 @@ const mockPrismaFunctions: Record<string, any> = {
     findUnique: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
+    delete: jest.fn(),
     count: jest.fn(),
   },
   ideaEvent: {
     create: jest.fn(),
     createMany: jest.fn(),
+  },
+  ideaStep: {
+    create: jest.fn(),
   },
 };
 mockPrismaFunctions.$transaction = jest.fn((fn: (tx: any) => Promise<any>) => fn(mockPrismaFunctions));
@@ -679,6 +683,163 @@ describe('Ideas API', () => {
       const response = await agent.patch('/api/ideas/idea1/complete');
 
       expect(response.status).toBe(400);
+    });
+  });
+
+  describe('DELETE /api/ideas/:id', () => {
+    test('should delete idea as ADMIN', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+
+      const existingIdea = {
+        id: 'idea1',
+        title: 'Test Idea',
+        status: 'SUBMITTED',
+      };
+
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue(existingIdea);
+      mockPrismaFunctions.idea.delete.mockResolvedValue(existingIdea);
+
+      const response = await agent.delete('/api/ideas/idea1');
+
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveProperty('message', 'Idea deleted');
+      expect(mockPrismaFunctions.idea.delete).toHaveBeenCalledWith({
+        where: { id: 'idea1' },
+      });
+    });
+
+    test('should not delete as regular USER', async () => {
+      const { agent } = await loginAsUser(app, 'USER');
+
+      const response = await agent.delete('/api/ideas/idea1');
+
+      expect(response.status).toBe(403);
+      expect(response.body).toHaveProperty('error');
+    });
+
+    test('should not delete as POWER_USER', async () => {
+      const { agent } = await loginAsUser(app, 'POWER_USER');
+
+      const response = await agent.delete('/api/ideas/idea1');
+
+      expect(response.status).toBe(403);
+      expect(response.body).toHaveProperty('error');
+    });
+
+    test('should return 404 for non-existent idea', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue(null);
+
+      const response = await agent.delete('/api/ideas/nonexistent');
+
+      expect(response.status).toBe(404);
+      expect(response.body).toHaveProperty('error', 'Idea not found');
+    });
+  });
+
+  describe('POST /api/ideas/:id/steps', () => {
+    test('should add step as assignee to IN_PROGRESS idea', async () => {
+      const { agent, user } = await loginAsUser(app);
+
+      const existingIdea = {
+        id: 'idea1',
+        status: 'IN_PROGRESS',
+        assigneeId: user.id,
+      };
+
+      const mockStep = {
+        id: 'step1',
+        ideaId: 'idea1',
+        text: 'Implemented the first part',
+        createdAt: new Date(),
+      };
+
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue(existingIdea);
+      mockPrismaFunctions.ideaStep.create.mockResolvedValue(mockStep);
+
+      const response = await agent.post('/api/ideas/idea1/steps').send({
+        text: 'Implemented the first part',
+      });
+
+      expect(response.status).toBe(201);
+      expect(response.body).toHaveProperty('text', 'Implemented the first part');
+      expect(mockPrismaFunctions.ideaStep.create).toHaveBeenCalledWith({
+        data: {
+          ideaId: 'idea1',
+          text: 'Implemented the first part',
+        },
+      });
+    });
+
+    test('should not add step as non-assignee', async () => {
+      const { agent } = await loginAsUser(app);
+
+      const existingIdea = {
+        id: 'idea1',
+        status: 'IN_PROGRESS',
+        assigneeId: 'otheruser',
+      };
+
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue(existingIdea);
+
+      const response = await agent.post('/api/ideas/idea1/steps').send({
+        text: 'Trying to add a step',
+      });
+
+      expect(response.status).toBe(403);
+      expect(response.body).toHaveProperty('error');
+    });
+
+    test('should not add step to non-IN_PROGRESS idea', async () => {
+      const { agent, user } = await loginAsUser(app);
+
+      const existingIdea = {
+        id: 'idea1',
+        status: 'APPROVED',
+        assigneeId: user.id,
+      };
+
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue(existingIdea);
+
+      const response = await agent.post('/api/ideas/idea1/steps').send({
+        text: 'Trying to add a step',
+      });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty('error');
+    });
+
+    test('should return 404 for non-existent idea', async () => {
+      const { agent } = await loginAsUser(app);
+
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue(null);
+
+      const response = await agent.post('/api/ideas/nonexistent/steps').send({
+        text: 'Step for missing idea',
+      });
+
+      expect(response.status).toBe(404);
+      expect(response.body).toHaveProperty('error', 'Idea not found');
+    });
+
+    test('should fail with empty text', async () => {
+      const { agent, user } = await loginAsUser(app);
+
+      const existingIdea = {
+        id: 'idea1',
+        status: 'IN_PROGRESS',
+        assigneeId: user.id,
+      };
+
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue(existingIdea);
+
+      const response = await agent.post('/api/ideas/idea1/steps').send({
+        text: '',
+      });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty('error');
     });
   });
 });

@@ -150,6 +150,11 @@ export default {
     headerAssignee: 'Priradený',
     headerSubmitted: 'Odoslané',
     headerDuration: 'Trvanie (dní)',
+    headerActions: 'Akcie',
+    deleteIdea: 'Odstrániť nápad',
+    deleteConfirm: 'Naozaj chcete odstrániť „{title}"? Túto akciu nie je možné vrátiť späť.',
+    deleteSuccess: 'Nápad bol úspešne odstránený!',
+    deleteFailed: 'Nepodarilo sa odstrániť nápad',
   },
   users: {
     title: 'Správa používateľov',

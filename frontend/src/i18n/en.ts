@@ -150,6 +150,11 @@ export default {
     headerAssignee: 'Assignee',
     headerSubmitted: 'Submitted',
     headerDuration: 'Duration (days)',
+    headerActions: 'Actions',
+    deleteIdea: 'Delete Idea',
+    deleteConfirm: 'Are you sure you want to delete "{title}"? This action cannot be undone.',
+    deleteSuccess: 'Idea deleted successfully!',
+    deleteFailed: 'Failed to delete idea',
   },
   users: {
     title: 'User Management',

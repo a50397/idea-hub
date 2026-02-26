@@ -53,6 +53,10 @@ export const ideasApi = {
     return response.data;
   },
 
+  delete: async (id: string): Promise<void> => {
+    await client.delete(`/ideas/${id}`);
+  },
+
   addStep: async (ideaId: string, data: { text: string }): Promise<IdeaStep> => {
     const response = await client.post(`/ideas/${ideaId}/steps`, data);
     return response.data;

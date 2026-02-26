@@ -101,11 +101,38 @@
               <template v-slot:item.duration="{ item }">
                 {{ calculateDuration(item) }}
               </template>
+              <template v-slot:item.actions="{ item }" v-if="authStore.isAdmin">
+                <v-btn
+                  icon
+                  size="small"
+                  variant="text"
+                  color="error"
+                  @click="showDeleteDialog(item)"
+                >
+                  <v-icon size="small">mdi-delete</v-icon>
+                </v-btn>
+              </template>
             </v-data-table>
           </v-card-text>
         </v-card>
       </v-col>
     </v-row>
+
+    <v-dialog v-model="deleteDialog" max-width="500">
+      <v-card>
+        <v-card-title>{{ $t('reports.deleteIdea') }}</v-card-title>
+        <v-card-text>
+          {{ $t('reports.deleteConfirm', { title: ideaToDelete?.title }) }}
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn @click="deleteDialog = false">{{ $t('common.cancel') }}</v-btn>
+          <v-btn color="error" @click="deleteIdea" :loading="deleting">
+            {{ $t('common.delete') }}
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
 
     <v-snackbar v-model="snackbar" :color="snackbarColor">
       {{ snackbarText }}
@@ -118,18 +145,23 @@ import { ref, reactive, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { reportsApi } from '../api/reports';
+import { ideasApi } from '../api/ideas';
 import { IdeaStatus, Effort, statusColors } from '../types';
 import type { Idea } from '../types';
 import { useAuthStore } from '../stores/auth';
 
 const { t, locale } = useI18n();
 const router = useRouter();
+const authStore = useAuthStore();
 const loading = ref(false);
 const exporting = ref(false);
 const ideas = ref<Idea[]>([]);
 const snackbar = ref(false);
 const snackbarText = ref('');
 const snackbarColor = ref('success');
+const deleteDialog = ref(false);
+const ideaToDelete = ref<Idea | null>(null);
+const deleting = ref(false);
 
 const filters = reactive({
   status: null as IdeaStatus | null,
@@ -158,15 +190,21 @@ const statusOptions = computed(() =>
   }))
 );
 
-const headers = computed(() => [
-  { title: t('reports.headerTitle'), key: 'title', sortable: true },
-  { title: t('reports.headerStatus'), key: 'status', sortable: true },
-  { title: t('reports.headerEffort'), key: 'effort', sortable: true },
-  { title: t('reports.headerSubmitter'), key: 'submitter', sortable: true },
-  { title: t('reports.headerAssignee'), key: 'assignee', sortable: true },
-  { title: t('reports.headerSubmitted'), key: 'submittedAt', sortable: true },
-  { title: t('reports.headerDuration'), key: 'duration', sortable: true },
-]);
+const headers = computed(() => {
+  const cols = [
+    { title: t('reports.headerTitle'), key: 'title', sortable: true },
+    { title: t('reports.headerStatus'), key: 'status', sortable: true },
+    { title: t('reports.headerEffort'), key: 'effort', sortable: true },
+    { title: t('reports.headerSubmitter'), key: 'submitter', sortable: true },
+    { title: t('reports.headerAssignee'), key: 'assignee', sortable: true },
+    { title: t('reports.headerSubmitted'), key: 'submittedAt', sortable: true },
+    { title: t('reports.headerDuration'), key: 'duration', sortable: true },
+  ];
+  if (authStore.isAdmin) {
+    cols.push({ title: t('reports.headerActions'), key: 'actions', sortable: false });
+  }
+  return cols;
+});
 
 async function applyFilters() {
   loading.value = true;
@@ -176,7 +214,6 @@ async function applyFilters() {
     if (filters.startDate) filterParams.startDate = filters.startDate;
     if (filters.endDate) filterParams.endDate = filters.endDate;
 
-    const authStore = useAuthStore();
     if (!authStore.isPowerUser && !authStore.isAdmin && authStore.user?.id) {
       filterParams.submitterId = authStore.user.id;
     }
@@ -207,7 +244,6 @@ async function exportCSV() {
     if (filters.startDate) filterParams.startDate = filters.startDate;
     if (filters.endDate) filterParams.endDate = filters.endDate;
 
-    const authStore = useAuthStore();
     if (!authStore.isPowerUser && !authStore.isAdmin && authStore.user?.id) {
       filterParams.submitterId = authStore.user.id;
     }
@@ -253,6 +289,30 @@ function calculateDuration(idea: Idea): string {
   const end = new Date(idea.completedAt);
   const days = Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
   return `${days}`;
+}
+
+function showDeleteDialog(idea: Idea) {
+  ideaToDelete.value = idea;
+  deleteDialog.value = true;
+}
+
+async function deleteIdea() {
+  if (!ideaToDelete.value) return;
+  deleting.value = true;
+  try {
+    await ideasApi.delete(ideaToDelete.value.id);
+    snackbarText.value = t('reports.deleteSuccess');
+    snackbarColor.value = 'success';
+    snackbar.value = true;
+    deleteDialog.value = false;
+    await applyFilters();
+  } catch (error: any) {
+    snackbarText.value = error.response?.data?.error || t('reports.deleteFailed');
+    snackbarColor.value = 'error';
+    snackbar.value = true;
+  } finally {
+    deleting.value = false;
+  }
 }
 
 onMounted(() => {
