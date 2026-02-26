@@ -17,7 +17,7 @@ exports.ideasApi = {
         if (filters?.tags)
             filters.tags.forEach((tag) => params.append('tags', tag));
         const response = await client_1.default.get(`/api/ideas?${params.toString()}`);
-        return response.data;
+        return response.data.data;
     },
     getOne: async (id) => {
         const response = await client_1.default.get(`/api/ideas/${id}`);

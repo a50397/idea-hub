@@ -5,8 +5,8 @@
     <v-card class="mb-4">
       <v-card-title>{{ $t('reports.filters') }}</v-card-title>
       <v-card-text>
-        <v-row>
-          <v-col cols="12" md="3">
+        <v-row align="center" no-gutters class="ga-4">
+          <v-col cols="12" sm="auto" style="min-width: 200px; max-width: 250px;">
             <v-select
               v-model="filters.status"
               :label="$t('reports.status')"
@@ -14,27 +14,30 @@
               clearable
               variant="outlined"
               density="compact"
+              hide-details
             ></v-select>
           </v-col>
-          <v-col cols="12" md="3">
+          <v-col cols="12" sm="auto" style="min-width: 180px; max-width: 220px;">
             <v-text-field
               v-model="filters.startDate"
               :label="$t('reports.startDate')"
               type="date"
               variant="outlined"
               density="compact"
+              hide-details
             ></v-text-field>
           </v-col>
-          <v-col cols="12" md="3">
+          <v-col cols="12" sm="auto" style="min-width: 180px; max-width: 220px;">
             <v-text-field
               v-model="filters.endDate"
               :label="$t('reports.endDate')"
               type="date"
               variant="outlined"
               density="compact"
+              hide-details
             ></v-text-field>
           </v-col>
-          <v-col cols="12" md="3" class="d-flex align-center">
+          <v-col cols="12" sm="auto" class="d-flex align-center">
             <v-btn @click="applyFilters" color="primary" class="mr-2">
               {{ $t('common.apply') }}
             </v-btn>
