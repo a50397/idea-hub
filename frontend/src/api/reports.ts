@@ -34,7 +34,7 @@ export const reportsApi = {
     if (filters?.tags) filters.tags.forEach((tag) => params.append('tags', tag));
 
     const response = await client.get(`/reports/filtered?${params.toString()}`);
-    return response.data;
+    return response.data.data ?? response.data;
   },
 
   exportCSV: async (filters?: {
