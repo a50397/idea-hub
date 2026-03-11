@@ -30,9 +30,14 @@ A modern web application for managing internal improvement ideas, designed for e
 ### Security & Authentication
 - Session-based authentication with bcrypt password hashing
 - Role-based access control (RBAC)
-- Protected API endpoints
-- Input validation using Zod
-- XSS and SQL injection protection
+- CSRF protection via custom header validation
+- Security headers (CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy)
+- Input validation using Zod with ObjectId format enforcement
+- Protection against CSV injection in report exports
+- Session invalidation on role/email changes
+- Graceful server shutdown (SIGTERM/SIGINT)
+- Admin self-protection (cannot delete own account or change own role)
+- Rate limiting on API and login endpoints
 
 ## Tech Stack
 
@@ -259,6 +264,8 @@ npm run preview          # Preview production build
 - `PATCH /api/ideas/:id/reject` - Reject idea (Power User/Admin)
 - `PATCH /api/ideas/:id/claim` - Claim and start working on idea
 - `PATCH /api/ideas/:id/complete` - Mark idea as completed
+- `DELETE /api/ideas/:id` - Delete idea (Admin only)
+- `POST /api/ideas/:id/steps` - Add progress step to in-progress idea
 
 ### Reports Endpoints
 
@@ -272,8 +279,8 @@ npm run preview          # Preview production build
 - `GET /api/users` - Get all users
 - `GET /api/users/:id` - Get single user
 - `POST /api/users` - Create new user
-- `PATCH /api/users/:id` - Update user
-- `DELETE /api/users/:id` - Delete user
+- `PATCH /api/users/:id` - Update user (cannot change own role)
+- `DELETE /api/users/:id` - Delete user (cannot delete self)
 
 ## User Roles & Permissions
 
@@ -327,13 +334,14 @@ npm run preview          # Preview production build
 
 ## Testing
 
-The IdeaHub backend has **comprehensive test coverage** with 100+ test cases across all major functionality.
+IdeaHub has **comprehensive test coverage** across backend and frontend.
 
 ### Test Coverage Summary
 
-- **Total Test Cases**: 100+
-- **Estimated Code Coverage**: 75-85%
-- **Test Files**: 5 (auth, ideas, reports, users, integration, validation)
+- **Backend Tests**: 184 test cases across 7 suites
+- **Frontend Tests**: 265 test cases (i18n)
+- **Total**: 449 tests
+- **Test Files**: 7 backend (auth, ideas, reports, users, integration, validation, init-admin) + 1 frontend
 
 **What's Tested:**
 - ✅ Authentication & session management (23 tests)
@@ -342,8 +350,10 @@ The IdeaHub backend has **comprehensive test coverage** with 100+ test cases acr
 - ✅ User management (20 tests)
 - ✅ Integration workflows (10 tests)
 - ✅ Validation schemas (30+ tests)
+- ✅ Admin initialization (10+ tests)
 - ✅ RBAC enforcement
 - ✅ Error handling & edge cases
+- ✅ Frontend i18n (265 tests)
 
 See [backend/TEST_COVERAGE.md](backend/TEST_COVERAGE.md) for detailed coverage report.
 
@@ -380,7 +390,7 @@ npm test -- --watch
 
 ## Production Deployment
 
-### Using Docker (Recommended)
+### Using Docker Compose (Recommended)
 
 1. **Update environment variables**
    ```bash
@@ -391,18 +401,38 @@ npm test -- --watch
    ```env
    NODE_ENV=production
    SESSION_SECRET=<your-secure-random-secret>
-   DATABASE_URL=mongodb://mongodb:27017/ideahub
+   ADMIN_EMAIL=admin@yourdomain.com
+   ADMIN_PASSWORD=<strong-admin-password>
+   COOKIE_SECURE=true   # Set to true when behind HTTPS
    ```
 
 2. **Build and deploy**
    ```bash
-   docker-compose up -d --build
+   docker compose -f docker-compose.prod.yml up -d --build
    ```
 
-3. **Seed initial data**
+   For local Docker (HTTP):
    ```bash
-   docker-compose exec backend npm run prisma:seed
+   docker compose up -d --build
    ```
+
+3. **Access the application**
+   - Application: http://localhost (via nginx)
+   - Default admin: configured via `ADMIN_EMAIL` / `ADMIN_PASSWORD` in .env
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DATABASE_URL` | MongoDB connection string | `mongodb://mongodb:27017/ideahub` |
+| `SESSION_SECRET` | Secret for signing session cookies | Required in production |
+| `NODE_ENV` | Environment mode | `production` |
+| `BACKEND_PORT` | Backend server port | `3001` |
+| `COOKIE_SECURE` | Set `Secure` flag on cookies (requires HTTPS) | `false` |
+| `ADMIN_EMAIL` | Default admin email | `admin@ideahub.com` |
+| `ADMIN_PASSWORD` | Default admin password | `admin123` |
+| `ADMIN_NAME` | Default admin display name | `Admin` |
+| `VITE_API_URL` | Frontend API base URL (build-time) | `/api` (Docker), `http://localhost:3001` (dev) |
 
 ### Manual Deployment
 
@@ -428,11 +458,17 @@ npm test -- --watch
 ## Security Considerations
 
 - **Passwords**: All passwords are hashed using bcrypt with 10 salt rounds
-- **Sessions**: Secure session cookies with httpOnly flag
-- **Input Validation**: All inputs validated using Zod schemas
+- **Sessions**: Secure session cookies with httpOnly flag; configurable `Secure` and `SameSite` attributes
+- **CSRF**: Custom `X-Requested-With` header required on all state-changing API requests
+- **Input Validation**: All inputs validated using Zod schemas; URL params validated as MongoDB ObjectIds
 - **RBAC**: Role-based access control on all protected routes
-- **SQL Injection**: Protected by Prisma's parameterized queries
-- **XSS**: Protected by Vue's automatic escaping
+- **CSV Injection**: Report exports sanitize fields to prevent formula injection
+- **Security Headers**: CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy via nginx and Helmet
+- **Rate Limiting**: General API rate limit (100 req/15min) and login rate limit (10 req/15min)
+- **Error Handling**: Internal server errors return generic messages to prevent information leakage
+- **Session Invalidation**: Sessions are invalidated when user role or email is changed by admin
+- **Admin Protection**: Admins cannot delete their own account or change their own role
+- **Graceful Shutdown**: Server handles SIGTERM/SIGINT for clean disconnection
 
 ## Troubleshooting
 
