@@ -43,11 +43,17 @@ export const updateUserSchema = z.object({
   role: z.enum(['USER', 'POWER_USER', 'ADMIN']).optional(),
 });
 
+const paginationSchema = {
+  page: z.coerce.number().int().min(1, 'Page must be at least 1').optional().default(1),
+  limit: z.coerce.number().int().min(1, 'Limit must be at least 1').max(100, 'Limit must be at most 100').optional().default(20),
+};
+
 export const ideasQuerySchema = z.object({
   status: ideaStatusEnum.optional(),
   submitterId: z.string().regex(objectIdRegex, 'Invalid submitter ID').optional(),
   assigneeId: z.string().regex(objectIdRegex, 'Invalid assignee ID').optional(),
   tags: z.union([z.string(), z.array(z.string())]).optional(),
+  ...paginationSchema,
 });
 
 export const filteredReportQuerySchema = z.object({
@@ -58,4 +64,5 @@ export const filteredReportQuerySchema = z.object({
   startDate: z.string().datetime({ offset: true }).or(z.string().date()).optional(),
   endDate: z.string().datetime({ offset: true }).or(z.string().date()).optional(),
   format: z.enum(['json', 'csv']).optional(),
+  ...paginationSchema,
 });

@@ -175,53 +175,61 @@ router.get('/filtered', requireAuth, async (req, res) => {
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.issues[0].message });
     }
-    const query = parsed.data;
+    const data = parsed.data;
+    const page = data.page as number;
+    const limit = data.limit as number;
+    const skip = (page - 1) * limit;
 
     const where: Record<string, unknown> = {};
 
-    if (query.status) {
-      where.status = query.status;
+    if (data.status) {
+      where.status = data.status;
     }
-    if (query.submitterId) {
-      where.submitterId = query.submitterId;
+    if (data.submitterId) {
+      where.submitterId = data.submitterId;
     }
-    if (query.assigneeId) {
-      where.assigneeId = query.assigneeId;
+    if (data.assigneeId) {
+      where.assigneeId = data.assigneeId;
     }
-    if (query.tags) {
+    if (data.tags) {
       where.tags = {
-        hasSome: Array.isArray(query.tags) ? query.tags : [query.tags],
+        hasSome: Array.isArray(data.tags) ? data.tags : [data.tags],
       };
     }
-    if (query.startDate || query.endDate) {
+    if (data.startDate || data.endDate) {
       const submittedAt: { gte?: Date; lte?: Date } = {};
-      if (query.startDate) {
-        submittedAt.gte = new Date(query.startDate as string);
+      if (data.startDate) {
+        submittedAt.gte = new Date(data.startDate as string);
       }
-      if (query.endDate) {
-        submittedAt.lte = new Date(query.endDate as string);
+      if (data.endDate) {
+        submittedAt.lte = new Date(data.endDate as string);
       }
       where.submittedAt = submittedAt;
     }
 
-    const ideas = await prisma.idea.findMany({
-      where,
-      include: {
-        submitter: {
-          select: { id: true, name: true, email: true },
+    const [ideas, total] = await Promise.all([
+      prisma.idea.findMany({
+        where,
+        include: {
+          submitter: {
+            select: { id: true, name: true, email: true },
+          },
+          approver: {
+            select: { id: true, name: true, email: true },
+          },
+          assignee: {
+            select: { id: true, name: true, email: true },
+          },
         },
-        approver: {
-          select: { id: true, name: true, email: true },
-        },
-        assignee: {
-          select: { id: true, name: true, email: true },
-        },
-      },
-      orderBy: { submittedAt: 'desc' },
-    });
+        orderBy: { submittedAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      prisma.idea.count({ where }),
+    ]);
 
     // If CSV format requested
-    if (query.format === 'csv') {
+    if (data.format === 'csv') {
       const csvRows = [
         [
           'ID',
@@ -271,7 +279,15 @@ router.get('/filtered', requireAuth, async (req, res) => {
       res.setHeader('Content-Disposition', 'attachment; filename=ideas-report.csv');
       res.send(csvRows.join('\n'));
     } else {
-      res.json(ideas);
+      res.json({
+        data: ideas,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit),
+        },
+      });
     }
   } catch (error) {
     console.error('Error fetching filtered report:', error);
