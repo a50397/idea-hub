@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { IdeaStatus, EventType, Role, Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { requireAuth, requireRole } from '../middleware/auth';
-import { createIdeaSchema, reviewIdeaSchema, updateIdeaSchema, ideasQuerySchema, createStepSchema } from '../utils/validation';
+import { createIdeaSchema, reviewIdeaSchema, updateIdeaSchema, ideasQuerySchema, createStepSchema, objectIdParamSchema } from '../utils/validation';
 
 const router = Router();
 
@@ -74,7 +74,11 @@ router.get('/', requireAuth, async (req, res) => {
 // Get single idea
 router.get('/:id', requireAuth, async (req, res) => {
   try {
-    const id = req.params.id as string;
+    const parsed = objectIdParamSchema.safeParse(req.params.id);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid idea ID format' });
+    }
+    const id = parsed.data;
 
     const idea = await prisma.idea.findUnique({
       where: { id },
@@ -158,7 +162,11 @@ router.post('/', requireAuth, async (req, res) => {
 // Update idea (only by submitter)
 router.patch('/:id', requireAuth, async (req, res) => {
   try {
-    const id = req.params.id as string;
+    const idParsed = objectIdParamSchema.safeParse(req.params.id);
+    if (!idParsed.success) {
+      return res.status(400).json({ error: 'Invalid idea ID format' });
+    }
+    const id = idParsed.data;
     const userId = req.session.userId!;
     const data = updateIdeaSchema.parse(req.body);
 
@@ -215,7 +223,11 @@ router.patch('/:id', requireAuth, async (req, res) => {
 // Approve idea (Power User or Admin only)
 router.patch('/:id/approve', requireRole(Role.POWER_USER, Role.ADMIN), async (req, res) => {
   try {
-    const id = req.params.id as string;
+    const idParsed = objectIdParamSchema.safeParse(req.params.id);
+    if (!idParsed.success) {
+      return res.status(400).json({ error: 'Invalid idea ID format' });
+    }
+    const id = idParsed.data;
     const userId = req.session.userId!;
     const { note } = reviewIdeaSchema.parse(req.body);
 
@@ -277,7 +289,11 @@ router.patch('/:id/approve', requireRole(Role.POWER_USER, Role.ADMIN), async (re
 // Reject idea (Power User or Admin only)
 router.patch('/:id/reject', requireRole(Role.POWER_USER, Role.ADMIN), async (req, res) => {
   try {
-    const id = req.params.id as string;
+    const idParsed = objectIdParamSchema.safeParse(req.params.id);
+    if (!idParsed.success) {
+      return res.status(400).json({ error: 'Invalid idea ID format' });
+    }
+    const id = idParsed.data;
     const userId = req.session.userId!;
     const { note } = reviewIdeaSchema.parse(req.body);
 
@@ -336,7 +352,11 @@ router.patch('/:id/reject', requireRole(Role.POWER_USER, Role.ADMIN), async (req
 // Claim idea (start working on approved idea)
 router.patch('/:id/claim', requireAuth, async (req, res) => {
   try {
-    const id = req.params.id as string;
+    const idParsed = objectIdParamSchema.safeParse(req.params.id);
+    if (!idParsed.success) {
+      return res.status(400).json({ error: 'Invalid idea ID format' });
+    }
+    const id = idParsed.data;
     const userId = req.session.userId!;
 
     const existingIdea = await prisma.idea.findUnique({
@@ -397,7 +417,11 @@ router.patch('/:id/claim', requireAuth, async (req, res) => {
 // Complete idea (only by assignee)
 router.patch('/:id/complete', requireAuth, async (req, res) => {
   try {
-    const id = req.params.id as string;
+    const idParsed = objectIdParamSchema.safeParse(req.params.id);
+    if (!idParsed.success) {
+      return res.status(400).json({ error: 'Invalid idea ID format' });
+    }
+    const id = idParsed.data;
     const userId = req.session.userId!;
     const { note } = reviewIdeaSchema.parse(req.body);
 
@@ -462,7 +486,11 @@ router.patch('/:id/complete', requireAuth, async (req, res) => {
 // Delete idea (Admin only)
 router.delete('/:id', requireRole(Role.ADMIN), async (req, res) => {
   try {
-    const id = req.params.id as string;
+    const idParsed = objectIdParamSchema.safeParse(req.params.id);
+    if (!idParsed.success) {
+      return res.status(400).json({ error: 'Invalid idea ID format' });
+    }
+    const id = idParsed.data;
 
     const existingIdea = await prisma.idea.findUnique({
       where: { id },
@@ -489,7 +517,11 @@ router.delete('/:id', requireRole(Role.ADMIN), async (req, res) => {
 // Add a progress step to an idea (assignee only, IN_PROGRESS only)
 router.post('/:id/steps', requireAuth, async (req, res) => {
   try {
-    const id = req.params.id as string;
+    const idParsed = objectIdParamSchema.safeParse(req.params.id);
+    if (!idParsed.success) {
+      return res.status(400).json({ error: 'Invalid idea ID format' });
+    }
+    const id = idParsed.data;
     const userId = req.session.userId!;
     const data = createStepSchema.parse(req.body);
 

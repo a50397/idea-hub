@@ -87,7 +87,7 @@ describe('Users API', () => {
 
       const mockUsers = [
         {
-          id: 'user1',
+          id: 'bbbbbbbbbbbbbbbbbbbbb001',
           name: 'Alice',
           email: 'alice@example.com',
           role: 'USER',
@@ -156,7 +156,7 @@ describe('Users API', () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
 
       const mockUser = {
-        id: 'user1',
+        id: 'bbbbbbbbbbbbbbbbbbbbb001',
         name: 'Alice',
         email: 'alice@example.com',
         role: 'USER',
@@ -171,10 +171,10 @@ describe('Users API', () => {
 
       mockPrismaFunctions.user.findUnique.mockResolvedValue(mockUser);
 
-      const response = await agent.get('/api/users/user1');
+      const response = await agent.get('/api/users/bbbbbbbbbbbbbbbbbbbbb001');
 
       expect(response.status).toBe(200);
-      expect(response.body).toHaveProperty('id', 'user1');
+      expect(response.body).toHaveProperty('id', 'bbbbbbbbbbbbbbbbbbbbb001');
       expect(response.body).toHaveProperty('name', 'Alice');
       expect(response.body).toHaveProperty('_count');
     });
@@ -184,7 +184,7 @@ describe('Users API', () => {
 
       mockPrismaFunctions.user.findUnique.mockResolvedValue(null);
 
-      const response = await agent.get('/api/users/nonexistent');
+      const response = await agent.get('/api/users/ccccccccccccccccccccc404');
 
       expect(response.status).toBe(404);
       expect(response.body).toHaveProperty('error', 'User not found');
@@ -193,7 +193,7 @@ describe('Users API', () => {
     test('should return 403 for non-ADMIN', async () => {
       const { agent } = await loginAsUser(app, 'USER');
 
-      const response = await agent.get('/api/users/user1');
+      const response = await agent.get('/api/users/bbbbbbbbbbbbbbbbbbbbb001');
 
       expect(response.status).toBe(403);
     });
@@ -331,7 +331,7 @@ describe('Users API', () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
 
       const existingUser = {
-        id: 'user1',
+        id: 'bbbbbbbbbbbbbbbbbbbbb001',
         name: 'Old Name',
         email: 'old@example.com',
         role: 'USER',
@@ -348,7 +348,7 @@ describe('Users API', () => {
       mockPrismaFunctions.user.findUnique.mockResolvedValueOnce(null); // New email doesn't exist
       mockPrismaFunctions.user.update.mockResolvedValue(updatedUser);
 
-      const response = await agent.patch('/api/users/user1').send({
+      const response = await agent.patch('/api/users/bbbbbbbbbbbbbbbbbbbbb001').send({
         name: 'New Name',
         email: 'new@example.com',
       });
@@ -362,7 +362,7 @@ describe('Users API', () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
 
       const existingUser = {
-        id: 'user1',
+        id: 'bbbbbbbbbbbbbbbbbbbbb001',
         name: 'User',
         email: 'user@example.com',
         role: 'USER',
@@ -372,7 +372,7 @@ describe('Users API', () => {
       (bcrypt.hash as jest.Mock).mockResolvedValue('$2b$10$newhash');
       mockPrismaFunctions.user.update.mockResolvedValue(existingUser);
 
-      const response = await agent.patch('/api/users/user1').send({
+      const response = await agent.patch('/api/users/bbbbbbbbbbbbbbbbbbbbb001').send({
         password: 'newpassword123',
       });
 
@@ -391,7 +391,7 @@ describe('Users API', () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
 
       const existingUser = {
-        id: 'user1',
+        id: 'bbbbbbbbbbbbbbbbbbbbb001',
         name: 'User',
         email: 'user@example.com',
         role: 'USER',
@@ -405,7 +405,7 @@ describe('Users API', () => {
       mockPrismaFunctions.user.findUnique.mockResolvedValue(existingUser);
       mockPrismaFunctions.user.update.mockResolvedValue(updatedUser);
 
-      const response = await agent.patch('/api/users/user1').send({
+      const response = await agent.patch('/api/users/bbbbbbbbbbbbbbbbbbbbb001').send({
         role: 'POWER_USER',
       });
 
@@ -418,7 +418,7 @@ describe('Users API', () => {
 
       mockPrismaFunctions.user.findUnique.mockResolvedValue(null);
 
-      const response = await agent.patch('/api/users/nonexistent').send({
+      const response = await agent.patch('/api/users/ccccccccccccccccccccc404').send({
         name: 'New Name',
       });
 
@@ -430,7 +430,7 @@ describe('Users API', () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
 
       const existingUser = {
-        id: 'user1',
+        id: 'bbbbbbbbbbbbbbbbbbbbb001',
         email: 'user1@example.com',
       };
 
@@ -443,7 +443,7 @@ describe('Users API', () => {
         .mockResolvedValueOnce(existingUser)
         .mockResolvedValueOnce(conflictingUser);
 
-      const response = await agent.patch('/api/users/user1').send({
+      const response = await agent.patch('/api/users/bbbbbbbbbbbbbbbbbbbbb001').send({
         email: 'taken@example.com',
       });
 
@@ -454,7 +454,7 @@ describe('Users API', () => {
     test('should return 403 for non-ADMIN', async () => {
       const { agent } = await loginAsUser(app, 'USER');
 
-      const response = await agent.patch('/api/users/user1').send({
+      const response = await agent.patch('/api/users/bbbbbbbbbbbbbbbbbbbbb001').send({
         name: 'New Name',
       });
 
@@ -467,7 +467,7 @@ describe('Users API', () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
 
       const existingUser = {
-        id: 'user1',
+        id: 'bbbbbbbbbbbbbbbbbbbbb001',
         name: 'User',
         email: 'user@example.com',
       };
@@ -476,12 +476,12 @@ describe('Users API', () => {
       mockPrismaFunctions.idea.count.mockResolvedValue(0); // No associated ideas
       mockPrismaFunctions.user.delete.mockResolvedValue(existingUser);
 
-      const response = await agent.delete('/api/users/user1');
+      const response = await agent.delete('/api/users/bbbbbbbbbbbbbbbbbbbbb001');
 
       expect(response.status).toBe(200);
       expect(response.body).toHaveProperty('message', 'User deleted successfully');
       expect(mockPrismaFunctions.user.delete).toHaveBeenCalledWith({
-        where: { id: 'user1' },
+        where: { id: 'bbbbbbbbbbbbbbbbbbbbb001' },
       });
     });
 
@@ -489,7 +489,7 @@ describe('Users API', () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
 
       const existingUser = {
-        id: 'user1',
+        id: 'bbbbbbbbbbbbbbbbbbbbb001',
         name: 'User',
         email: 'user@example.com',
       };
@@ -497,7 +497,7 @@ describe('Users API', () => {
       mockPrismaFunctions.user.findUnique.mockResolvedValue(existingUser);
       mockPrismaFunctions.idea.count.mockResolvedValue(5); // Has associated ideas
 
-      const response = await agent.delete('/api/users/user1');
+      const response = await agent.delete('/api/users/bbbbbbbbbbbbbbbbbbbbb001');
 
       expect(response.status).toBe(400);
       expect(response.body).toHaveProperty('error');
@@ -510,7 +510,7 @@ describe('Users API', () => {
 
       mockPrismaFunctions.user.findUnique.mockResolvedValue(null);
 
-      const response = await agent.delete('/api/users/nonexistent');
+      const response = await agent.delete('/api/users/ccccccccccccccccccccc404');
 
       expect(response.status).toBe(404);
       expect(response.body).toHaveProperty('error', 'User not found');
@@ -519,7 +519,7 @@ describe('Users API', () => {
     test('should return 403 for non-ADMIN', async () => {
       const { agent } = await loginAsUser(app, 'POWER_USER');
 
-      const response = await agent.delete('/api/users/user1');
+      const response = await agent.delete('/api/users/bbbbbbbbbbbbbbbbbbbbb001');
 
       expect(response.status).toBe(403);
     });

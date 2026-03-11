@@ -10,8 +10,14 @@ import ideasRoutes from './routes/ideas';
 import reportsRoutes from './routes/reports';
 import usersRoutes from './routes/users';
 import { ensureAdminExists } from './utils/init-admin';
+import prisma from './lib/prisma';
 
 dotenv.config({ path: '../.env' });
+
+if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
+  console.error('FATAL: SESSION_SECRET environment variable is required in production. Exiting.');
+  process.exit(1);
+}
 
 const app = express();
 const PORT = process.env.BACKEND_PORT || 3001;
@@ -61,6 +67,19 @@ app.use(
   })
 );
 
+// CSRF protection: require a custom header on state-changing requests.
+// Browsers will not send custom headers cross-origin without a CORS preflight,
+// which is already restricted to the allowed origin.
+app.use('/api', (req, res, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    return next();
+  }
+  if (req.headers['x-requested-with'] === 'XMLHttpRequest') {
+    return next();
+  }
+  return res.status(403).json({ error: 'Missing CSRF header' });
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -75,8 +94,9 @@ app.use('/api/users', usersRoutes);
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error('Error:', err);
-  res.status(err.status || 500).json({
-    error: err.message || 'Internal server error',
+  const status = err.status || 500;
+  res.status(status).json({
+    error: status >= 500 ? 'Internal server error' : (err.message || 'Internal server error'),
   });
 });
 
@@ -85,11 +105,23 @@ app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
 
-app.listen(PORT, async () => {
+const server = app.listen(PORT, async () => {
   console.log(`🚀 IdeaHub Backend running on port ${PORT}`);
   console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔗 API available at: http://localhost:${PORT}`);
   await ensureAdminExists();
 });
+
+function gracefulShutdown(signal: string) {
+  console.log(`\n${signal} received. Shutting down gracefully...`);
+  server.close(async () => {
+    await prisma.$disconnect();
+    console.log('Server closed.');
+    process.exit(0);
+  });
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 export default app;

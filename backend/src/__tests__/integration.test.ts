@@ -132,7 +132,7 @@ describe('Integration Tests - Complete Workflows', () => {
 
       // Step 2: User submits an idea
       const submittedIdea = {
-        id: 'idea1',
+        id: 'aaaaaaaaaaaaaaaaaaaaa001',
         title: 'Implement Weekly Team Retrospectives',
         description: 'Regular retrospectives will help us identify and fix process issues quickly',
         benefits: 'Improved team communication, faster problem resolution, better morale',
@@ -184,7 +184,7 @@ describe('Integration Tests - Complete Workflows', () => {
       mockPrismaFunctions.idea.findUnique.mockResolvedValue(submittedIdea);
       mockPrismaFunctions.idea.update.mockResolvedValue(approvedIdea);
 
-      const approveResponse = await powerAgent.patch('/api/ideas/idea1/approve').send({
+      const approveResponse = await powerAgent.patch('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/approve').send({
         note: 'Great idea! Let\'s implement this.',
       });
 
@@ -212,7 +212,7 @@ describe('Integration Tests - Complete Workflows', () => {
       mockPrismaFunctions.idea.findUnique.mockResolvedValue(approvedIdea);
       mockPrismaFunctions.idea.update.mockResolvedValue(claimedIdea);
 
-      const claimResponse = await claimerAgent.patch('/api/ideas/idea1/claim');
+      const claimResponse = await claimerAgent.patch('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/claim');
 
       expect(claimResponse.status).toBe(200);
       expect(claimResponse.body.status).toBe('IN_PROGRESS');
@@ -228,7 +228,7 @@ describe('Integration Tests - Complete Workflows', () => {
       mockPrismaFunctions.idea.findUnique.mockResolvedValue(claimedIdea);
       mockPrismaFunctions.idea.update.mockResolvedValue(completedIdea);
 
-      const completeResponse = await claimerAgent.patch('/api/ideas/idea1/complete').send({
+      const completeResponse = await claimerAgent.patch('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/complete').send({
         note: 'Retrospective process is now in place. First session went great!',
       });
 
@@ -270,7 +270,7 @@ describe('Integration Tests - Complete Workflows', () => {
       });
 
       const submittedIdea = {
-        id: 'idea2',
+        id: 'aaaaaaaaaaaaaaaaaaaaa002',
         title: 'Install Nap Pods',
         description: 'Add nap pods for employees',
         benefits: 'Better rest',
@@ -313,7 +313,7 @@ describe('Integration Tests - Complete Workflows', () => {
       mockPrismaFunctions.idea.findUnique.mockResolvedValue(submittedIdea);
       mockPrismaFunctions.idea.update.mockResolvedValue(rejectedIdea);
 
-      const rejectResponse = await powerAgent.patch('/api/ideas/idea2/reject').send({
+      const rejectResponse = await powerAgent.patch('/api/ideas/aaaaaaaaaaaaaaaaaaaaa002/reject').send({
         note: 'Budget constraints make this unfeasible',
       });
 
@@ -346,7 +346,7 @@ describe('Integration Tests - Complete Workflows', () => {
 
       // Admin creates a new user
       const newUser = {
-        id: 'newuser',
+        id: 'bbbbbbbbbbbbbbbbbbbbb005',
         name: 'New Employee',
         email: 'new@example.com',
         role: 'USER',
@@ -376,7 +376,7 @@ describe('Integration Tests - Complete Workflows', () => {
       mockPrismaFunctions.user.findUnique.mockResolvedValue(newUser);
       mockPrismaFunctions.user.update.mockResolvedValue(updatedUser);
 
-      const updateResponse = await adminAgent.patch('/api/users/newuser').send({
+      const updateResponse = await adminAgent.patch('/api/users/bbbbbbbbbbbbbbbbbbbbb005').send({
         role: 'POWER_USER',
       });
 
@@ -445,10 +445,10 @@ describe('Integration Tests - Complete Workflows', () => {
         password: 'password123',
       });
 
-      const approveResponse = await userAgent.patch('/api/ideas/idea1/approve');
+      const approveResponse = await userAgent.patch('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/approve');
       expect(approveResponse.status).toBe(403);
 
-      const rejectResponse = await userAgent.patch('/api/ideas/idea1/reject');
+      const rejectResponse = await userAgent.patch('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/reject');
       expect(rejectResponse.status).toBe(403);
     });
   });
@@ -503,14 +503,14 @@ describe('Integration Tests - Complete Workflows', () => {
       expect(me2.body.id).toBe('user2');
 
       // User 2 (Power User) can approve, User 1 cannot
-      const approve1 = await agent1.patch('/api/ideas/idea1/approve');
+      const approve1 = await agent1.patch('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/approve');
       expect(approve1.status).toBe(403);
 
-      mockPrismaFunctions.idea.findUnique.mockResolvedValue({ id: 'idea1', status: 'SUBMITTED' });
-      mockPrismaFunctions.idea.update.mockResolvedValue({ id: 'idea1', status: 'APPROVED' });
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue({ id: 'aaaaaaaaaaaaaaaaaaaaa001', status: 'SUBMITTED' });
+      mockPrismaFunctions.idea.update.mockResolvedValue({ id: 'aaaaaaaaaaaaaaaaaaaaa001', status: 'APPROVED' });
       mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
 
-      const approve2 = await agent2.patch('/api/ideas/idea1/approve');
+      const approve2 = await agent2.patch('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/approve');
       expect(approve2.status).toBe(200);
     });
   });

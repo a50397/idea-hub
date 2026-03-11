@@ -5,28 +5,19 @@ const client = axios.create({
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
+    'X-Requested-With': 'XMLHttpRequest',
   },
 });
 
-// Request interceptor
-client.interceptors.request.use(
-  (config) => {
-    return config;
-  },
-  (error) => {
-    return Promise.reject(error);
-  }
-);
-
-// Response interceptor
+// Response interceptor — handle session expiry.
+// For /auth/me, the router guard handles the redirect, so skip here.
+// For all other 401s (session expired mid-use), do a full redirect.
 client.interceptors.response.use(
-  (response) => {
-    return response;
-  },
+  (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      // Unauthorized - redirect to login
-      if (window.location.pathname !== '/login') {
+      const isAuthCheck = error.config?.url?.includes('/auth/me');
+      if (!isAuthCheck) {
         window.location.href = '/login';
       }
     }

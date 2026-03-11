@@ -2,7 +2,9 @@ import { z } from 'zod';
 import { Effort, IdeaStatus } from '@prisma/client';
 
 const ideaStatusEnum = z.nativeEnum(IdeaStatus);
-const objectIdRegex = /^[a-f\d]{24}$/i;
+export const objectIdRegex = /^[a-f\d]{24}$/i;
+
+export const objectIdParamSchema = z.string().regex(objectIdRegex, 'Invalid ID format');
 
 export const loginSchema = z.object({
   email: z.string().email('Invalid email address'),

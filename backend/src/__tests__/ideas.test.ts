@@ -117,7 +117,7 @@ describe('Ideas API', () => {
 
       const mockIdeas = [
         {
-          id: 'idea1',
+          id: 'aaaaaaaaaaaaaaaaaaaaa001',
           title: 'Test Idea 1',
           description: 'Description 1',
           benefits: 'Benefits 1',
@@ -229,7 +229,7 @@ describe('Ideas API', () => {
       const { agent } = await loginAsUser(app);
 
       const mockIdea = {
-        id: 'idea1',
+        id: 'aaaaaaaaaaaaaaaaaaaaa001',
         title: 'Test Idea',
         description: 'Description',
         benefits: 'Benefits',
@@ -255,7 +255,7 @@ describe('Ideas API', () => {
 
       mockPrismaFunctions.idea.findUnique.mockResolvedValue(mockIdea);
 
-      const response = await agent.get('/api/ideas/idea1');
+      const response = await agent.get('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001');
 
       expect(response.status).toBe(200);
       expect(response.body).toHaveProperty('title', 'Test Idea');
@@ -267,7 +267,7 @@ describe('Ideas API', () => {
 
       mockPrismaFunctions.idea.findUnique.mockResolvedValue(null);
 
-      const response = await agent.get('/api/ideas/nonexistent');
+      const response = await agent.get('/api/ideas/ccccccccccccccccccccc404');
 
       expect(response.status).toBe(404);
       expect(response.body).toHaveProperty('error', 'Idea not found');
@@ -279,7 +279,7 @@ describe('Ideas API', () => {
       const { agent, user } = await loginAsUser(app);
 
       const mockIdea = {
-        id: 'idea1',
+        id: 'aaaaaaaaaaaaaaaaaaaaa001',
         title: 'New Idea',
         description: 'This is a new idea description with enough characters',
         benefits: 'Great benefits that are well described',
@@ -367,7 +367,7 @@ describe('Ideas API', () => {
       const { agent, user } = await loginAsUser(app);
 
       const mockIdea = {
-        id: 'idea1',
+        id: 'aaaaaaaaaaaaaaaaaaaaa001',
         title: 'New Idea',
         description: 'This is a new idea description',
         benefits: 'Great benefits',
@@ -401,7 +401,7 @@ describe('Ideas API', () => {
       const { agent, user } = await loginAsUser(app);
 
       const existingIdea = {
-        id: 'idea1',
+        id: 'aaaaaaaaaaaaaaaaaaaaa001',
         title: 'Original Title',
         status: 'SUBMITTED',
         submitterId: user.id,
@@ -417,7 +417,7 @@ describe('Ideas API', () => {
       mockPrismaFunctions.idea.update.mockResolvedValue(updatedIdea);
       mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
 
-      const response = await agent.patch('/api/ideas/idea1').send({
+      const response = await agent.patch('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001').send({
         title: 'Updated Title',
       });
 
@@ -429,7 +429,7 @@ describe('Ideas API', () => {
       const { agent } = await loginAsUser(app);
 
       const existingIdea = {
-        id: 'idea1',
+        id: 'aaaaaaaaaaaaaaaaaaaaa001',
         title: 'Original Title',
         status: 'SUBMITTED',
         submitterId: 'otheruser',
@@ -437,7 +437,7 @@ describe('Ideas API', () => {
 
       mockPrismaFunctions.idea.findUnique.mockResolvedValue(existingIdea);
 
-      const response = await agent.patch('/api/ideas/idea1').send({
+      const response = await agent.patch('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001').send({
         title: 'Updated Title',
       });
 
@@ -449,7 +449,7 @@ describe('Ideas API', () => {
       const { agent, user } = await loginAsUser(app);
 
       const existingIdea = {
-        id: 'idea1',
+        id: 'aaaaaaaaaaaaaaaaaaaaa001',
         title: 'Original Title',
         status: 'APPROVED',
         submitterId: user.id,
@@ -457,7 +457,7 @@ describe('Ideas API', () => {
 
       mockPrismaFunctions.idea.findUnique.mockResolvedValue(existingIdea);
 
-      const response = await agent.patch('/api/ideas/idea1').send({
+      const response = await agent.patch('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001').send({
         title: 'Updated Title',
       });
 
@@ -471,7 +471,7 @@ describe('Ideas API', () => {
       const { agent, user } = await loginAsUser(app, 'POWER_USER');
 
       const existingIdea = {
-        id: 'idea1',
+        id: 'aaaaaaaaaaaaaaaaaaaaa001',
         title: 'Test Idea',
         status: 'SUBMITTED',
         submitterId: 'otheruser',
@@ -490,7 +490,7 @@ describe('Ideas API', () => {
       mockPrismaFunctions.idea.update.mockResolvedValue(approvedIdea);
       mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
 
-      const response = await agent.patch('/api/ideas/idea1/approve').send({
+      const response = await agent.patch('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/approve').send({
         note: 'Great idea!',
       });
 
@@ -509,7 +509,7 @@ describe('Ideas API', () => {
     test('should not approve as regular USER', async () => {
       const { agent } = await loginAsUser(app, 'USER');
 
-      const response = await agent.patch('/api/ideas/idea1/approve').send({
+      const response = await agent.patch('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/approve').send({
         note: 'Trying to approve',
       });
 
@@ -521,13 +521,13 @@ describe('Ideas API', () => {
       const { agent } = await loginAsUser(app, 'POWER_USER');
 
       const existingIdea = {
-        id: 'idea1',
+        id: 'aaaaaaaaaaaaaaaaaaaaa001',
         status: 'APPROVED',
       };
 
       mockPrismaFunctions.idea.findUnique.mockResolvedValue(existingIdea);
 
-      const response = await agent.patch('/api/ideas/idea1/approve');
+      const response = await agent.patch('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/approve');
 
       expect(response.status).toBe(400);
       expect(response.body).toHaveProperty('error');
@@ -539,7 +539,7 @@ describe('Ideas API', () => {
       const { agent, user } = await loginAsUser(app, 'POWER_USER');
 
       const existingIdea = {
-        id: 'idea1',
+        id: 'aaaaaaaaaaaaaaaaaaaaa001',
         title: 'Test Idea',
         status: 'SUBMITTED',
       };
@@ -557,7 +557,7 @@ describe('Ideas API', () => {
       mockPrismaFunctions.idea.update.mockResolvedValue(rejectedIdea);
       mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
 
-      const response = await agent.patch('/api/ideas/idea1/reject').send({
+      const response = await agent.patch('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/reject').send({
         note: 'Not feasible at this time',
       });
 
@@ -568,7 +568,7 @@ describe('Ideas API', () => {
     test('should not reject as regular USER', async () => {
       const { agent } = await loginAsUser(app, 'USER');
 
-      const response = await agent.patch('/api/ideas/idea1/reject');
+      const response = await agent.patch('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/reject');
 
       expect(response.status).toBe(403);
     });
@@ -579,7 +579,7 @@ describe('Ideas API', () => {
       const { agent, user } = await loginAsUser(app);
 
       const existingIdea = {
-        id: 'idea1',
+        id: 'aaaaaaaaaaaaaaaaaaaaa001',
         status: 'APPROVED',
       };
 
@@ -597,7 +597,7 @@ describe('Ideas API', () => {
       mockPrismaFunctions.idea.update.mockResolvedValue(claimedIdea);
       mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
 
-      const response = await agent.patch('/api/ideas/idea1/claim');
+      const response = await agent.patch('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/claim');
 
       expect(response.status).toBe(200);
       expect(response.body.status).toBe('IN_PROGRESS');
@@ -608,13 +608,13 @@ describe('Ideas API', () => {
       const { agent } = await loginAsUser(app);
 
       const existingIdea = {
-        id: 'idea1',
+        id: 'aaaaaaaaaaaaaaaaaaaaa001',
         status: 'SUBMITTED',
       };
 
       mockPrismaFunctions.idea.findUnique.mockResolvedValue(existingIdea);
 
-      const response = await agent.patch('/api/ideas/idea1/claim');
+      const response = await agent.patch('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/claim');
 
       expect(response.status).toBe(400);
       expect(response.body).toHaveProperty('error');
@@ -626,7 +626,7 @@ describe('Ideas API', () => {
       const { agent, user } = await loginAsUser(app);
 
       const existingIdea = {
-        id: 'idea1',
+        id: 'aaaaaaaaaaaaaaaaaaaaa001',
         status: 'IN_PROGRESS',
         assigneeId: user.id,
       };
@@ -644,7 +644,7 @@ describe('Ideas API', () => {
       mockPrismaFunctions.idea.update.mockResolvedValue(completedIdea);
       mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
 
-      const response = await agent.patch('/api/ideas/idea1/complete').send({
+      const response = await agent.patch('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/complete').send({
         note: 'Successfully implemented',
       });
 
@@ -656,14 +656,14 @@ describe('Ideas API', () => {
       const { agent } = await loginAsUser(app);
 
       const existingIdea = {
-        id: 'idea1',
+        id: 'aaaaaaaaaaaaaaaaaaaaa001',
         status: 'IN_PROGRESS',
         assigneeId: 'otheruser',
       };
 
       mockPrismaFunctions.idea.findUnique.mockResolvedValue(existingIdea);
 
-      const response = await agent.patch('/api/ideas/idea1/complete');
+      const response = await agent.patch('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/complete');
 
       expect(response.status).toBe(403);
       expect(response.body).toHaveProperty('error');
@@ -673,14 +673,14 @@ describe('Ideas API', () => {
       const { agent, user } = await loginAsUser(app);
 
       const existingIdea = {
-        id: 'idea1',
+        id: 'aaaaaaaaaaaaaaaaaaaaa001',
         status: 'APPROVED',
         assigneeId: user.id,
       };
 
       mockPrismaFunctions.idea.findUnique.mockResolvedValue(existingIdea);
 
-      const response = await agent.patch('/api/ideas/idea1/complete');
+      const response = await agent.patch('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/complete');
 
       expect(response.status).toBe(400);
     });
@@ -691,7 +691,7 @@ describe('Ideas API', () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
 
       const existingIdea = {
-        id: 'idea1',
+        id: 'aaaaaaaaaaaaaaaaaaaaa001',
         title: 'Test Idea',
         status: 'SUBMITTED',
       };
@@ -699,19 +699,19 @@ describe('Ideas API', () => {
       mockPrismaFunctions.idea.findUnique.mockResolvedValue(existingIdea);
       mockPrismaFunctions.idea.delete.mockResolvedValue(existingIdea);
 
-      const response = await agent.delete('/api/ideas/idea1');
+      const response = await agent.delete('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001');
 
       expect(response.status).toBe(200);
       expect(response.body).toHaveProperty('message', 'Idea deleted');
       expect(mockPrismaFunctions.idea.delete).toHaveBeenCalledWith({
-        where: { id: 'idea1' },
+        where: { id: 'aaaaaaaaaaaaaaaaaaaaa001' },
       });
     });
 
     test('should not delete as regular USER', async () => {
       const { agent } = await loginAsUser(app, 'USER');
 
-      const response = await agent.delete('/api/ideas/idea1');
+      const response = await agent.delete('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001');
 
       expect(response.status).toBe(403);
       expect(response.body).toHaveProperty('error');
@@ -720,7 +720,7 @@ describe('Ideas API', () => {
     test('should not delete as POWER_USER', async () => {
       const { agent } = await loginAsUser(app, 'POWER_USER');
 
-      const response = await agent.delete('/api/ideas/idea1');
+      const response = await agent.delete('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001');
 
       expect(response.status).toBe(403);
       expect(response.body).toHaveProperty('error');
@@ -731,7 +731,7 @@ describe('Ideas API', () => {
 
       mockPrismaFunctions.idea.findUnique.mockResolvedValue(null);
 
-      const response = await agent.delete('/api/ideas/nonexistent');
+      const response = await agent.delete('/api/ideas/ccccccccccccccccccccc404');
 
       expect(response.status).toBe(404);
       expect(response.body).toHaveProperty('error', 'Idea not found');
@@ -743,14 +743,14 @@ describe('Ideas API', () => {
       const { agent, user } = await loginAsUser(app);
 
       const existingIdea = {
-        id: 'idea1',
+        id: 'aaaaaaaaaaaaaaaaaaaaa001',
         status: 'IN_PROGRESS',
         assigneeId: user.id,
       };
 
       const mockStep = {
         id: 'step1',
-        ideaId: 'idea1',
+        ideaId: 'aaaaaaaaaaaaaaaaaaaaa001',
         text: 'Implemented the first part',
         createdAt: new Date(),
       };
@@ -758,7 +758,7 @@ describe('Ideas API', () => {
       mockPrismaFunctions.idea.findUnique.mockResolvedValue(existingIdea);
       mockPrismaFunctions.ideaStep.create.mockResolvedValue(mockStep);
 
-      const response = await agent.post('/api/ideas/idea1/steps').send({
+      const response = await agent.post('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/steps').send({
         text: 'Implemented the first part',
       });
 
@@ -766,7 +766,7 @@ describe('Ideas API', () => {
       expect(response.body).toHaveProperty('text', 'Implemented the first part');
       expect(mockPrismaFunctions.ideaStep.create).toHaveBeenCalledWith({
         data: {
-          ideaId: 'idea1',
+          ideaId: 'aaaaaaaaaaaaaaaaaaaaa001',
           text: 'Implemented the first part',
         },
       });
@@ -776,14 +776,14 @@ describe('Ideas API', () => {
       const { agent } = await loginAsUser(app);
 
       const existingIdea = {
-        id: 'idea1',
+        id: 'aaaaaaaaaaaaaaaaaaaaa001',
         status: 'IN_PROGRESS',
         assigneeId: 'otheruser',
       };
 
       mockPrismaFunctions.idea.findUnique.mockResolvedValue(existingIdea);
 
-      const response = await agent.post('/api/ideas/idea1/steps').send({
+      const response = await agent.post('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/steps').send({
         text: 'Trying to add a step',
       });
 
@@ -795,14 +795,14 @@ describe('Ideas API', () => {
       const { agent, user } = await loginAsUser(app);
 
       const existingIdea = {
-        id: 'idea1',
+        id: 'aaaaaaaaaaaaaaaaaaaaa001',
         status: 'APPROVED',
         assigneeId: user.id,
       };
 
       mockPrismaFunctions.idea.findUnique.mockResolvedValue(existingIdea);
 
-      const response = await agent.post('/api/ideas/idea1/steps').send({
+      const response = await agent.post('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/steps').send({
         text: 'Trying to add a step',
       });
 
@@ -815,7 +815,7 @@ describe('Ideas API', () => {
 
       mockPrismaFunctions.idea.findUnique.mockResolvedValue(null);
 
-      const response = await agent.post('/api/ideas/nonexistent/steps').send({
+      const response = await agent.post('/api/ideas/ccccccccccccccccccccc404/steps').send({
         text: 'Step for missing idea',
       });
 
@@ -827,14 +827,14 @@ describe('Ideas API', () => {
       const { agent, user } = await loginAsUser(app);
 
       const existingIdea = {
-        id: 'idea1',
+        id: 'aaaaaaaaaaaaaaaaaaaaa001',
         status: 'IN_PROGRESS',
         assigneeId: user.id,
       };
 
       mockPrismaFunctions.idea.findUnique.mockResolvedValue(existingIdea);
 
-      const response = await agent.post('/api/ideas/idea1/steps').send({
+      const response = await agent.post('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/steps').send({
         text: '',
       });
 

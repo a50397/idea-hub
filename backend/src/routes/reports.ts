@@ -6,6 +6,16 @@ import { filteredReportQuerySchema } from '../utils/validation';
 
 const router = Router();
 
+// Sanitize a string for safe CSV output (prevent formula injection)
+function sanitizeCsvField(value: string): string {
+  let escaped = value.replace(/"/g, '""');
+  // Prevent CSV injection: prefix formulaic characters with a single quote
+  if (/^[=+\-@\t\r]/.test(escaped)) {
+    escaped = "'" + escaped;
+  }
+  return `"${escaped}"`;
+}
+
 // Get dashboard summary statistics
 router.get('/summary', requireAuth, async (req, res) => {
   try {
@@ -122,10 +132,10 @@ router.get('/monthly-trend', requireAuth, async (req, res) => {
   }
 });
 
-// Get top contributors
+// Get top contributors (Power User or Admin only)
 router.get('/top-contributors', requireAuth, async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit as string) || 10;
+    const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 10, 1), 50);
 
     const contributors = await prisma.idea.groupBy({
       by: ['assigneeId'],
@@ -268,18 +278,18 @@ router.get('/filtered', requireAuth, async (req, res) => {
         csvRows.push(
           [
             idea.id,
-            `"${idea.title.replace(/"/g, '""')}"`,
+            sanitizeCsvField(idea.title),
             idea.status,
             idea.effort,
-            `"${idea.submitter.name}"`,
-            idea.approver ? `"${idea.approver.name}"` : '',
-            idea.assignee ? `"${idea.assignee.name}"` : '',
+            sanitizeCsvField(idea.submitter.name),
+            idea.approver ? sanitizeCsvField(idea.approver.name) : '',
+            idea.assignee ? sanitizeCsvField(idea.assignee.name) : '',
             idea.submittedAt.toISOString(),
             idea.approvedAt ? idea.approvedAt.toISOString() : '',
             idea.startedAt ? idea.startedAt.toISOString() : '',
             idea.completedAt ? idea.completedAt.toISOString() : '',
             duration,
-            `"${idea.tags.join(', ')}"`,
+            sanitizeCsvField(idea.tags.join(', ')),
           ].join(',')
         );
       });

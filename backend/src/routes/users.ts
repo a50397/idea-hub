@@ -3,7 +3,7 @@ import bcrypt from 'bcrypt';
 import { Role } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { requireRole } from '../middleware/auth';
-import { createUserSchema, updateUserSchema } from '../utils/validation';
+import { createUserSchema, updateUserSchema, objectIdParamSchema } from '../utils/validation';
 
 const router = Router();
 
@@ -39,7 +39,11 @@ router.get('/', requireRole(Role.ADMIN), async (req, res) => {
 // Get single user (Admin only)
 router.get('/:id', requireRole(Role.ADMIN), async (req, res) => {
   try {
-    const id = req.params.id as string;
+    const idParsed = objectIdParamSchema.safeParse(req.params.id);
+    if (!idParsed.success) {
+      return res.status(400).json({ error: 'Invalid user ID format' });
+    }
+    const id = idParsed.data;
 
     const user = await prisma.user.findUnique({
       where: { id },
@@ -117,7 +121,11 @@ router.post('/', requireRole(Role.ADMIN), async (req, res) => {
 // Update user (Admin only)
 router.patch('/:id', requireRole(Role.ADMIN), async (req, res) => {
   try {
-    const id = req.params.id as string;
+    const idParsed = objectIdParamSchema.safeParse(req.params.id);
+    if (!idParsed.success) {
+      return res.status(400).json({ error: 'Invalid user ID format' });
+    }
+    const id = idParsed.data;
     const data = updateUserSchema.parse(req.body);
 
     const existingUser = await prisma.user.findUnique({
@@ -138,7 +146,7 @@ router.patch('/:id', requireRole(Role.ADMIN), async (req, res) => {
       }
     }
 
-    const updateData: any = {};
+    const updateData: Record<string, string | Role> = {};
     if (data.name) updateData.name = data.name;
     if (data.email) updateData.email = data.email;
     if (data.role) updateData.role = data.role as Role;
@@ -159,6 +167,14 @@ router.patch('/:id', requireRole(Role.ADMIN), async (req, res) => {
       },
     });
 
+    // If role or email changed, invalidate the target user's sessions
+    if (data.role || data.email) {
+      const mongoStore = req.sessionStore as any;
+      if (mongoStore?.collection) {
+        await mongoStore.collection.deleteMany({ 'session.userId': id });
+      }
+    }
+
     res.json(user);
   } catch (error) {
     if (error instanceof Error) {
@@ -172,7 +188,11 @@ router.patch('/:id', requireRole(Role.ADMIN), async (req, res) => {
 // Delete user (Admin only)
 router.delete('/:id', requireRole(Role.ADMIN), async (req, res) => {
   try {
-    const id = req.params.id as string;
+    const idParsed = objectIdParamSchema.safeParse(req.params.id);
+    if (!idParsed.success) {
+      return res.status(400).json({ error: 'Invalid user ID format' });
+    }
+    const id = idParsed.data;
 
     const existingUser = await prisma.user.findUnique({
       where: { id },

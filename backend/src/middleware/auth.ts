@@ -21,8 +21,3 @@ export const requireRole = (...allowedRoles: Role[]) => {
     next();
   };
 };
-
-export const optionalAuth = (req: Request, res: Response, next: NextFunction) => {
-  // Always continue, but attach user info if available
-  next();
-};

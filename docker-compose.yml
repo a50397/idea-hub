@@ -29,7 +29,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    image: fokips/ideahub-backend:1.0.0
+    image: fokips/ideahub-backend:1.1.0
     container_name: ideahub-backend
     restart: unless-stopped
     logging:
@@ -45,7 +45,7 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@ideahub.com}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
       ADMIN_NAME: ${ADMIN_NAME:-Admin}
-      COOKIE_SECURE: ${COOKIE_SECURE:-false}    
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
     expose:
       - '3001'
     depends_on:
@@ -66,7 +66,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    image: fokips/ideahub-frontend:1.0.0
+    image: fokips/ideahub-frontend:1.1.0
     container_name: ideahub-frontend
     restart: unless-stopped
     ports:
