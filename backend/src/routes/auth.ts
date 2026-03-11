@@ -16,6 +16,16 @@ const loginLimiter = rateLimit({
   message: { error: 'Too many login attempts. Please try again later.' },
 });
 
+const passwordChangeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'test',
+  keyGenerator: (req) => req.session?.userId || req.ip || 'unknown',
+  message: { error: 'Too many password change attempts. Please try again later.' },
+});
+
 // Login
 router.post('/login', loginLimiter as any, async (req, res) => {
   try {
@@ -67,7 +77,7 @@ router.post('/logout', (req, res) => {
 });
 
 // Change password
-router.post('/change-password', requireAuth, async (req, res) => {
+router.post('/change-password', requireAuth, passwordChangeLimiter as any, async (req, res) => {
   try {
     const { currentPassword, newPassword } = changePasswordSchema.parse(req.body);
 
@@ -90,7 +100,26 @@ router.post('/change-password', requireAuth, async (req, res) => {
       data: { passwordHash },
     });
 
-    res.json({ message: 'Password changed successfully' });
+    // Strip auth fields first so the session is unusable even if destroy fails
+    const sessionToDestroy = req.session;
+    delete sessionToDestroy.userId;
+    delete sessionToDestroy.email;
+    delete sessionToDestroy.name;
+    delete sessionToDestroy.role;
+
+    sessionToDestroy.save((saveErr) => {
+      if (saveErr) {
+        console.error('Error saving stripped session:', saveErr);
+      }
+      sessionToDestroy.destroy((err) => {
+        res.clearCookie('connect.sid');
+        if (err) {
+          console.error('Error destroying session after password change:', err);
+          return res.status(500).json({ error: 'Password changed but session invalidation failed. Please log out manually.' });
+        }
+        res.json({ message: 'Password changed successfully. Please log in again.' });
+      });
+    });
   } catch (error) {
     if (error instanceof Error) {
       res.status(400).json({ error: error.message });

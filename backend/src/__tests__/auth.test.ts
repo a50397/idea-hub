@@ -334,7 +334,7 @@ describe('Authentication API', () => {
         });
 
       expect(response.status).toBe(200);
-      expect(response.body).toHaveProperty('message', 'Password changed successfully');
+      expect(response.body).toHaveProperty('message', 'Password changed successfully. Please log in again.');
       expect(bcrypt.compare).toHaveBeenCalledWith('oldpassword', validUser.passwordHash);
       expect(bcrypt.hash).toHaveBeenCalledWith('newpassword123', 10);
       expect(mockPrismaFunctions.user.update).toHaveBeenCalledWith({
@@ -425,6 +425,28 @@ describe('Authentication API', () => {
 
       expect(response.status).toBe(404);
       expect(response.body).toHaveProperty('error', 'User not found');
+    });
+
+    test('should invalidate session after successful password change', async () => {
+      const agent = await loginAgent();
+
+      mockPrismaFunctions.user.findUnique.mockResolvedValueOnce(validUser);
+      (bcrypt.compare as jest.Mock).mockResolvedValueOnce(true);
+      (bcrypt.hash as jest.Mock).mockResolvedValueOnce('$2b$10$newhashedpassword');
+      mockPrismaFunctions.user.update.mockResolvedValueOnce({ ...validUser, passwordHash: '$2b$10$newhashedpassword' });
+
+      const changeResponse = await agent
+        .post('/api/auth/change-password')
+        .send({
+          currentPassword: 'oldpassword',
+          newPassword: 'newpassword123',
+        });
+
+      expect(changeResponse.status).toBe(200);
+
+      // Subsequent authenticated request should fail — session was destroyed
+      const meResponse = await agent.get('/api/auth/me');
+      expect(meResponse.status).toBe(401);
     });
   });
 

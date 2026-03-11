@@ -17,6 +17,9 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'happy-dom',
+    alias: {
+      'vue-i18n': 'vue-i18n/dist/vue-i18n.esm-bundler.js',
+    },
   },
   server: {
     port: 5173,

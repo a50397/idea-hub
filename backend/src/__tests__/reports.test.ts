@@ -281,7 +281,7 @@ describe('Reports API', () => {
 
   describe('GET /api/reports/top-contributors', () => {
     test('should return top contributors with default limit', async () => {
-      const { agent } = await loginAsUser(app);
+      const { agent } = await loginAsUser(app, 'POWER_USER');
 
       mockPrismaFunctions.idea.groupBy.mockResolvedValue([
         { assigneeId: 'user1', _count: { id: 15 } },
@@ -309,7 +309,7 @@ describe('Reports API', () => {
     });
 
     test('should respect custom limit parameter', async () => {
-      const { agent } = await loginAsUser(app);
+      const { agent } = await loginAsUser(app, 'ADMIN');
 
       mockPrismaFunctions.idea.groupBy.mockResolvedValue([
         { assigneeId: 'user1', _count: { id: 15 } },
@@ -329,7 +329,7 @@ describe('Reports API', () => {
     });
 
     test('should return empty array when no completed ideas', async () => {
-      const { agent } = await loginAsUser(app);
+      const { agent } = await loginAsUser(app, 'POWER_USER');
 
       mockPrismaFunctions.idea.groupBy.mockResolvedValue([]);
       mockPrismaFunctions.user.findMany.mockResolvedValue([]);
@@ -338,6 +338,15 @@ describe('Reports API', () => {
 
       expect(response.status).toBe(200);
       expect(response.body).toEqual([]);
+    });
+
+    test('should return 403 for regular USER role', async () => {
+      const { agent } = await loginAsUser(app, 'USER');
+
+      const response = await agent.get('/api/reports/top-contributors');
+
+      expect(response.status).toBe(403);
+      expect(response.body).toHaveProperty('error');
     });
   });
 

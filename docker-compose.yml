@@ -39,11 +39,11 @@ services:
         max-file: "3"
     environment:
       DATABASE_URL: mongodb://mongodb:27017/ideahub?replicaSet=rs0
-      SESSION_SECRET: ${SESSION_SECRET:-your-super-secret-session-key-change-in-production}
+      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET must be set in .env}
       NODE_ENV: ${NODE_ENV:-production}
       BACKEND_PORT: 3001
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@ideahub.com}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?ADMIN_EMAIL must be set in .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
       ADMIN_NAME: ${ADMIN_NAME:-Admin}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
     expose:

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { IdeaStatus, Role } from '@prisma/client';
 import prisma from '../lib/prisma';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, requireRole } from '../middleware/auth';
 import { filteredReportQuerySchema } from '../utils/validation';
 
 const router = Router();
@@ -133,7 +133,7 @@ router.get('/monthly-trend', requireAuth, async (req, res) => {
 });
 
 // Get top contributors (Power User or Admin only)
-router.get('/top-contributors', requireAuth, async (req, res) => {
+router.get('/top-contributors', requireRole(Role.POWER_USER, Role.ADMIN), async (req, res) => {
   try {
     const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 10, 1), 50);
 

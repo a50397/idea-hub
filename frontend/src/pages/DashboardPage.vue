@@ -79,7 +79,7 @@
           </v-card>
         </v-col>
 
-        <v-col cols="12" md="6">
+        <v-col v-if="authStore.isPowerUser" cols="12" md="6">
           <v-card>
             <v-card-title>{{ $t('dashboard.topContributors') }}</v-card-title>
             <v-card-text>
@@ -134,11 +134,13 @@ import {
   Legend,
 } from 'chart.js';
 import { reportsApi } from '../api/reports';
+import { useAuthStore } from '../stores/auth';
 import type { DashboardSummary, MonthlyTrend, TopContributor } from '../types';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
 
 const { t } = useI18n();
+const authStore = useAuthStore();
 const loading = ref(true);
 const summary = ref<DashboardSummary | null>(null);
 const monthlyTrend = ref<MonthlyTrend[]>([]);
@@ -181,14 +183,16 @@ const chartOptions = {
 async function loadDashboard() {
   loading.value = true;
   try {
-    const [summaryData, trendData, contributorsData] = await Promise.all([
+    const [summaryData, trendData] = await Promise.all([
       reportsApi.getSummary(),
       reportsApi.getMonthlyTrend(),
-      reportsApi.getTopContributors(5),
     ]);
     summary.value = summaryData;
     monthlyTrend.value = trendData;
-    topContributors.value = contributorsData;
+
+    if (authStore.isPowerUser) {
+      topContributors.value = await reportsApi.getTopContributors(5);
+    }
   } catch (error) {
     console.error('Error loading dashboard:', error);
   } finally {

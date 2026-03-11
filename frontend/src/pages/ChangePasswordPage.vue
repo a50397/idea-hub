@@ -71,11 +71,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from 'vue';
+import { ref, reactive, onUnmounted } from 'vue';
+import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { authApi } from '../api/auth';
+import { useAuthStore } from '../stores/auth';
 
 const { t } = useI18n();
+const router = useRouter();
+const authStore = useAuthStore();
 
 const currentPassword = ref('');
 const newPassword = ref('');
@@ -86,6 +90,7 @@ const showConfirmPassword = ref(false);
 const loading = ref(false);
 const errorMessage = ref('');
 const showSuccess = ref(false);
+let redirectTimer: ReturnType<typeof setTimeout> | null = null;
 
 const errors = reactive({
   currentPassword: [] as string[],
@@ -115,6 +120,10 @@ function validateForm(): boolean {
   return !errors.currentPassword.length && !errors.newPassword.length && !errors.confirmPassword.length;
 }
 
+onUnmounted(() => {
+  if (redirectTimer) clearTimeout(redirectTimer);
+});
+
 async function handleSubmit() {
   if (!validateForm()) return;
 
@@ -127,6 +136,12 @@ async function handleSubmit() {
     currentPassword.value = '';
     newPassword.value = '';
     confirmPassword.value = '';
+    // Clear any existing timer and schedule redirect
+    if (redirectTimer) clearTimeout(redirectTimer);
+    redirectTimer = setTimeout(() => {
+      authStore.user = null;
+      router.replace({ path: '/login' });
+    }, 2000);
   } catch (error: any) {
     errorMessage.value = error.response?.data?.error || t('changePassword.failed');
   } finally {
