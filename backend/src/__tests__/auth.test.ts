@@ -328,4 +328,41 @@ describe('Authentication API', () => {
       expect(meResponse2.status).toBe(200);
     });
   });
+
+  describe('Rate Limiting', () => {
+    test('should return 429 after exceeding login attempts', async () => {
+      // Temporarily enable rate limiting by overriding NODE_ENV
+      const originalEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'development';
+
+      // Need a fresh app so the rate limiter re-evaluates the skip condition
+      const rateLimitedApp = createTestApp();
+
+      mockPrismaFunctions.user.findUnique.mockResolvedValue(null);
+
+      // Make 11 login attempts (limit is 10)
+      for (let i = 0; i < 10; i++) {
+        await request(rateLimitedApp).post('/api/auth/login').send({
+          email: 'test@example.com',
+          password: 'wrong',
+        });
+      }
+
+      const response = await request(rateLimitedApp).post('/api/auth/login').send({
+        email: 'test@example.com',
+        password: 'wrong',
+      });
+
+      expect(response.status).toBe(429);
+      expect(response.body).toHaveProperty('error', 'Too many login attempts. Please try again later.');
+
+      process.env.NODE_ENV = originalEnv;
+    });
+
+    test('should not rate limit other endpoints', async () => {
+      // Logout endpoint should not be rate limited
+      const response = await request(app).post('/api/auth/logout');
+      expect(response.status).not.toBe(429);
+    });
+  });
 });
