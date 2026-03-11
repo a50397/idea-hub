@@ -136,6 +136,11 @@ router.patch('/:id', requireRole(Role.ADMIN), async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
+    // Prevent admin from changing their own role
+    if (id === req.session.userId && data.role && data.role !== existingUser.role) {
+      return res.status(400).json({ error: 'Cannot change your own role' });
+    }
+
     // Check if email change conflicts with existing user
     if (data.email && data.email !== existingUser.email) {
       const emailExists = await prisma.user.findUnique({
@@ -200,6 +205,11 @@ router.delete('/:id', requireRole(Role.ADMIN), async (req, res) => {
 
     if (!existingUser) {
       return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Prevent admin from deleting themselves
+    if (id === req.session.userId) {
+      return res.status(400).json({ error: 'Cannot delete your own account' });
     }
 
     // Check if user has any ideas
