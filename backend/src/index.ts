@@ -9,14 +9,20 @@ import authRoutes from './routes/auth';
 import ideasRoutes from './routes/ideas';
 import reportsRoutes from './routes/reports';
 import usersRoutes from './routes/users';
+import crypto from 'crypto';
 import { ensureAdminExists } from './utils/init-admin';
 import prisma from './lib/prisma';
 
 dotenv.config({ path: '../.env' });
 
-if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
-  console.error('FATAL: SESSION_SECRET environment variable is required in production. Exiting.');
-  process.exit(1);
+if (!process.env.SESSION_SECRET) {
+  if (process.env.NODE_ENV !== 'development') {
+    console.error('FATAL: SESSION_SECRET environment variable is required outside of development. Exiting.');
+    process.exit(1);
+  }
+  // Generate a random secret for development so it's never hardcoded
+  process.env.SESSION_SECRET = crypto.randomBytes(32).toString('hex');
+  console.warn('WARNING: SESSION_SECRET not set. Generated a random ephemeral secret for development.');
 }
 
 const app = express();
@@ -50,7 +56,7 @@ app.use(express.urlencoded({ extended: true }));
 // Session configuration
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || 'your-super-secret-session-key-change-in-production',
+    secret: process.env.SESSION_SECRET!,
     resave: false,
     saveUninitialized: false,
     store: MongoStore.create({
