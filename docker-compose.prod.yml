@@ -1,3 +1,5 @@
+name: ideahub
+
 services:
   mongodb:
     image: mongo:7
@@ -26,10 +28,7 @@ services:
       start_period: 30s
 
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    image: fokips/ideahub-backend:1.0.0
+    image: fokips/ideahub-backend:latest
     container_name: ideahub-backend
     restart: unless-stopped
     logging:
@@ -39,15 +38,15 @@ services:
         max-file: "3"
     environment:
       DATABASE_URL: mongodb://mongodb:27017/ideahub?replicaSet=rs0
-      SESSION_SECRET: ${SESSION_SECRET:-your-super-secret-session-key-change-in-production}
+      SESSION_SECRET: ${SESSION_SECRET}
       NODE_ENV: ${NODE_ENV:-production}
-      BACKEND_PORT: 3001
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@ideahub.com}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      BACKEND_PORT: ${BACKEND_PORT:-3001}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       ADMIN_NAME: ${ADMIN_NAME:-Admin}
-      COOKIE_SECURE: ${COOKIE_SECURE:-false}    
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
     expose:
-      - '3001'
+      - "3001"
     depends_on:
       mongodb:
         condition: service_healthy
@@ -66,7 +65,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    image: fokips/ideahub-frontend:1.0.0
+    image: fokips/ideahub-frontend:latest
     container_name: ideahub-frontend
     restart: unless-stopped
     ports:

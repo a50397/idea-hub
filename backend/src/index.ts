@@ -3,6 +3,8 @@ import session from 'express-session';
 import MongoStore from 'connect-mongo';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import authRoutes from './routes/auth';
 import ideasRoutes from './routes/ideas';
 import reportsRoutes from './routes/reports';
@@ -15,6 +17,18 @@ const app = express();
 const PORT = process.env.BACKEND_PORT || 3001;
 
 app.set('trust proxy', 1);
+
+// Security Middleware
+app.use(helmet());
+
+// Rate Limiting (General)
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per `window` (here, per 15 minutes)
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api', limiter);
 
 // Middleware
 app.use(
