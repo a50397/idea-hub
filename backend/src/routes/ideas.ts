@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { IdeaStatus, EventType, Role } from '@prisma/client';
+import { IdeaStatus, EventType, Role, Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { requireAuth, requireRole } from '../middleware/auth';
 import { createIdeaSchema, reviewIdeaSchema, updateIdeaSchema, ideasQuerySchema } from '../utils/validation';
@@ -100,27 +100,30 @@ router.post('/', requireAuth, async (req, res) => {
     const data = createIdeaSchema.parse(req.body);
     const userId = req.session.userId!;
 
-    const idea = await prisma.idea.create({
-      data: {
-        ...data,
-        submitterId: userId,
-        status: IdeaStatus.SUBMITTED,
-      },
-      include: {
-        submitter: {
-          select: { id: true, name: true, email: true },
+    const idea = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const created = await tx.idea.create({
+        data: {
+          ...data,
+          submitterId: userId,
+          status: IdeaStatus.SUBMITTED,
         },
-      },
-    });
+        include: {
+          submitter: {
+            select: { id: true, name: true, email: true },
+          },
+        },
+      });
 
-    // Create event
-    await prisma.ideaEvent.create({
-      data: {
-        ideaId: idea.id,
-        type: EventType.SUBMITTED,
-        byUserId: userId,
-        note: 'Initial submission',
-      },
+      await tx.ideaEvent.create({
+        data: {
+          ideaId: created.id,
+          type: EventType.SUBMITTED,
+          byUserId: userId,
+          note: 'Initial submission',
+        },
+      });
+
+      return created;
     });
 
     res.status(201).json(idea);
@@ -157,24 +160,27 @@ router.patch('/:id', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Can only update ideas in SUBMITTED status' });
     }
 
-    const updatedIdea = await prisma.idea.update({
-      where: { id },
-      data,
-      include: {
-        submitter: {
-          select: { id: true, name: true, email: true },
+    const updatedIdea = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const updated = await tx.idea.update({
+        where: { id },
+        data,
+        include: {
+          submitter: {
+            select: { id: true, name: true, email: true },
+          },
         },
-      },
-    });
+      });
 
-    // Create event
-    await prisma.ideaEvent.create({
-      data: {
-        ideaId: id,
-        type: EventType.UPDATED,
-        byUserId: userId,
-        note: 'Idea updated',
-      },
+      await tx.ideaEvent.create({
+        data: {
+          ideaId: id,
+          type: EventType.UPDATED,
+          byUserId: userId,
+          note: 'Idea updated',
+        },
+      });
+
+      return updated;
     });
 
     res.json(updatedIdea);
@@ -206,31 +212,34 @@ router.patch('/:id/approve', requireRole(Role.POWER_USER, Role.ADMIN), async (re
       return res.status(400).json({ error: 'Can only approve ideas in SUBMITTED status' });
     }
 
-    const updatedIdea = await prisma.idea.update({
-      where: { id },
-      data: {
-        status: IdeaStatus.APPROVED,
-        approverId: userId,
-        approvedAt: new Date(),
-      },
-      include: {
-        submitter: {
-          select: { id: true, name: true, email: true },
+    const updatedIdea = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const updated = await tx.idea.update({
+        where: { id },
+        data: {
+          status: IdeaStatus.APPROVED,
+          approverId: userId,
+          approvedAt: new Date(),
         },
-        approver: {
-          select: { id: true, name: true, email: true },
+        include: {
+          submitter: {
+            select: { id: true, name: true, email: true },
+          },
+          approver: {
+            select: { id: true, name: true, email: true },
+          },
         },
-      },
-    });
+      });
 
-    // Create event
-    await prisma.ideaEvent.create({
-      data: {
-        ideaId: id,
-        type: EventType.APPROVED,
-        byUserId: userId,
-        note: note || 'Idea approved',
-      },
+      await tx.ideaEvent.create({
+        data: {
+          ideaId: id,
+          type: EventType.APPROVED,
+          byUserId: userId,
+          note: note || 'Idea approved',
+        },
+      });
+
+      return updated;
     });
 
     // TODO: Send notification to submitter
@@ -265,31 +274,34 @@ router.patch('/:id/reject', requireRole(Role.POWER_USER, Role.ADMIN), async (req
       return res.status(400).json({ error: 'Can only reject ideas in SUBMITTED status' });
     }
 
-    const updatedIdea = await prisma.idea.update({
-      where: { id },
-      data: {
-        status: IdeaStatus.REJECTED,
-        approverId: userId,
-        rejectedAt: new Date(),
-      },
-      include: {
-        submitter: {
-          select: { id: true, name: true, email: true },
+    const updatedIdea = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const updated = await tx.idea.update({
+        where: { id },
+        data: {
+          status: IdeaStatus.REJECTED,
+          approverId: userId,
+          rejectedAt: new Date(),
         },
-        approver: {
-          select: { id: true, name: true, email: true },
+        include: {
+          submitter: {
+            select: { id: true, name: true, email: true },
+          },
+          approver: {
+            select: { id: true, name: true, email: true },
+          },
         },
-      },
-    });
+      });
 
-    // Create event
-    await prisma.ideaEvent.create({
-      data: {
-        ideaId: id,
-        type: EventType.REJECTED,
-        byUserId: userId,
-        note: note || 'Idea rejected',
-      },
+      await tx.ideaEvent.create({
+        data: {
+          ideaId: id,
+          type: EventType.REJECTED,
+          byUserId: userId,
+          note: note || 'Idea rejected',
+        },
+      });
+
+      return updated;
     });
 
     res.json(updatedIdea);
@@ -320,34 +332,37 @@ router.patch('/:id/claim', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Can only claim ideas in APPROVED status' });
     }
 
-    const updatedIdea = await prisma.idea.update({
-      where: { id },
-      data: {
-        status: IdeaStatus.IN_PROGRESS,
-        assigneeId: userId,
-        startedAt: new Date(),
-      },
-      include: {
-        submitter: {
-          select: { id: true, name: true, email: true },
+    const updatedIdea = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const updated = await tx.idea.update({
+        where: { id },
+        data: {
+          status: IdeaStatus.IN_PROGRESS,
+          assigneeId: userId,
+          startedAt: new Date(),
         },
-        approver: {
-          select: { id: true, name: true, email: true },
+        include: {
+          submitter: {
+            select: { id: true, name: true, email: true },
+          },
+          approver: {
+            select: { id: true, name: true, email: true },
+          },
+          assignee: {
+            select: { id: true, name: true, email: true },
+          },
         },
-        assignee: {
-          select: { id: true, name: true, email: true },
-        },
-      },
-    });
+      });
 
-    // Create event
-    await prisma.ideaEvent.create({
-      data: {
-        ideaId: id,
-        type: EventType.CLAIMED,
-        byUserId: userId,
-        note: 'Claimed and started working on idea',
-      },
+      await tx.ideaEvent.create({
+        data: {
+          ideaId: id,
+          type: EventType.CLAIMED,
+          byUserId: userId,
+          note: 'Claimed and started working on idea',
+        },
+      });
+
+      return updated;
     });
 
     res.json(updatedIdea);
@@ -383,33 +398,36 @@ router.patch('/:id/complete', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'Only the assignee can complete this idea' });
     }
 
-    const updatedIdea = await prisma.idea.update({
-      where: { id },
-      data: {
-        status: IdeaStatus.DONE,
-        completedAt: new Date(),
-      },
-      include: {
-        submitter: {
-          select: { id: true, name: true, email: true },
+    const updatedIdea = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const updated = await tx.idea.update({
+        where: { id },
+        data: {
+          status: IdeaStatus.DONE,
+          completedAt: new Date(),
         },
-        approver: {
-          select: { id: true, name: true, email: true },
+        include: {
+          submitter: {
+            select: { id: true, name: true, email: true },
+          },
+          approver: {
+            select: { id: true, name: true, email: true },
+          },
+          assignee: {
+            select: { id: true, name: true, email: true },
+          },
         },
-        assignee: {
-          select: { id: true, name: true, email: true },
-        },
-      },
-    });
+      });
 
-    // Create event
-    await prisma.ideaEvent.create({
-      data: {
-        ideaId: id,
-        type: EventType.COMPLETED,
-        byUserId: userId,
-        note: note || 'Idea completed',
-      },
+      await tx.ideaEvent.create({
+        data: {
+          ideaId: id,
+          type: EventType.COMPLETED,
+          byUserId: userId,
+          note: note || 'Idea completed',
+        },
+      });
+
+      return updated;
     });
 
     res.json(updatedIdea);
