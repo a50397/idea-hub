@@ -2,29 +2,33 @@ import { Router } from 'express';
 import { IdeaStatus, EventType, Role } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { requireAuth, requireRole } from '../middleware/auth';
-import { createIdeaSchema, reviewIdeaSchema, updateIdeaSchema } from '../utils/validation';
+import { createIdeaSchema, reviewIdeaSchema, updateIdeaSchema, ideasQuerySchema } from '../utils/validation';
 
 const router = Router();
 
 // Get all ideas with filters
 router.get('/', requireAuth, async (req, res) => {
   try {
-    const { status, submitterId, assigneeId, tags } = req.query;
+    const parsed = ideasQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0].message });
+    }
+    const query = parsed.data;
 
-    const where: any = {};
+    const where: Record<string, unknown> = {};
 
-    if (status) {
-      where.status = status;
+    if (query.status) {
+      where.status = query.status;
     }
-    if (submitterId) {
-      where.submitterId = submitterId;
+    if (query.submitterId) {
+      where.submitterId = query.submitterId;
     }
-    if (assigneeId) {
-      where.assigneeId = assigneeId;
+    if (query.assigneeId) {
+      where.assigneeId = query.assigneeId;
     }
-    if (tags) {
+    if (query.tags) {
       where.tags = {
-        hasSome: Array.isArray(tags) ? tags : [tags],
+        hasSome: Array.isArray(query.tags) ? query.tags : [query.tags],
       };
     }
 
@@ -54,7 +58,7 @@ router.get('/', requireAuth, async (req, res) => {
 // Get single idea
 router.get('/:id', requireAuth, async (req, res) => {
   try {
-    const { id } = req.params;
+    const id = req.params.id as string;
 
     const idea = await prisma.idea.findUnique({
       where: { id },
@@ -132,7 +136,7 @@ router.post('/', requireAuth, async (req, res) => {
 // Update idea (only by submitter)
 router.patch('/:id', requireAuth, async (req, res) => {
   try {
-    const { id } = req.params;
+    const id = req.params.id as string;
     const userId = req.session.userId!;
     const data = updateIdeaSchema.parse(req.body);
 
@@ -186,7 +190,7 @@ router.patch('/:id', requireAuth, async (req, res) => {
 // Approve idea (Power User or Admin only)
 router.patch('/:id/approve', requireRole(Role.POWER_USER, Role.ADMIN), async (req, res) => {
   try {
-    const { id } = req.params;
+    const id = req.params.id as string;
     const userId = req.session.userId!;
     const { note } = reviewIdeaSchema.parse(req.body);
 
@@ -245,7 +249,7 @@ router.patch('/:id/approve', requireRole(Role.POWER_USER, Role.ADMIN), async (re
 // Reject idea (Power User or Admin only)
 router.patch('/:id/reject', requireRole(Role.POWER_USER, Role.ADMIN), async (req, res) => {
   try {
-    const { id } = req.params;
+    const id = req.params.id as string;
     const userId = req.session.userId!;
     const { note } = reviewIdeaSchema.parse(req.body);
 
@@ -301,7 +305,7 @@ router.patch('/:id/reject', requireRole(Role.POWER_USER, Role.ADMIN), async (req
 // Claim idea (start working on approved idea)
 router.patch('/:id/claim', requireAuth, async (req, res) => {
   try {
-    const { id } = req.params;
+    const id = req.params.id as string;
     const userId = req.session.userId!;
 
     const existingIdea = await prisma.idea.findUnique({
@@ -359,7 +363,7 @@ router.patch('/:id/claim', requireAuth, async (req, res) => {
 // Complete idea (only by assignee)
 router.patch('/:id/complete', requireAuth, async (req, res) => {
   try {
-    const { id } = req.params;
+    const id = req.params.id as string;
     const userId = req.session.userId!;
     const { note } = reviewIdeaSchema.parse(req.body);
 

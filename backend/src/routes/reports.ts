@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { IdeaStatus } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { requireAuth } from '../middleware/auth';
+import { filteredReportQuerySchema } from '../utils/validation';
 
 const router = Router();
 
@@ -170,32 +171,37 @@ router.get('/top-contributors', requireAuth, async (req, res) => {
 // Get filtered report data with CSV export capability
 router.get('/filtered', requireAuth, async (req, res) => {
   try {
-    const { status, startDate, endDate, submitterId, assigneeId, tags, format } = req.query;
+    const parsed = filteredReportQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0].message });
+    }
+    const query = parsed.data;
 
-    const where: any = {};
+    const where: Record<string, unknown> = {};
 
-    if (status) {
-      where.status = status;
+    if (query.status) {
+      where.status = query.status;
     }
-    if (submitterId) {
-      where.submitterId = submitterId;
+    if (query.submitterId) {
+      where.submitterId = query.submitterId;
     }
-    if (assigneeId) {
-      where.assigneeId = assigneeId;
+    if (query.assigneeId) {
+      where.assigneeId = query.assigneeId;
     }
-    if (tags) {
+    if (query.tags) {
       where.tags = {
-        hasSome: Array.isArray(tags) ? tags : [tags],
+        hasSome: Array.isArray(query.tags) ? query.tags : [query.tags],
       };
     }
-    if (startDate || endDate) {
-      where.submittedAt = {};
-      if (startDate) {
-        where.submittedAt.gte = new Date(startDate as string);
+    if (query.startDate || query.endDate) {
+      const submittedAt: { gte?: Date; lte?: Date } = {};
+      if (query.startDate) {
+        submittedAt.gte = new Date(query.startDate as string);
       }
-      if (endDate) {
-        where.submittedAt.lte = new Date(endDate as string);
+      if (query.endDate) {
+        submittedAt.lte = new Date(query.endDate as string);
       }
+      where.submittedAt = submittedAt;
     }
 
     const ideas = await prisma.idea.findMany({
@@ -215,7 +221,7 @@ router.get('/filtered', requireAuth, async (req, res) => {
     });
 
     // If CSV format requested
-    if (format === 'csv') {
+    if (query.format === 'csv') {
       const csvRows = [
         [
           'ID',

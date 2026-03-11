@@ -5,6 +5,8 @@ import {
   reviewIdeaSchema,
   createUserSchema,
   updateUserSchema,
+  ideasQuerySchema,
+  filteredReportQuerySchema,
 } from '../utils/validation';
 import { Effort } from '@prisma/client';
 
@@ -346,6 +348,113 @@ describe('Validation Schemas', () => {
     test('should allow empty object (no updates)', () => {
       const result = updateUserSchema.safeParse({});
       expect(result.success).toBe(true);
+    });
+  });
+
+  describe('ideasQuerySchema', () => {
+    test('should validate empty query (no filters)', () => {
+      const result = ideasQuerySchema.safeParse({});
+      expect(result.success).toBe(true);
+    });
+
+    test('should validate valid status filter', () => {
+      const result = ideasQuerySchema.safeParse({ status: 'APPROVED' });
+      expect(result.success).toBe(true);
+    });
+
+    test('should reject invalid status', () => {
+      const result = ideasQuerySchema.safeParse({ status: 'INVALID' });
+      expect(result.success).toBe(false);
+    });
+
+    test('should validate valid ObjectId for submitterId', () => {
+      const result = ideasQuerySchema.safeParse({ submitterId: '507f1f77bcf86cd799439011' });
+      expect(result.success).toBe(true);
+    });
+
+    test('should reject invalid submitterId', () => {
+      const result = ideasQuerySchema.safeParse({ submitterId: 'not-an-id' });
+      expect(result.success).toBe(false);
+    });
+
+    test('should validate valid ObjectId for assigneeId', () => {
+      const result = ideasQuerySchema.safeParse({ assigneeId: '507f1f77bcf86cd799439011' });
+      expect(result.success).toBe(true);
+    });
+
+    test('should reject invalid assigneeId', () => {
+      const result = ideasQuerySchema.safeParse({ assigneeId: '123' });
+      expect(result.success).toBe(false);
+    });
+
+    test('should validate tags as string', () => {
+      const result = ideasQuerySchema.safeParse({ tags: 'automation' });
+      expect(result.success).toBe(true);
+    });
+
+    test('should validate tags as array', () => {
+      const result = ideasQuerySchema.safeParse({ tags: ['automation', 'process'] });
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('filteredReportQuerySchema', () => {
+    test('should validate empty query', () => {
+      const result = filteredReportQuerySchema.safeParse({});
+      expect(result.success).toBe(true);
+    });
+
+    test('should validate all filters combined', () => {
+      const result = filteredReportQuerySchema.safeParse({
+        status: 'DONE',
+        submitterId: '507f1f77bcf86cd799439011',
+        assigneeId: '607f1f77bcf86cd799439022',
+        tags: ['test'],
+        startDate: '2024-01-01',
+        endDate: '2024-12-31',
+        format: 'csv',
+      });
+      expect(result.success).toBe(true);
+    });
+
+    test('should reject invalid status', () => {
+      const result = filteredReportQuerySchema.safeParse({ status: 'BOGUS' });
+      expect(result.success).toBe(false);
+    });
+
+    test('should validate ISO date string for startDate', () => {
+      const result = filteredReportQuerySchema.safeParse({ startDate: '2024-01-01' });
+      expect(result.success).toBe(true);
+    });
+
+    test('should validate ISO datetime string for startDate', () => {
+      const result = filteredReportQuerySchema.safeParse({ startDate: '2024-01-01T00:00:00Z' });
+      expect(result.success).toBe(true);
+    });
+
+    test('should reject invalid date format', () => {
+      const result = filteredReportQuerySchema.safeParse({ startDate: 'not-a-date' });
+      expect(result.success).toBe(false);
+    });
+
+    test('should accept format=json', () => {
+      const result = filteredReportQuerySchema.safeParse({ format: 'json' });
+      expect(result.success).toBe(true);
+    });
+
+    test('should accept format=csv', () => {
+      const result = filteredReportQuerySchema.safeParse({ format: 'csv' });
+      expect(result.success).toBe(true);
+    });
+
+    test('should reject invalid format', () => {
+      const result = filteredReportQuerySchema.safeParse({ format: 'xml' });
+      expect(result.success).toBe(false);
+    });
+
+    test('should reject invalid submitterId', () => {
+      const result = filteredReportQuerySchema.safeParse({ submitterId: 'bad' });
+      expect(result.success).toBe(false);
     });
   });
 });
