@@ -1,7 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import { createI18n } from 'vue-i18n';
-import en from '../i18n/en';
-import sk from '../i18n/sk';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { join, dirname } from 'node:path';
+import enCompiled from '../i18n/en.json';
+import skCompiled from '../i18n/sk.json';
+
+const __dir = dirname(fileURLToPath(import.meta.url));
+const en: Record<string, any> = JSON.parse(readFileSync(join(__dir, '../i18n/en.json'), 'utf8'));
+const sk: Record<string, any> = JSON.parse(readFileSync(join(__dir, '../i18n/sk.json'), 'utf8'));
 
 function flattenKeys(obj: Record<string, any>, prefix = ''): string[] {
   return Object.entries(obj).flatMap(([key, value]) => {
@@ -83,7 +90,7 @@ describe('i18n runtime', () => {
       legacy: false,
       locale,
       fallbackLocale: 'en',
-      messages: { en, sk },
+      messages: { en: enCompiled, sk: skCompiled },
     });
   }
 
