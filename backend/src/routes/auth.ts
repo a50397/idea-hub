@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import bcrypt from 'bcrypt';
-import rateLimit from 'express-rate-limit';
+import { rateLimit } from 'express-rate-limit';
 import prisma from '../lib/prisma';
 import { loginSchema, changePasswordSchema } from '../utils/validation';
 import { requireAuth } from '../middleware/auth';
@@ -22,7 +22,7 @@ const passwordChangeLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skip: () => process.env.NODE_ENV === 'test',
-  keyGenerator: (req) => req.session?.userId || req.ip || 'unknown',
+  keyGenerator: (req) => req.session.userId!.toString(),
   message: { error: 'Too many password change attempts. Please try again later.' },
 });
 
