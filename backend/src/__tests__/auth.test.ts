@@ -512,6 +512,72 @@ describe('Authentication API', () => {
       process.env.NODE_ENV = originalEnv;
     });
 
+    test('should return 429 after exceeding change-password attempts', async () => {
+      const originalEnv = process.env.NODE_ENV;
+      try {
+
+        process.env.NODE_ENV = 'development';
+
+        const rateLimitedApp = express();
+        rateLimitedApp.use(cors());
+        rateLimitedApp.use(express.json());
+        rateLimitedApp.use(
+          session({
+            secret: 'test-secret',
+            resave: false,
+            saveUninitialized: false,
+            cookie: { secure: false },
+          })
+        );
+        rateLimitedApp.post('/test-login', (req, res) => {
+          req.session.userId = 'user123';
+          req.session.email = 'test@example.com';
+          req.session.name = 'Test User';
+          req.session.role = 'USER';
+          res.status(204).send();
+        });
+        rateLimitedApp.use('/api/auth', authRoutes);
+
+        const agent = request.agent(rateLimitedApp);
+
+        const user = {
+          id: 'user123',
+          name: 'Test User',
+          email: 'test@example.com',
+          passwordHash: '$2b$10$hashedpassword',
+          role: 'USER',
+        };
+
+        mockPrismaFunctions.user.findUnique.mockResolvedValue(user);
+        (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+
+        // Set authenticated session without touching /login limiter state.
+        const sessionResponse = await agent.post('/test-login').send();
+        expect(sessionResponse.status).toBe(204);
+
+        // Make 6 change-password attempts (limit is 5) with wrong current password.
+        for (let i = 0; i < 5; i++) {
+          const response = await agent.post('/api/auth/change-password').send({
+            currentPassword: 'wrongpassword',
+            newPassword: 'newpassword123',
+          });
+
+          expect(response.status).toBe(400);
+          expect(response.body).toHaveProperty('error', 'Current password is incorrect');
+        }
+
+        const rateLimitedResponse = await agent.post('/api/auth/change-password').send({
+          currentPassword: 'wrongpassword',
+          newPassword: 'newpassword123',
+        });
+
+        expect(rateLimitedResponse.status).toBe(429);
+        expect(rateLimitedResponse.body).toHaveProperty('error', 'Too many password change attempts. Please try again later.');
+      } finally {
+        process.env.NODE_ENV = originalEnv;
+      }
+    });
+
     test('should not rate limit other endpoints', async () => {
       // Logout endpoint should not be rate limited
       const response = await request(app).post('/api/auth/logout');
