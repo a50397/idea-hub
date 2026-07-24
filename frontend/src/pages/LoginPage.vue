@@ -9,7 +9,39 @@
                 <span class="text-white">{{ $t('common.appName') }}</span>
               </v-card-title>
               <v-card-text class="pa-6">
-                <v-form @submit.prevent="handleLogin">
+                <v-alert
+                  v-if="ssoFailed"
+                  type="error"
+                  closable
+                  class="mb-4"
+                  @click:close="ssoFailed = false"
+                >
+                  {{ $t('auth.ssoFailed') }}
+                </v-alert>
+
+                <template v-if="ssoEnabled">
+                  <v-btn
+                    block
+                    size="large"
+                    color="primary"
+                    prepend-icon="mdi-login-variant"
+                    @click="handleSsoLogin"
+                  >
+                    {{ $t('auth.signInWithSso') }}
+                  </v-btn>
+
+                  <div class="text-center mt-4">
+                    <v-btn
+                      variant="text"
+                      size="small"
+                      @click="showLocalForm = !showLocalForm"
+                    >
+                      {{ $t('auth.useLocalAccount') }}
+                    </v-btn>
+                  </div>
+                </template>
+
+                <v-form v-if="showForm" @submit.prevent="handleLogin">
                   <v-text-field
                     v-model="email"
                     :label="$t('auth.email')"
@@ -63,11 +95,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { ref, computed, onMounted } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '../stores/auth';
+import { authApi } from '../api/auth';
+import client from '../api/client';
 
+const route = useRoute();
 const router = useRouter();
 const authStore = useAuthStore();
 const { t } = useI18n();
@@ -77,6 +112,31 @@ const password = ref('');
 const showPassword = ref(false);
 const emailErrors = ref<string[]>([]);
 const passwordErrors = ref<string[]>([]);
+
+const ssoEnabled = ref(false);
+const showLocalForm = ref(false);
+const ssoFailed = ref(route.query.error === 'sso_failed');
+
+// When SSO is disabled the local form is always shown (unchanged behaviour);
+// when SSO is enabled it stays collapsed until the user opts into a local account.
+const showForm = computed(() => !ssoEnabled.value || showLocalForm.value);
+
+onMounted(async () => {
+  try {
+    const config = await authApi.getConfig();
+    ssoEnabled.value = config.ssoEnabled;
+  } catch {
+    // Fail open to the local login form if the config cannot be fetched.
+    ssoEnabled.value = false;
+  }
+});
+
+function handleSsoLogin() {
+  // Derive the SSO entry point from the axios baseURL so dev and prod both work.
+  // This is a full-page browser navigation, not an XHR.
+  const baseURL = client.defaults.baseURL || '';
+  window.location.assign(`${baseURL}/auth/sso/login`);
+}
 
 async function handleLogin() {
   emailErrors.value = [];

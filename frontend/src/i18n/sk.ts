@@ -36,6 +36,9 @@ export default {
     emailRequired: 'E-mail je povinný',
     passwordRequired: 'Heslo je povinné',
     loginFailed: 'Prihlásenie zlyhalo',
+    signInWithSso: 'Prihlásiť sa cez SSO',
+    useLocalAccount: 'Použiť lokálny účet',
+    ssoFailed: 'Prihlásenie cez SSO zlyhalo. Skúste to znova alebo použite lokálny účet.',
   },
   dashboard: {
     title: 'Prehľad',
@@ -181,6 +184,8 @@ export default {
     roleUser: 'Používateľ',
     rolePowerUser: 'Pokročilý používateľ',
     roleAdmin: 'Administrátor',
+    sso: 'SSO',
+    managedBySso: 'Spravované cez SSO',
   },
   myIdeas: {
     title: 'Moje nápady',

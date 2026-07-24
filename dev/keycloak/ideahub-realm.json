@@ -1,0 +1,110 @@
+{
+  "realm": "ideahub",
+  "enabled": true,
+  "registrationAllowed": false,
+  "components": {
+    "org.keycloak.userprofile.UserProfileProvider": [
+      {
+        "providerId": "declarative-user-profile",
+        "config": {
+          "kc.user.profile.config": [
+            "{\"attributes\":[{\"name\":\"username\",\"displayName\":\"${username}\",\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]}},{\"name\":\"email\",\"displayName\":\"${email}\",\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]}}],\"unmanagedAttributePolicy\":\"ENABLED\"}"
+          ]
+        }
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "ideahub-local",
+      "name": "IdeaHub local dev",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "ideahub-local-dev-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "fullScopeAllowed": true,
+      "redirectUris": [
+        "http://localhost:3001/*",
+        "http://localhost:3199/*",
+        "http://localhost:3299/*"
+      ],
+      "webOrigins": ["+"],
+      "protocolMappers": [
+        {
+          "name": "ideahub-client-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-client-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "usermodel.clientRoleMapping.clientId": "ideahub-local",
+            "claim.name": "roles",
+            "multivalued": "true",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "org-attribute",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "org",
+            "claim.name": "org",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "roles": {
+    "client": {
+      "ideahub-local": [
+        { "name": "ideahub-admin", "description": "Maps to IdeaHub ADMIN" },
+        { "name": "ideahub-power", "description": "Maps to IdeaHub POWER_USER" }
+      ]
+    }
+  },
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "email": "alice@example.com",
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "Nováková",
+      "attributes": { "org": ["Engineering"] },
+      "credentials": [{ "type": "password", "value": "password", "temporary": false }]
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "email": "bob@example.com",
+      "emailVerified": true,
+      "firstName": "Bob",
+      "lastName": "Kováč",
+      "attributes": { "org": ["Sales"] },
+      "credentials": [{ "type": "password", "value": "password", "temporary": false }],
+      "clientRoles": { "ideahub-local": ["ideahub-power"] }
+    },
+    {
+      "username": "carol",
+      "enabled": true,
+      "email": "carol@example.com",
+      "emailVerified": true,
+      "firstName": "Carol",
+      "lastName": "Horváthová",
+      "attributes": { "org": ["IT"] },
+      "credentials": [{ "type": "password", "value": "password", "temporary": false }],
+      "clientRoles": { "ideahub-local": ["ideahub-admin"] }
+    }
+  ]
+}

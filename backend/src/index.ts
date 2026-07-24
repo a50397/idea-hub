@@ -6,6 +6,7 @@ import dotenv from 'dotenv';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import authRoutes from './routes/auth';
+import ssoRoutes from './routes/sso';
 import ideasRoutes from './routes/ideas';
 import reportsRoutes from './routes/reports';
 import usersRoutes from './routes/users';
@@ -93,6 +94,7 @@ app.get('/health', (req, res) => {
 
 // API Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/auth/sso', ssoRoutes);
 app.use('/api/ideas', ideasRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/users', usersRoutes);

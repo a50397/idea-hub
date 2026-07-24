@@ -31,13 +31,23 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  async function logout() {
+  // Returns true when it performed a full-page SSO redirect (RP-initiated
+  // logout): the caller must NOT also client-side navigate in that case.
+  async function logout(): Promise<boolean> {
     loading.value = true;
     try {
-      await authApi.logout();
+      const res = await authApi.logout();
       user.value = null;
+      if (res?.redirectTo) {
+        // Full-page navigation to the IdP end-session endpoint, which then
+        // returns the browser to post_logout_redirect_uri.
+        window.location.href = res.redirectTo;
+        return true;
+      }
+      return false;
     } catch (err) {
       console.error('Logout error:', err);
+      return false;
     } finally {
       loading.value = false;
     }

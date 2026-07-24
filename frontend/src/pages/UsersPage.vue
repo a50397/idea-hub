@@ -30,6 +30,9 @@
             <v-chip :color="getRoleColor(item.role)" size="small">
               {{ item.role }}
             </v-chip>
+            <v-chip v-if="isSso(item)" size="small" variant="tonal" class="ml-2">
+              {{ $t('users.sso') }}
+            </v-chip>
           </template>
           <template v-slot:item.stats="{ item }">
             <div class="text-caption">
@@ -38,7 +41,20 @@
             </div>
           </template>
           <template v-slot:item.actions="{ item }">
+            <v-tooltip v-if="isSso(item)" :text="$t('users.managedBySso')" location="top">
+              <template v-slot:activator="{ props }">
+                <span v-bind="props">
+                  <v-btn
+                    icon="mdi-pencil"
+                    size="small"
+                    variant="text"
+                    disabled
+                  ></v-btn>
+                </span>
+              </template>
+            </v-tooltip>
             <v-btn
+              v-else
               icon="mdi-pencil"
               size="small"
               variant="text"
@@ -367,6 +383,11 @@ function getRoleColor(role: Role): string {
     default:
       return 'info';
   }
+}
+
+// Users without an explicit provider (null/undefined) are treated as LOCAL.
+function isSso(user: UserWithCounts): boolean {
+  return user.authProvider === 'SSO';
 }
 
 onMounted(() => {

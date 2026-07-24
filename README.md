@@ -29,6 +29,7 @@ A modern web application for managing internal improvement ideas, designed for e
 
 ### Security & Authentication
 - Session-based authentication with bcrypt password hashing
+- Optional corporate SSO via OIDC authorization-code flow with PKCE (see [Single Sign-On (SSO)](#single-sign-on-sso))
 - Role-based access control (RBAC)
 - CSRF protection via custom header validation
 - Security headers (CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy)
@@ -250,9 +251,12 @@ npm run preview          # Preview production build
 
 ### Authentication Endpoints
 
-- `POST /api/auth/login` - Login with email and password
+- `GET /api/auth/config` - Public: whether SSO is enabled (`{ ssoEnabled }`)
+- `POST /api/auth/login` - Login with email and password (local accounts only)
 - `POST /api/auth/logout` - Logout current user
 - `GET /api/auth/me` - Get current user info
+- `GET /api/auth/sso/login` - Begin OIDC login (redirects to the corporate IAM)
+- `GET /api/auth/sso/callback` - OIDC redirect URI; completes login and sets the session
 
 ### Ideas Endpoints
 
@@ -432,7 +436,10 @@ npm test -- --watch
 | `ADMIN_EMAIL` | Default admin email | `admin@ideahub.com` |
 | `ADMIN_PASSWORD` | Default admin password | `admin123` |
 | `ADMIN_NAME` | Default admin display name | `Admin` |
+| `FRONTEND_URL` | Frontend origin; used for CORS and the SSO post-login redirect | `http://localhost:5173` |
 | `VITE_API_URL` | Frontend API base URL (build-time) | `/api` (Docker), `http://localhost:3001` (dev) |
+
+See [Single Sign-On (SSO)](#single-sign-on-sso) for the `SSO_*` and `BREAK_GLASS_EMAILS` variables.
 
 ### Manual Deployment
 
@@ -469,6 +476,87 @@ npm test -- --watch
 - **Session Invalidation**: Sessions are invalidated when user role or email is changed by admin
 - **Admin Protection**: Admins cannot delete their own account or change their own role
 - **Graceful Shutdown**: Server handles SIGTERM/SIGINT for clean disconnection
+
+## Single Sign-On (SSO)
+
+IdeaHub can delegate authentication to a corporate identity provider (IAM) over
+**OpenID Connect** using the **authorization-code flow with PKCE**. SSO is
+**disabled by default** and is enabled per-deployment with `SSO_ENABLED=true`.
+
+### How it works
+
+1. The frontend calls `GET /api/auth/config` and shows a "Sign in with SSO"
+   button when `ssoEnabled` is `true`.
+2. `GET /api/auth/sso/login` performs OIDC discovery against the issuer,
+   generates `state`, `nonce`, and a PKCE `code_verifier`/`code_challenge`, and
+   redirects the browser to the IAM authorization endpoint.
+3. The OIDC transaction (`state`/`nonce`/`code_verifier`) is stored in a
+   dedicated, HMAC-signed, `SameSite=Lax` cookie (`sso_txn`) scoped to
+   `/api/auth/sso`. This is required because the main session cookie is
+   `SameSite=Strict` and is not sent on the cross-site redirect back from the
+   IAM. The cookie is signed with `SESSION_SECRET` and expires after 10 minutes.
+4. `GET /api/auth/sso/callback` verifies the transaction cookie, exchanges the
+   code (validating `state`, `nonce`, and PKCE), reads the ID-token claims, then
+   **just-in-time provisions** or updates the user and starts a fresh session.
+   Any failure redirects to `${FRONTEND_URL}/login?error=sso_failed` with no
+   detail leaked to the browser.
+
+Identity is keyed on the ID-token `sub` claim. If no user matches the `sub` but
+a local account with the same email exists, that account is **linked** to SSO
+(its local password is removed). Otherwise a new SSO user is created. On every
+SSO login the user's name, role, and department are re-provisioned from the IdP
+(the IAM is the source of truth), so SSO-managed users cannot be edited locally
+via the admin user API.
+
+### Break-glass local login
+
+Local password login always remains available for the accounts listed in
+`BREAK_GLASS_EMAILS` (defaults to `[ADMIN_EMAIL]`). Those emails are **refused**
+if they attempt to log in through SSO — this guarantees an IdP outage or
+misconfiguration can never lock every administrator out. Keep at least one
+break-glass admin with a strong local password.
+
+### Configuration
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SSO_ENABLED` | Master switch (`true` to enable SSO) | `false` |
+| `SSO_ISSUER_URL` | OIDC issuer URL (discovery base) | — |
+| `SSO_CLIENT_ID` | Client ID issued by the IAM | — |
+| `SSO_CLIENT_SECRET` | Client secret issued by the IAM | — |
+| `SSO_REDIRECT_URI` | Callback URI — `{BASE_URL}/api/auth/sso/callback` | — |
+| `SSO_SCOPE` | Requested scopes | `openid profile email` |
+| `SSO_ROLES_CLAIM` | ID-token claim holding IAM roles | `roles` |
+| `SSO_ORG_CLAIM` | ID-token claim holding org/department | `org` |
+| `SSO_EMAIL_CLAIM` | ID-token claim holding email | `email` |
+| `SSO_NAME_CLAIM` | ID-token claim holding display name | `name` |
+| `SSO_ROLE_MAP` | `iam-role:APP_ROLE,...` mapping (app role ∈ `USER`/`POWER_USER`/`ADMIN`) | — |
+| `BREAK_GLASS_EMAILS` | Emails forbidden from SSO (csv, lowercased) | `[ADMIN_EMAIL]` |
+
+Role mapping keys are matched case-insensitively and the **highest-privilege**
+match wins; an IdP role with no mapping resolves to `USER`. Example:
+
+```env
+SSO_ROLE_MAP="idea-hub-admins:ADMIN,idea-hub-reviewers:POWER_USER,idea-hub-users:USER"
+```
+
+### IAM client registration request
+
+Provide the following to your IAM / identity team when requesting an OIDC client:
+
+- **Application name**: IdeaHub
+- **Flow / grant type**: Authorization Code with PKCE (`response_type=code`)
+- **Redirect URI**: `{BASE_URL}/api/auth/sso/callback`
+  (e.g. `https://ideahub.example.com/api/auth/sso/callback`)
+- **Scopes**: `openid profile email`
+- **Required ID-token claims**:
+  - `sub` — stable unique subject identifier (used as the SSO key)
+  - `email` — user email
+  - `name` — display name
+  - `roles` — group/role names to map to app roles (e.g. `idea-hub-admins`,
+    `idea-hub-reviewers`, `idea-hub-users` — must match `SSO_ROLE_MAP`)
+  - `org` — organizational unit / department (optional)
+- **Return**: `client_id` and `client_secret` for the `SSO_*` variables above.
 
 ## Troubleshooting
 

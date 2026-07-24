@@ -36,6 +36,9 @@ export default {
     emailRequired: 'Email is required',
     passwordRequired: 'Password is required',
     loginFailed: 'Login failed',
+    signInWithSso: 'Sign in with SSO',
+    useLocalAccount: 'Use a local account',
+    ssoFailed: 'SSO sign-in failed. Please try again or use a local account.',
   },
   dashboard: {
     title: 'Dashboard',
@@ -181,6 +184,8 @@ export default {
     roleUser: 'User',
     rolePowerUser: 'Power User',
     roleAdmin: 'Admin',
+    sso: 'SSO',
+    managedBySso: 'Managed by SSO',
   },
   myIdeas: {
     title: 'My Ideas',

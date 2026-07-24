@@ -16,6 +16,8 @@ router.get('/', requireRole(Role.ADMIN), async (req, res) => {
         name: true,
         email: true,
         role: true,
+        authProvider: true,
+        department: true,
         createdAt: true,
         updatedAt: true,
         _count: {
@@ -52,6 +54,8 @@ router.get('/:id', requireRole(Role.ADMIN), async (req, res) => {
         name: true,
         email: true,
         role: true,
+        authProvider: true,
+        department: true,
         createdAt: true,
         updatedAt: true,
         _count: {
@@ -134,6 +138,18 @@ router.patch('/:id', requireRole(Role.ADMIN), async (req, res) => {
 
     if (!existingUser) {
       return res.status(404).json({ error: 'User not found' });
+    }
+
+    // SSO-managed accounts are owned by the IdP: name/email/password/role are
+    // provisioned on each login, so admins may not edit those fields locally.
+    if (
+      existingUser.authProvider === 'SSO' &&
+      (data.name !== undefined ||
+        data.email !== undefined ||
+        data.password !== undefined ||
+        data.role !== undefined)
+    ) {
+      return res.status(400).json({ error: 'User is managed by SSO' });
     }
 
     // Prevent admin from changing their own role

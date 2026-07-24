@@ -15,6 +15,11 @@ enum Role {
   ADMIN
 }
 
+enum AuthProvider {
+  LOCAL
+  SSO
+}
+
 enum IdeaStatus {
   SUBMITTED
   APPROVED
@@ -41,13 +46,21 @@ enum EventType {
 }
 
 model User {
-  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  id           String        @id @default(auto()) @map("_id") @db.ObjectId
   name         String
-  email        String   @unique
-  passwordHash String
-  role         Role     @default(USER)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  email        String        @unique
+  passwordHash String?
+  role         Role          @default(USER)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  // SSO / OIDC. authProvider is nullable with no default: a null value means
+  // LOCAL, so pre-existing Mongo documents (which lack the field) still read.
+  // ssoSub is intentionally NOT @unique — a Mongo unique index would reject
+  // multiple null values; uniqueness is enforced by lookup logic in the SSO route.
+  authProvider AuthProvider?
+  ssoSub       String?
+  department   String?
 
   // Relations
   submittedIdeas Idea[]      @relation("SubmittedIdeas")

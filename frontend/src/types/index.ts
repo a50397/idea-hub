@@ -34,6 +34,8 @@ export interface User {
   name: string;
   email: string;
   role: Role;
+  authProvider?: 'LOCAL' | 'SSO' | null;
+  department?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -44,6 +46,17 @@ export interface UserWithCounts extends User {
     approvedIdeas: number;
     assignedIdeas: number;
   };
+}
+
+export interface AuthConfig {
+  ssoEnabled: boolean;
+}
+
+export interface LogoutResponse {
+  message: string;
+  // Present only for SSO sessions: the IdP end-session (RP-initiated logout)
+  // URL the browser should be sent to so the IdP session is also terminated.
+  redirectTo?: string;
 }
 
 export interface Idea {

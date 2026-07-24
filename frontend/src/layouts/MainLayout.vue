@@ -21,11 +21,12 @@
 
         <v-list-item v-if="authStore.isAdmin" prepend-icon="mdi-account-group" :title="$t('nav.users')" :to="{ name: 'Users' }"></v-list-item>
 
-        <v-list-item prepend-icon="mdi-lock-reset" :title="$t('nav.changePassword')" :to="{ name: 'ChangePassword' }"></v-list-item>
+        <v-list-item v-if="!isSsoUser" prepend-icon="mdi-lock-reset" :title="$t('nav.changePassword')" :to="{ name: 'ChangePassword' }"></v-list-item>
       </v-list>
 
       <template v-slot:append>
-        <div class="pa-2">
+        <!-- SSO sessions are owned by the IAM; the app offers no logout for them. -->
+        <div v-if="!isSsoUser" class="pa-2">
           <v-btn block @click="handleLogout" prepend-icon="mdi-logout" variant="outlined">
             {{ $t('common.logout') }}
           </v-btn>
@@ -50,7 +51,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '../stores/auth';
@@ -60,6 +61,8 @@ const router = useRouter();
 const authStore = useAuthStore();
 const { locale } = useI18n();
 
+const isSsoUser = computed(() => authStore.user?.authProvider === 'SSO');
+
 const currentLocale = ref(locale.value);
 
 watch(currentLocale, (val) => {
@@ -68,7 +71,11 @@ watch(currentLocale, (val) => {
 });
 
 async function handleLogout() {
-  await authStore.logout();
-  router.push({ name: 'Login' });
+  const redirected = await authStore.logout();
+  // On SSO logout the store already triggered a full-page redirect to the IdP;
+  // avoid a competing client-side navigation in that case.
+  if (!redirected) {
+    router.push({ name: 'Login' });
+  }
 }
 </script>

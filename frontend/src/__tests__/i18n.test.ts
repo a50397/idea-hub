@@ -43,7 +43,7 @@ describe('i18n translation files', () => {
       const skVal = key.split('.').reduce((o: any, k) => o?.[k], sk);
       return enVal === skVal;
     });
-    const allowedIdentical = ['common.appName'];
+    const allowedIdentical = ['common.appName', 'users.sso'];
     const unexpected = identical.filter((k) => !allowedIdentical.includes(k));
     expect(unexpected).toEqual([]);
   });

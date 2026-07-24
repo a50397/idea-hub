@@ -4,8 +4,16 @@ import { rateLimit } from 'express-rate-limit';
 import prisma from '../lib/prisma';
 import { loginSchema, changePasswordSchema } from '../utils/validation';
 import { requireAuth } from '../middleware/auth';
+import { isSsoEnabled, getSsoConfig } from '../config/sso';
+import { buildEndSessionUrl } from './sso';
 
 const router = Router();
+
+// Public: lets the frontend decide whether to show the SSO button.
+// No auth guard and no rate limiter by design.
+router.get('/config', (_req, res) => {
+  res.json({ ssoEnabled: isSsoEnabled() });
+});
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -35,7 +43,10 @@ router.post('/login', loginLimiter as any, async (req, res) => {
       where: { email },
     });
 
-    if (!user) {
+    // A null passwordHash means an SSO-managed account: reject local login with
+    // the same generic error, and it also narrows passwordHash to a string for
+    // bcrypt.compare below.
+    if (!user || !user.passwordHash) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
@@ -67,11 +78,35 @@ router.post('/login', loginLimiter as any, async (req, res) => {
 
 // Logout
 router.post('/logout', (req, res) => {
-  req.session.destroy((err) => {
+  // Capture the SSO ID token BEFORE the session is destroyed. For SSO logins we
+  // must additionally end the IdP session (RP-initiated logout); otherwise the
+  // IdP session survives and "Sign in with SSO" re-authenticates silently.
+  const sessionIdToken = req.session.idToken;
+
+  req.session.destroy(async (err) => {
     if (err) {
       return res.status(500).json({ error: 'Failed to logout' });
     }
+    // Local logout is complete once the cookie is cleared. Everything below only
+    // ADDS an optional redirect to the IdP end-session endpoint.
     res.clearCookie('connect.sid');
+
+    if (isSsoEnabled() && sessionIdToken) {
+      try {
+        const redirectTo = await buildEndSessionUrl({
+          idToken: sessionIdToken,
+          postLogoutRedirectUri: getSsoConfig().postLogoutRedirectUri,
+        });
+        if (redirectTo) {
+          return res.json({ message: 'Logged out successfully', redirectTo });
+        }
+      } catch (e) {
+        // Fail-safe: the local session is already destroyed. Never log the
+        // token — only the reason — and fall through to a local-only logout.
+        console.error('SSO end-session URL build failed:', (e as Error)?.message ?? e);
+      }
+    }
+
     res.json({ message: 'Logged out successfully' });
   });
 });
@@ -87,6 +122,11 @@ router.post('/change-password', requireAuth, passwordChangeLimiter as any, async
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
+    }
+
+    // SSO-managed accounts have no local password to change.
+    if (!user.passwordHash) {
+      return res.status(403).json({ error: 'Password change is not available for SSO accounts' });
     }
 
     const validPassword = await bcrypt.compare(currentPassword, user.passwordHash);
@@ -139,6 +179,8 @@ router.get('/me', requireAuth, async (req, res) => {
         name: true,
         email: true,
         role: true,
+        authProvider: true,
+        department: true,
         createdAt: true,
       },
     });
