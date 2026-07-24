@@ -13,7 +13,7 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [20.x]
+        node-version: [22.x]
 
     steps:
       - name: Start MongoDB with Replica Set
@@ -56,7 +56,7 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [20.x]
+        node-version: [22.x]
 
     steps:
       - name: Checkout code
@@ -88,7 +88,7 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [20.x]
+        node-version: [22.x]
 
     steps:
       - name: Checkout code
@@ -136,6 +136,9 @@ jobs:
         with:
           context: ./backend
           push: false
+          platforms: |
+            linux/amd64
+            linux/arm64
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -144,6 +147,9 @@ jobs:
         with:
           context: ./frontend
           push: false
+          platforms: |
+            linux/amd64
+            linux/arm64
           build-args: |
             VITE_API_URL=/api
           cache-from: type=gha
