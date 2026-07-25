@@ -17,6 +17,7 @@
     "test": "npm run test --workspace=backend && npm run test --workspace=frontend",
     "test:backend": "npm run test --workspace=backend",
     "test:frontend": "npm run test --workspace=frontend",
+    "test:e2e": "playwright test",
     "prisma:generate": "npm run prisma:generate --workspace=backend",
     "prisma:migrate": "npm run prisma:migrate --workspace=backend",
     "prisma:seed": "npm run prisma:seed --workspace=backend",
@@ -26,6 +27,7 @@
     "docker:logs": "docker-compose logs -f"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.0",
     "concurrently": "^8.2.2"
   },
   "engines": {

@@ -1,0 +1,5 @@
+# Playwright runtime artifacts (kept under e2e/ so the repo-root .gitignore is untouched)
+.auth
+test-results
+playwright-report
+.cache

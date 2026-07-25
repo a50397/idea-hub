@@ -1,0 +1,59 @@
+name: E2E
+
+on:
+  pull_request:
+    branches: [ main, master, develop ]
+  push:
+    branches: [ main, master, develop ]
+
+jobs:
+  playwright:
+    name: Playwright E2E
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [22.x]
+
+    steps:
+      - name: Start MongoDB with Replica Set
+        run: |
+          docker run -d --name mongo -p 27017:27017 mongo:7 --replSet rs0
+          until docker exec mongo mongosh --eval "db.runCommand({ping:1})" --quiet; do sleep 1; done
+          docker exec mongo mongosh --eval "rs.initiate({_id:'rs0',members:[{_id:0,host:'localhost:27017'}]})"
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies (workspaces)
+        run: npm install
+
+      - name: Generate Prisma Client
+        working-directory: ./backend
+        run: npx prisma generate
+
+      - name: Install Playwright browser (chromium)
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        run: npx playwright test
+        env:
+          CI: 'true'
+          # E2E database on the CI replica set (host localhost:27017, so no
+          # directConnection). Also computed by playwright.config when CI is set;
+          # pinned here for clarity.
+          E2E_DATABASE_URL: mongodb://localhost:27017/ideahub_e2e?replicaSet=rs0
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright-report
+          retention-days: 7
