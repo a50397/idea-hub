@@ -1,0 +1,9 @@
+{
+  // Type-checks the integration tier (which the production tsconfig.json excludes
+  // from the `tsc` build so those files never land in dist/). ts-jest uses this
+  // config when running `npm run test:integration`, and it can be checked
+  // directly with: npx tsc -p tsconfig.integration.json --noEmit
+  "extends": "./tsconfig.json",
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

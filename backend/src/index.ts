@@ -40,6 +40,10 @@ const limiter = rateLimit({
   max: 100, // Limit each IP to 100 requests per `window` (here, per 15 minutes)
   standardHeaders: true,
   legacyHeaders: false,
+  // Disabled under test so the real-DB integration tier (which drives many
+  // requests from a single loopback IP) is not throttled. Mirrors the
+  // loginLimiter / ssoLimiter skip in routes/auth.ts and routes/sso.ts.
+  skip: () => process.env.NODE_ENV === 'test',
 });
 app.use('/api', limiter);
 

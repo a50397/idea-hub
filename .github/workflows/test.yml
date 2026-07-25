@@ -46,6 +46,13 @@ jobs:
           NODE_ENV: test
           DATABASE_URL: mongodb://localhost:27017/ideahub_test?replicaSet=rs0
 
+      - name: Run backend integration tests
+        working-directory: ./backend
+        run: npm run test:integration
+        env:
+          NODE_ENV: test
+          DATABASE_URL: mongodb://localhost:27017/ideahub_itest?replicaSet=rs0
+
       - name: Build backend
         working-directory: ./backend
         run: npm run build
