@@ -70,6 +70,17 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
       ADMIN_NAME: ${ADMIN_NAME:-Admin}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      # Mail (best-effort outbound email, disabled by default). No :? fail-fast
+      # guards — mail is optional-by-design; the backend boot guard owns the
+      # enabled-but-misconfigured case. For local capture, start the mailpit
+      # profile and set MAIL_ENABLED=true / SMTP_HOST=mailpit / SMTP_PORT=1025.
+      MAIL_ENABLED: ${MAIL_ENABLED:-false}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      MAIL_FROM: "${MAIL_FROM:-IdeaHub <no-reply@ideahub.local>}"
     expose:
       - '3001'
     depends_on:
@@ -78,6 +89,31 @@ services:
     networks:
       - ideahub-network
     command: sh -c "npx prisma db push && npm start"
+
+  # Mailpit: local SMTP sink + web UI for exercising the mail path in dev.
+  # Opt-in only via the "mail" profile so it never starts for a normal `up`:
+  #   docker compose --profile mail up -d mailpit
+  # Then point the backend at it (MAIL_ENABLED=true, SMTP_HOST=mailpit for an
+  # in-compose backend or localhost for a host-run one, SMTP_PORT=1025) and read
+  # captured mail at http://localhost:8025. See dev/MAIL-TESTING.md. Dev-only;
+  # not present in docker-compose.prod.yml.
+  mailpit:
+    image: axllent/mailpit:v1.30.5
+    container_name: ideahub-mailpit
+    restart: unless-stopped
+    profiles: ["mail"]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      # localhost-only publish (matches mongodb / dev Keycloak) so the sink and
+      # its open web UI are never exposed to the LAN.
+      - '127.0.0.1:1025:1025'   # SMTP
+      - '127.0.0.1:8025:8025'   # web UI
+    networks:
+      - ideahub-network
 
   frontend:
     build:

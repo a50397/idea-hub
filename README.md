@@ -472,8 +472,15 @@ npm test -- --watch
 | `ADMIN_NAME` | Default admin display name | `Admin` |
 | `FRONTEND_URL` | Frontend origin; used for CORS and the SSO post-login redirect | `http://localhost:5173` |
 | `VITE_API_URL` | Frontend API base URL (build-time) | `/api` (Docker), `http://localhost:3001` (dev) |
+| `MAIL_ENABLED` | Enable outbound email; only the exact string `true` enables it. When disabled (default) `sendMail()` logs the would-send line and succeeds without opening a socket | `false` |
+| `SMTP_HOST` | SMTP relay host. Required when `MAIL_ENABLED=true` (boot fails fast in production if missing) | _(empty)_ |
+| `SMTP_PORT` | SMTP port | `587` |
+| `SMTP_SECURE` | Implicit TLS (`true` = SMTPS, usually port 465); leave `false` for STARTTLS | `false` |
+| `SMTP_USER` | SMTP auth user. Optional — omit for an IP-allowlisted relay; auth is only sent when set | _(empty)_ |
+| `SMTP_PASS` | SMTP auth password (used only when `SMTP_USER` is set) | _(empty)_ |
+| `MAIL_FROM` | `From` header on outbound mail | `IdeaHub <no-reply@ideahub.local>` |
 
-See [Single Sign-On (SSO)](#single-sign-on-sso) for the `SSO_*` and `BREAK_GLASS_EMAILS` variables.
+See [Single Sign-On (SSO)](#single-sign-on-sso) for the `SSO_*` and `BREAK_GLASS_EMAILS` variables, and [dev/MAIL-TESTING.md](dev/MAIL-TESTING.md) for the mail dev/testing story.
 
 ### Manual Deployment
 

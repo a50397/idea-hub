@@ -14,6 +14,7 @@ import departmentsRoutes from './routes/departments';
 import crypto from 'crypto';
 import { ensureAdminExists } from './utils/init-admin';
 import { ensureDepartments } from './utils/init-departments';
+import { validateMailConfig } from './config/mail';
 import prisma from './lib/prisma';
 
 dotenv.config({ path: '../.env' });
@@ -26,6 +27,23 @@ if (!process.env.SESSION_SECRET) {
   // Generate a random secret for development so it's never hardcoded
   process.env.SESSION_SECRET = crypto.randomBytes(32).toString('hex');
   console.warn('WARNING: SESSION_SECRET not set. Generated a random ephemeral secret for development.');
+}
+
+// Mail is best-effort infrastructure (see config/mail.ts, utils/mailer.ts) and
+// disabled by default. Mirror the SESSION_SECRET fail-fast above: if enabled but
+// misconfigured (MAIL_ENABLED=true with no SMTP_HOST) fail fast outside
+// development; in development warn and let the mailer degrade to disabled
+// (effectiveEnabled is false without a host, so sendMail stays log-only).
+const mailStatus = validateMailConfig();
+if (mailStatus.fatal) {
+  if (process.env.NODE_ENV !== 'development') {
+    console.error(`FATAL: ${mailStatus.fatal} Exiting.`);
+    process.exit(1);
+  }
+  console.warn(`WARNING: ${mailStatus.fatal} Mail will be treated as disabled.`);
+}
+for (const warning of mailStatus.warnings) {
+  console.warn(`WARNING: ${warning}`);
 }
 
 const app = express();
