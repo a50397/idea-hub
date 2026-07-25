@@ -60,7 +60,10 @@ describe('local auth + connect-mongo session store (real DB)', () => {
 
     const docs = await getSessionDocs(user.id);
     expect(docs).toHaveLength(1);
-    const stored = JSON.parse((docs[0] as any).session);
+    // The store is configured with `stringify: false` (see index.ts), so `session`
+    // is a nested object rather than a JSON string.
+    const raw = (docs[0] as any).session;
+    const stored = typeof raw === 'string' ? JSON.parse(raw) : raw;
     expect(stored.userId).toBe(user.id);
     expect(stored.role).toBe('POWER_USER');
   });

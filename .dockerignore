@@ -1,14 +1,35 @@
+# Build context is the repository root. Exclude everything the multi-stage
+# builds recreate (deps/build) or must never ship in an image layer (secrets).
+
+# Dependencies (root + every workspace) — installed fresh via `npm ci`.
 node_modules
-npm-debug.log
-.git
-.gitignore
-.env
-.env.local
+**/node_modules
+
+# Build output (root + every workspace) — recompiled in the builder stage.
 dist
 build
+**/dist
+**/build
 coverage
+**/coverage
+
+# Secrets / local env — MUST NOT enter the image with root context.
+.env
+.env.*
+
+# VCS + editor + OS cruft
+.git
+.gitignore
 .vscode
 .idea
 *.log
+npm-debug.log
 .DS_Store
 docker-data
+
+# E2E / Playwright artifacts (present under e2e/ at the repo root)
+e2e/.auth
+e2e/test-results
+e2e/playwright-report
+playwright-report
+test-results

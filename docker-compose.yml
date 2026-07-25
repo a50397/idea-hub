@@ -1,6 +1,6 @@
 services:
   mongodb:
-    image: mongo:7
+    image: mongo:7.0.39
     container_name: ideahub-mongodb
     restart: unless-stopped
     logging:
@@ -8,9 +8,27 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    command: ["--replSet", "rs0", "--bind_ip_all"]
+    # A replica set with auth needs a keyFile for internal member authentication.
+    # This wrapper (running as root, before the official entrypoint drops to the
+    # mongodb user) generates the keyFile once into a named volume, locks it down,
+    # then hands off to docker-entrypoint.sh which creates the root user on a fresh
+    # data volume from MONGO_INITDB_ROOT_*.
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -e
+        KEYFILE=/etc/mongo-keyfile/keyfile
+        if [ ! -s "$$KEYFILE" ]; then
+          openssl rand -base64 756 > "$$KEYFILE"
+        fi
+        chmod 400 "$$KEYFILE"
+        chown mongodb:mongodb "$$KEYFILE"
+        exec docker-entrypoint.sh mongod --replSet rs0 --keyFile "$$KEYFILE" --bind_ip_all
     environment:
       MONGO_INITDB_DATABASE: ideahub
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-example-dev-password}
     expose:
       - '27017'
     ports:
@@ -18,20 +36,23 @@ services:
       - '127.0.0.1:27017:27017'
     volumes:
       - mongodb_data:/data/db
+      - mongodb_keyfile:/etc/mongo-keyfile
     networks:
       - ideahub-network
     healthcheck:
+      # Authenticated ping that also initiates the single-node replica set on first
+      # boot. Uses the root credentials from the environment above.
       test: |
-        mongosh --eval "try { rs.status().ok } catch(e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongodb:27017'}]}).ok }"
+        mongosh -u "$$MONGO_INITDB_ROOT_USERNAME" -p "$$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --quiet --eval "try { rs.status().ok } catch(e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongodb:27017'}]}).ok }"
       interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
 
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     image: fokips/ideahub-backend:1.1.0
     container_name: ideahub-backend
     restart: unless-stopped
@@ -41,7 +62,7 @@ services:
         max-size: "10m"
         max-file: "3"
     environment:
-      DATABASE_URL: mongodb://mongodb:27017/ideahub?replicaSet=rs0
+      DATABASE_URL: "mongodb://${MONGO_ROOT_USER:-root}:${MONGO_ROOT_PASSWORD:-example-dev-password}@mongodb:27017/ideahub?replicaSet=rs0&authSource=admin"
       SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET must be set in .env}
       NODE_ENV: ${NODE_ENV:-production}
       BACKEND_PORT: 3001
@@ -60,8 +81,8 @@ services:
 
   frontend:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: frontend/Dockerfile
       args:
         VITE_API_URL: /api
     logging:
@@ -73,7 +94,8 @@ services:
     container_name: ideahub-frontend
     restart: unless-stopped
     ports:
-      - '80:80'
+      # host:container — the non-root nginx listens on 8080 inside the container.
+      - '80:8080'
     depends_on:
       - backend
     networks:
@@ -85,4 +107,6 @@ networks:
 
 volumes:
   mongodb_data:
+    driver: local
+  mongodb_keyfile:
     driver: local

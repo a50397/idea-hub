@@ -584,7 +584,10 @@ describe('POST /api/auth/login — SSO accounts', () => {
 
     expect(res.status).toBe(401);
     expect(res.body).toHaveProperty('error', 'Invalid email or password');
-    expect(bcrypt.compare).not.toHaveBeenCalled();
+    // F11: the no-passwordHash path runs a dummy bcrypt.compare to equalize login
+    // timing (so SSO-only accounts cannot be distinguished by response time). The
+    // response is still a generic 401; the comparison is against a constant hash.
+    expect(bcrypt.compare).toHaveBeenCalledTimes(1);
   });
 });
 

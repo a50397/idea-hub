@@ -33,7 +33,7 @@ export const reviewIdeaSchema = z.object({
 
 export const changePasswordSchema = z.object({
   currentPassword: z.string().min(1, 'Current password is required'),
-  newPassword: z.string().min(6, 'New password must be at least 6 characters'),
+  newPassword: z.string().min(12, 'New password must be at least 12 characters'),
 });
 
 export const createStepSchema = z.object({
@@ -43,14 +43,14 @@ export const createStepSchema = z.object({
 export const createUserSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters'),
   email: z.string().email('Invalid email address'),
-  password: z.string().min(6, 'Password must be at least 6 characters'),
+  password: z.string().min(12, 'Password must be at least 12 characters'),
   role: z.enum(['USER', 'POWER_USER', 'ADMIN']).optional().default('USER'),
 });
 
 export const updateUserSchema = z.object({
   name: z.string().min(2).optional(),
   email: z.string().email().optional(),
-  password: z.string().min(6).optional(),
+  password: z.string().min(12).optional(),
   role: z.enum(['USER', 'POWER_USER', 'ADMIN']).optional(),
 });
 

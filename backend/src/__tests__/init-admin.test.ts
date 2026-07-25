@@ -89,7 +89,7 @@ describe('ensureAdminExists', () => {
 
     await ensureAdminExists();
 
-    expect(bcrypt.hash).toHaveBeenCalledWith('secret123', 10);
+    expect(bcrypt.hash).toHaveBeenCalledWith('secret123', 12);
     expect(mockPrisma.user.create).toHaveBeenCalledWith({
       data: {
         name: 'Admin',

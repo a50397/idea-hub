@@ -68,6 +68,9 @@ app.use(
       mongoUrl: process.env.DATABASE_URL,
       collectionName: 'sessions',
       ttl: 60 * 60 * 24 * 7, // 7 days
+      // Store the session as a nested object (not a JSON string) so admin-driven
+      // session invalidation can query `{ 'session.userId': ... }` in routes/users.ts.
+      stringify: false,
     }),
     cookie: {
       secure: process.env.COOKIE_SECURE === 'true',

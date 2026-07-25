@@ -1,17 +1,16 @@
-// Requirement 7: PATCH /api/users/:id role change vs. the target's REAL session.
+// Requirement 7: PATCH /api/users/:id role/email change must invalidate the
+// target user's persisted session so a privilege change takes effect immediately.
 //
-// IMPORTANT FINDING (see the task hand-off report): against connect-mongo v6 the
-// app's invalidation in routes/users.ts is a no-op, for TWO independent reasons:
-//   1. It reads `req.sessionStore.collection`, but connect-mongo v6 exposes the
-//      collection as `collectionP` (a Promise) — so the `if (mongoStore?.collection)`
-//      guard is always false and the delete never runs.
-//   2. Even if it ran, the store keeps `session` as a JSON string (stringify
-//      defaults to true), so `deleteMany({'session.userId': id})` matches nothing.
+// The fix (routes/users.ts + index.ts) has two parts, BOTH required — against
+// connect-mongo v6 the previous code was a no-op for two independent reasons:
+//   1. It read `req.sessionStore.collection`, but v6 exposes the collection as
+//      `collectionP` (a Promise); the old guard was always false. Fixed by
+//      awaiting `sessionStore.collectionP`.
+//   2. The store stringified `session` to JSON, so `deleteMany({'session.userId'})`
+//      matched nothing. Fixed by configuring the store with `stringify: false`.
 //
-// These tests therefore (a) prove the real store + the code path with green
-// assertions, (b) characterize the ACTUAL current behavior (session survives),
-// and (c) keep the REQUIRED behavior as a skipped spec that will validate the fix
-// once it lands.
+// These tests prove the real store + code path, that logout destroys sessions,
+// and (regression test) that a role change now invalidates the target session.
 import {
   Role,
   prisma,
@@ -70,27 +69,29 @@ describe('PATCH /api/users/:id role change vs. the real session store', () => {
     expect((await agent.get('/api/auth/me')).status).toBe(401);
   });
 
-  test('CURRENT BEHAVIOR (defect): a role change does NOT invalidate the target session', async () => {
+  // Regression test for requirement 7 — previously skipped until the fix landed.
+  // With `collectionP` awaited and `stringify: false`, the invalidation now runs
+  // and matches, so the target's session is deleted and the next request is 401.
+  test('role change invalidates the target session so the next request is 401', async () => {
     const { target, targetAgent, adminAgent } = await seedTargetAndAdmin();
 
     const res = await withCsrf(adminAgent.patch(`/api/users/${target.id}`)).send({ role: 'POWER_USER' });
     expect(res.status).toBe(200);
 
-    // The invalidation is a no-op on connect-mongo v6 (see file header): the
-    // target's session document survives and the target stays authenticated.
-    expect(await getSessionDocs(target.id)).toHaveLength(1);
-    expect((await targetAgent.get('/api/auth/me')).status).toBe(200);
+    expect(await getSessionDocs(target.id)).toHaveLength(0);
+    expect((await targetAgent.get('/api/auth/me')).status).toBe(401);
   });
 
-  // REQUIRED behavior (task req. 7). Skipped until routes/users.ts is fixed to
-  // invalidate against connect-mongo v6 (await sessionStore.collectionP + store
-  // sessions unstringified, or match on the stored representation). Un-skip to
-  // turn this into the regression test for the fix.
-  test.skip('role change should invalidate the target session so the next request is 401', async () => {
+  // Invalidation triggers on `data.role || data.email`, so an admin email change
+  // must invalidate the target's session too (distinct from the role-change path).
+  test('email change invalidates the target session so the next request is 401', async () => {
     const { target, targetAgent, adminAgent } = await seedTargetAndAdmin();
 
-    const res = await withCsrf(adminAgent.patch(`/api/users/${target.id}`)).send({ role: 'POWER_USER' });
+    const res = await withCsrf(adminAgent.patch(`/api/users/${target.id}`)).send({
+      email: 'target-moved@inv.test',
+    });
     expect(res.status).toBe(200);
+    expect(res.body.email).toBe('target-moved@inv.test');
 
     expect(await getSessionDocs(target.id)).toHaveLength(0);
     expect((await targetAgent.get('/api/auth/me')).status).toBe(401);

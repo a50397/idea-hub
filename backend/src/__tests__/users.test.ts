@@ -219,7 +219,7 @@ describe('Users API', () => {
       const response = await agent.post('/api/users').send({
         name: 'New User',
         email: 'newuser@example.com',
-        password: 'password123',
+        password: 'password1234',
         role: 'USER',
       });
 
@@ -227,7 +227,7 @@ describe('Users API', () => {
       expect(response.body).toHaveProperty('id', 'newuser');
       expect(response.body).toHaveProperty('email', 'newuser@example.com');
       expect(response.body).not.toHaveProperty('passwordHash');
-      expect(bcrypt.hash).toHaveBeenCalledWith('password123', 10);
+      expect(bcrypt.hash).toHaveBeenCalledWith('password1234', 12);
     });
 
     test('should fail if email already exists', async () => {
@@ -241,7 +241,7 @@ describe('Users API', () => {
       const response = await agent.post('/api/users').send({
         name: 'New User',
         email: 'existing@example.com',
-        password: 'password123',
+        password: 'password1234',
       });
 
       expect(response.status).toBe(400);
@@ -305,7 +305,7 @@ describe('Users API', () => {
       const response = await agent.post('/api/users').send({
         name: 'New User',
         email: 'user@example.com',
-        password: 'password123',
+        password: 'password1234',
         // Role not specified
       });
 
@@ -377,7 +377,7 @@ describe('Users API', () => {
       });
 
       expect(response.status).toBe(200);
-      expect(bcrypt.hash).toHaveBeenCalledWith('newpassword123', 10);
+      expect(bcrypt.hash).toHaveBeenCalledWith('newpassword123', 12);
       expect(mockPrismaFunctions.user.update).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({

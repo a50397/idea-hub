@@ -43,7 +43,7 @@ describe('users.email unique index (real DB)', () => {
     const first = await withCsrf(agent.post('/api/users')).send({
       name: 'First Person',
       email: 'dup@example.com',
-      password: 'password123',
+      password: 'password1234',
       role: 'USER',
     });
     expect(first.status).toBe(201);
@@ -53,7 +53,7 @@ describe('users.email unique index (real DB)', () => {
     const second = await withCsrf(agent.post('/api/users')).send({
       name: 'Second Person',
       email: 'dup@example.com',
-      password: 'password123',
+      password: 'password1234',
       role: 'USER',
     });
     expect(second.status).toBe(400);
@@ -69,7 +69,7 @@ describe('users.email unique index (real DB)', () => {
     await withCsrf(agent.post('/api/users')).send({
       name: 'Hashed User',
       email: 'hashed@example.com',
-      password: 'password123',
+      password: 'password1234',
       role: 'USER',
     });
     const created = await prisma.user.findUnique({ where: { email: 'hashed@example.com' } });

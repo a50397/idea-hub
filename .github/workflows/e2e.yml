@@ -16,11 +16,19 @@ jobs:
         node-version: [22.x]
 
     steps:
-      - name: Start MongoDB with Replica Set
+      - name: Start MongoDB with Replica Set + Auth
         run: |
-          docker run -d --name mongo -p 27017:27017 mongo:7 --replSet rs0
-          until docker exec mongo mongosh --eval "db.runCommand({ping:1})" --quiet; do sleep 1; done
-          docker exec mongo mongosh --eval "rs.initiate({_id:'rs0',members:[{_id:0,host:'localhost:27017'}]})"
+          # keyFile is required for a replica set with auth; own it by the in-container mongodb uid (999)
+          openssl rand -base64 756 > /tmp/mongo-keyfile
+          sudo chown 999:999 /tmp/mongo-keyfile
+          sudo chmod 400 /tmp/mongo-keyfile
+          docker run -d --name mongo -p 27017:27017 \
+            -e MONGO_INITDB_ROOT_USERNAME=root \
+            -e MONGO_INITDB_ROOT_PASSWORD=example-dev-password \
+            -v /tmp/mongo-keyfile:/etc/mongo-keyfile/keyfile:ro \
+            mongo:7.0.39 --replSet rs0 --keyFile /etc/mongo-keyfile/keyfile --bind_ip_all
+          until docker exec mongo mongosh -u root -p example-dev-password --authenticationDatabase admin --eval "db.runCommand({ping:1})" --quiet; do sleep 1; done
+          docker exec mongo mongosh -u root -p example-dev-password --authenticationDatabase admin --eval "rs.initiate({_id:'rs0',members:[{_id:0,host:'localhost:27017'}]})"
 
       - name: Checkout code
         uses: actions/checkout@v4
@@ -48,7 +56,7 @@ jobs:
           # E2E database on the CI replica set (host localhost:27017, so no
           # directConnection). Also computed by playwright.config when CI is set;
           # pinned here for clarity.
-          E2E_DATABASE_URL: mongodb://localhost:27017/ideahub_e2e?replicaSet=rs0
+          E2E_DATABASE_URL: mongodb://root:example-dev-password@localhost:27017/ideahub_e2e?replicaSet=rs0&authSource=admin
 
       - name: Upload Playwright report
         if: failure()

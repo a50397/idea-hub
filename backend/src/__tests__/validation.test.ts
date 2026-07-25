@@ -268,14 +268,14 @@ describe('Validation Schemas', () => {
       const result = changePasswordSchema.safeParse(invalidData);
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error.issues[0].message).toContain('at least 6 characters');
+        expect(result.error.issues[0].message).toContain('at least 12 characters');
       }
     });
 
-    test('should accept newPassword with exactly 6 characters', () => {
+    test('should accept newPassword with exactly 12 characters', () => {
       const validData = {
         currentPassword: 'oldpassword',
-        newPassword: '123456',
+        newPassword: '123456789012',
       };
 
       const result = changePasswordSchema.safeParse(validData);
@@ -288,7 +288,7 @@ describe('Validation Schemas', () => {
       const validData = {
         name: 'John Doe',
         email: 'john@example.com',
-        password: 'password123',
+        password: 'password1234',
         role: 'USER',
       };
 
@@ -300,7 +300,7 @@ describe('Validation Schemas', () => {
       const validData = {
         name: 'John Doe',
         email: 'john@example.com',
-        password: 'password123',
+        password: 'password1234',
       };
 
       const result = createUserSchema.safeParse(validData);
@@ -350,7 +350,7 @@ describe('Validation Schemas', () => {
         const data = {
           name: 'John Doe',
           email: 'john@example.com',
-          password: 'password123',
+          password: 'password1234',
           role,
         };
 

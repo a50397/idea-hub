@@ -9,6 +9,14 @@ import { buildEndSessionUrl } from './sso';
 
 const router = Router();
 
+// Bcrypt cost factor for hashing local passwords.
+const BCRYPT_COST = 12;
+
+// A constant, real bcrypt hash compared against on the no-user / SSO-only path so
+// that login timing does not reveal whether an account exists (or is SSO-managed).
+// Computed once at startup with the same cost used for real passwords.
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync('idea-hub-timing-equalizer', BCRYPT_COST);
+
 // Public: lets the frontend decide whether to show the SSO button.
 // No auth guard and no rate limiter by design.
 router.get('/config', (_req, res) => {
@@ -47,6 +55,11 @@ router.post('/login', loginLimiter as any, async (req, res) => {
     // the same generic error, and it also narrows passwordHash to a string for
     // bcrypt.compare below.
     if (!user || !user.passwordHash) {
+      // Run a dummy comparison so this path takes the same time as the
+      // wrong-password path; otherwise response timing leaks whether an account
+      // exists (user enumeration) or is SSO-only. The result is intentionally
+      // ignored and the generic 401 is returned either way.
+      await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
@@ -134,7 +147,7 @@ router.post('/change-password', requireAuth, passwordChangeLimiter as any, async
       return res.status(400).json({ error: 'Current password is incorrect' });
     }
 
-    const passwordHash = await bcrypt.hash(newPassword, 10);
+    const passwordHash = await bcrypt.hash(newPassword, BCRYPT_COST);
     await prisma.user.update({
       where: { id: user.id },
       data: { passwordHash },

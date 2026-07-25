@@ -348,7 +348,7 @@ describe('Authentication API', () => {
       expect(response.status).toBe(200);
       expect(response.body).toHaveProperty('message', 'Password changed successfully. Please log in again.');
       expect(bcrypt.compare).toHaveBeenCalledWith('oldpassword', validUser.passwordHash);
-      expect(bcrypt.hash).toHaveBeenCalledWith('newpassword123', 10);
+      expect(bcrypt.hash).toHaveBeenCalledWith('newpassword123', 12);
       expect(mockPrismaFunctions.user.update).toHaveBeenCalledWith({
         where: { id: validUser.id },
         data: { passwordHash: '$2b$10$newhashedpassword' },

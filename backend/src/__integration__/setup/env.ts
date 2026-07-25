@@ -9,7 +9,7 @@
 // ADMIN_EMAIL/ADMIN_PASSWORD are unset — both are satisfied below.
 
 export const DEFAULT_TEST_DATABASE_URL =
-  'mongodb://localhost:27017/ideahub_itest?replicaSet=rs0&directConnection=true';
+  'mongodb://root:example-dev-password@localhost:27017/ideahub_itest?replicaSet=rs0&authSource=admin&directConnection=true';
 
 process.env.NODE_ENV = 'test';
 // Honor a pre-set DATABASE_URL (CI supplies its own, without directConnection).

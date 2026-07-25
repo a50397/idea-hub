@@ -7,6 +7,9 @@ import { createUserSchema, updateUserSchema, objectIdParamSchema } from '../util
 
 const router = Router();
 
+// Bcrypt cost factor for hashing local passwords.
+const BCRYPT_COST = 12;
+
 // Get all users (Admin only)
 router.get('/', requireRole(Role.ADMIN), async (req, res) => {
   try {
@@ -94,7 +97,7 @@ router.post('/', requireRole(Role.ADMIN), async (req, res) => {
     }
 
     // Hash password
-    const passwordHash = await bcrypt.hash(data.password, 10);
+    const passwordHash = await bcrypt.hash(data.password, BCRYPT_COST);
 
     const user = await prisma.user.create({
       data: {
@@ -172,7 +175,7 @@ router.patch('/:id', requireRole(Role.ADMIN), async (req, res) => {
     if (data.email) updateData.email = data.email;
     if (data.role) updateData.role = data.role as Role;
     if (data.password) {
-      updateData.passwordHash = await bcrypt.hash(data.password, 10);
+      updateData.passwordHash = await bcrypt.hash(data.password, BCRYPT_COST);
     }
 
     const user = await prisma.user.update({
@@ -188,11 +191,26 @@ router.patch('/:id', requireRole(Role.ADMIN), async (req, res) => {
       },
     });
 
-    // If role or email changed, invalidate the target user's sessions
+    // If role or email changed, invalidate the target user's persisted sessions.
+    // connect-mongo v6 exposes the sessions collection as a promise (`collectionP`,
+    // not `collection`), and the store is configured with `stringify: false`
+    // (see index.ts) so `session` is stored as a nested object and this dotted
+    // query matches. Both were required for this invalidation to actually run.
     if (data.role || data.email) {
-      const mongoStore = req.sessionStore as any;
-      if (mongoStore?.collection) {
-        await mongoStore.collection.deleteMany({ 'session.userId': id });
+      // The update above already persisted — an invalidation failure must not
+      // turn this response into a misleading error. Sessions then simply
+      // expire on their own TTL; log loudly so the gap is visible.
+      try {
+        const store = req.sessionStore as any;
+        if (store?.collectionP) {
+          const sessions = await store.collectionP;
+          await sessions.deleteMany({ 'session.userId': id });
+        }
+      } catch (invalidationError) {
+        console.error(
+          `Session invalidation failed for user ${id} after role/email change:`,
+          (invalidationError as Error)?.message ?? invalidationError
+        );
       }
     }
 

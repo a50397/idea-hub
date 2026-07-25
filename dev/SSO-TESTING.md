@@ -36,6 +36,17 @@ SSO_ROLE_MAP=ideahub-admin:ADMIN,ideahub-power:POWER_USER
 (Claim names need no config — the defaults `roles`, `org`, `email`, `name` match
 what the realm's protocol mappers emit.)
 
+> **MongoDB now requires authentication.** The `mongo: up` task and the VS Code
+> "Backend (tsx)" launch config already use the dev credentials
+> (`MONGO_ROOT_USER` / `MONGO_ROOT_PASSWORD`, default `root` /
+> `example-dev-password`, plus a credentialed `DATABASE_URL` with
+> `authSource=admin`). This is unrelated to SSO and applies in both modes. If you
+> have a Mongo data volume from **before** this change, recreate it **once** (this
+> erases local Mongo data, which is expected):
+> ```bash
+> docker compose down -v && docker compose up -d --wait mongodb
+> ```
+
 ## 3. Run and click
 
 - F5 → "Full stack (BE + FE)" (or run backend + frontend yourself)

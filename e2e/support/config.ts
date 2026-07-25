@@ -32,7 +32,7 @@ export const E2E_DB_NAME = 'ideahub_e2e';
  */
 export const E2E_DATABASE_URL =
   process.env.E2E_DATABASE_URL ||
-  `mongodb://localhost:${PORTS.mongo}/${E2E_DB_NAME}?replicaSet=rs0${
+  `mongodb://root:example-dev-password@localhost:${PORTS.mongo}/${E2E_DB_NAME}?replicaSet=rs0&authSource=admin${
     isCI ? '' : '&directConnection=true'
   }`;
 

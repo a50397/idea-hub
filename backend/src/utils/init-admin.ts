@@ -21,7 +21,9 @@ export async function ensureAdminExists(): Promise<void> {
       process.exit(1);
     }
 
-    const passwordHash = await bcrypt.hash(password, 10);
+    // Cost factor 12 matches the app's password-hashing sites (routes/users.ts,
+    // routes/auth.ts). The bootstrap admin password is not length-validated here.
+    const passwordHash = await bcrypt.hash(password, 12);
 
     await prisma.user.create({
       data: {

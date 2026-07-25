@@ -359,7 +359,7 @@ describe('Integration Tests - Complete Workflows', () => {
       const createResponse = await adminAgent.post('/api/users').send({
         name: 'New Employee',
         email: 'new@example.com',
-        password: 'welcome123',
+        password: 'welcome123456',
         role: 'USER',
       });
 

@@ -127,17 +127,47 @@ This is the easiest way to get started. Docker will handle all dependencies and 
 
    Edit `.env` and update values if needed:
    ```env
-   DATABASE_URL="mongodb://mongodb:27017/ideahub"
+   # MongoDB now runs with authentication. docker-compose uses these to create the
+   # mongod root user and to build the backend's credentialed DATABASE_URL.
+   MONGO_ROOT_USER=root
+   MONGO_ROOT_PASSWORD=example-dev-password
+   # For a host-run backend (VS Code debug) DATABASE_URL points at localhost; inside
+   # docker-compose the backend reaches Mongo at host `mongodb` and the credentialed
+   # URL is composed from MONGO_ROOT_USER/MONGO_ROOT_PASSWORD automatically.
+   DATABASE_URL="mongodb://root:example-dev-password@localhost:27017/ideahub?replicaSet=rs0&authSource=admin&directConnection=true"
    SESSION_SECRET="your-super-secret-session-key-change-in-production"
    NODE_ENV="production"
    BACKEND_PORT=3001
    VITE_API_URL="http://localhost:3001"
    ```
 
+   > **Security — before ANY shared or production deployment:**
+   > - **Generate a strong `SESSION_SECRET`** (never ship the placeholder above):
+   >   ```bash
+   >   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+   >   ```
+   > - **Set `ADMIN_EMAIL` / `ADMIN_PASSWORD` to unique, non-default values.** The
+   >   bootstrap admin is created on first run from these; use a long, random
+   >   password (12+ characters — the app enforces a 12-char minimum for
+   >   admin-managed passwords).
+   > - The placeholder values here and the demo accounts below are **for local
+   >   development only**.
+
 3. **Build and start containers**
    ```bash
    docker-compose up -d
    ```
+
+   > **MongoDB authentication (one-time upgrade step).** Mongo now runs as an
+   > authenticated replica set (an internal keyFile is generated automatically into
+   > a named volume on first boot). Auth is only established on a **fresh** data
+   > volume, so if you are **upgrading an existing deployment** whose Mongo volume
+   > predates this change, recreate the volume **once**:
+   > ```bash
+   > docker compose down -v && docker compose up -d
+   > ```
+   > `down -v` **erases all Mongo data in that volume** — intended here because the
+   > pre-auth volume must be rebuilt. Fresh clones need no extra step.
 
 4. **Seed the database** (first time only)
    ```bash
@@ -149,10 +179,14 @@ This is the easiest way to get started. Docker will handle all dependencies and 
    - Backend API: http://localhost:3001
    - MongoDB: localhost:27017
 
-6. **Login with demo accounts**
+6. **Login with demo accounts** *(seeded by `prisma:seed` — LOCAL DEVELOPMENT ONLY)*
    - **Admin**: admin@ideahub.com / admin123
    - **Power User**: power@ideahub.com / power123
    - **User**: john@ideahub.com / user123
+
+   > **Warning:** These are well-known default credentials created by the seed
+   > script. Never run `prisma:seed` against a shared or production database, and
+   > change any default admin credentials before exposing the app.
 
 ### Option 2: Local Development
 
@@ -482,6 +516,53 @@ See [Single Sign-On (SSO)](#single-sign-on-sso) for the `SSO_*` and `BREAK_GLASS
 IdeaHub can delegate authentication to a corporate identity provider (IAM) over
 **OpenID Connect** using the **authorization-code flow with PKCE**. SSO is
 **disabled by default** and is enabled per-deployment with `SSO_ENABLED=true`.
+
+### Running with and without SSO
+
+SSO is **entirely optional** — the `SSO_*` variables are read only when
+`SSO_ENABLED=true`. The whole block below can be ignored for a classic
+password-only deployment.
+
+**Without SSO (default).** With `SSO_ENABLED` unset or `"false"`, IdeaHub behaves
+classically: **email + password login only**. The first admin is bootstrapped
+from `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `ADMIN_NAME` on first run, and admins
+create/manage users through the user API. **No other `SSO_*` variable is needed.**
+
+**With SSO (`SSO_ENABLED=true`).** Also set the **required** variables
+`SSO_ISSUER_URL`, `SSO_CLIENT_ID`, `SSO_CLIENT_SECRET`, `SSO_REDIRECT_URI`. The
+remaining variables (`SSO_SCOPE`, `SSO_ROLES_CLAIM`, `SSO_ORG_CLAIM`,
+`SSO_EMAIL_CLAIM`, `SSO_NAME_CLAIM`, `SSO_ROLE_MAP`,
+`SSO_POST_LOGOUT_REDIRECT_URI`, `BREAK_GLASS_EMAILS`) are **optional and have
+defaults** — see the [Configuration](#configuration) table below for each.
+
+**Required in both modes:** `FRONTEND_URL` must be set correctly (it drives CORS
+and, under SSO, the post-login / logout redirect targets). The MongoDB
+credentials (`MONGO_ROOT_USER` / `MONGO_ROOT_PASSWORD` and the credentialed
+`DATABASE_URL`) are likewise required in both modes — database authentication is
+orthogonal to SSO.
+
+**Behavior deltas when SSO is on:**
+
+- The login page shows a primary **"Sign in with SSO"** button; the local
+  email/password form is hidden behind a **"Use a local account"** toggle.
+- SSO users are **just-in-time provisioned**, and their **role and department are
+  re-synced from the ID-token claims on every login** (the IAM is the source of
+  truth).
+- SSO users have **no logout button and no "Change Password"** navigation in the
+  app — those sessions are **IAM-owned** (logout is RP-initiated at the IdP;
+  passwords live in the IAM).
+- Admins **cannot edit SSO-managed users** (name / email / role / password) via
+  the user API.
+- **Break-glass** local accounts (`BREAK_GLASS_EMAILS`, default `[ADMIN_EMAIL]`)
+  always keep password login and can **never** be converted to SSO, so an IAM
+  outage can never lock every administrator out.
+
+**Testing & onboarding (linked, not duplicated):**
+
+- Local, click-through SSO testing with a preconfigured Keycloak kit:
+  [dev/SSO-TESTING.md](dev/SSO-TESTING.md).
+- Production IAM onboarding and what to request from the security team:
+  [dev/IAM-REQUEST.md](dev/IAM-REQUEST.md).
 
 ### How it works
 
