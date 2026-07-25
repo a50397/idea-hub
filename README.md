@@ -499,7 +499,19 @@ IdeaHub can delegate authentication to a corporate identity provider (IAM) over
    code (validating `state`, `nonce`, and PKCE), reads the ID-token claims, then
    **just-in-time provisions** or updates the user and starts a fresh session.
    Any failure redirects to `${FRONTEND_URL}/login?error=sso_failed` with no
-   detail leaked to the browser.
+   detail leaked to the browser. The session additionally retains the ID token
+   (server-side only) for use as `id_token_hint` at logout.
+5. `POST /api/auth/logout` first destroys the local session and clears its
+   cookie. For SSO sessions it then performs **RP-initiated logout**: it responds
+   with `{ message, redirectTo }`, where `redirectTo` is the issuer's
+   `end_session_endpoint` composed with `id_token_hint` and
+   `post_logout_redirect_uri` (`SSO_POST_LOGOUT_REDIRECT_URI`). The frontend does
+   a full-page navigation to it, so the IAM also ends its session and the next
+   "Sign in with SSO" re-prompts for credentials. If SSO is disabled, the session
+   was local, the issuer advertises no `end_session_endpoint`, or discovery
+   fails, logout stays purely local (no `redirectTo`) — the local logout has
+   already succeeded, so IdP logout is best-effort and never blocks it. The ID
+   token is never logged and never sent to the browser except inside `redirectTo`.
 
 Identity is keyed on the ID-token `sub` claim. If no user matches the `sub` but
 a local account with the same email exists, that account is **linked** to SSO
@@ -525,6 +537,7 @@ break-glass admin with a strong local password.
 | `SSO_CLIENT_ID` | Client ID issued by the IAM | — |
 | `SSO_CLIENT_SECRET` | Client secret issued by the IAM | — |
 | `SSO_REDIRECT_URI` | Callback URI — `{BASE_URL}/api/auth/sso/callback` | — |
+| `SSO_POST_LOGOUT_REDIRECT_URI` | Where the IAM returns the browser after RP-initiated logout (must be registered with the IAM) | `${FRONTEND_URL}/login` |
 | `SSO_SCOPE` | Requested scopes | `openid profile email` |
 | `SSO_ROLES_CLAIM` | ID-token claim holding IAM roles | `roles` |
 | `SSO_ORG_CLAIM` | ID-token claim holding org/department | `org` |

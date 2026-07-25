@@ -47,6 +47,18 @@ what the realm's protocol mappers emit.)
 
 - Role mapping: alice=USER, bob=POWER_USER, carol=ADMIN (change a user's client role
   in Keycloak, log out/in again → role updates on next login)
+- **RP-initiated logout round-trips via Keycloak and truly ends the IdP session**:
+  after logging in via SSO, click Logout. The browser is sent to Keycloak's
+  `end_session_endpoint` and returned to `/login`. Now click "Sign in with SSO"
+  again → Keycloak **prompts for credentials again** (it does not silently
+  re-authenticate). Before this change the IdP session survived logout and SSO
+  re-authenticated with no prompt.
+  - Requires the client's `post.logout.redirect.uris` attribute (added to the
+    realm). An **already-running** Keycloak must re-import the realm to pick it up:
+    ```bash
+    docker compose -f dev/docker-compose.keycloak.yml down -v && docker compose -f dev/docker-compose.keycloak.yml up -d
+    ```
+  - Local (non-SSO) logout is unaffected: it stays on `/login` with no IdP round-trip.
 - `sso_failed` path: cancel on the Keycloak form (or stop Keycloak mid-flow) → back
   on /login with the error banner
 - Local break-glass: the seeded admin still logs in via "Use a local account"

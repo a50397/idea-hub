@@ -32,6 +32,9 @@
         "http://localhost:3299/*"
       ],
       "webOrigins": ["+"],
+      "attributes": {
+        "post.logout.redirect.uris": "+"
+      },
       "protocolMappers": [
         {
           "name": "ideahub-client-roles",

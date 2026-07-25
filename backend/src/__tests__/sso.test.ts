@@ -661,3 +661,59 @@ describe('PATCH /api/users/:id — SSO-managed users', () => {
     expect(mockPrisma.user.update).not.toHaveBeenCalled();
   });
 });
+
+// ===========================================================================
+// 14. RP-initiated logout (OIDC end-session)
+// ===========================================================================
+describe('POST /api/auth/logout — RP-initiated (SSO) logout', () => {
+  test('SSO login stores the id_token; logout returns an IdP end-session redirectTo and destroys the session', async () => {
+    injectedClaims = {
+      sub: 'sub-logout',
+      email: 'logout@corp.example',
+      name: 'Logout User',
+      roles: ['iam-users'],
+    };
+    const created = {
+      id: 'logout-1',
+      name: 'Logout User',
+      email: 'logout@corp.example',
+      role: 'USER',
+      authProvider: 'SSO',
+      department: null,
+      createdAt: new Date(),
+    };
+    mockPrisma.user.findFirst.mockResolvedValue(null);
+    mockPrisma.user.findUnique.mockImplementation((args: any) =>
+      args?.where?.email !== undefined ? Promise.resolve(null) : Promise.resolve(created)
+    );
+    mockPrisma.user.create.mockResolvedValue(created);
+
+    const agent = request.agent(app);
+    const { code, state } = await authorize(agent);
+    const cbRes = await agent.get(`/api/auth/sso/callback?code=${code}&state=${state}`);
+    expect(cbRes.status).toBe(302);
+
+    // Session is live before logout (proves the callback established it).
+    const meBefore = await agent.get('/api/auth/me');
+    expect(meBefore.status).toBe(200);
+
+    const logoutRes = await agent.post('/api/auth/logout');
+    expect(logoutRes.status).toBe(200);
+    // Message is unchanged; redirectTo is ADDED for SSO sessions.
+    expect(logoutRes.body).toHaveProperty('message', 'Logged out successfully');
+    expect(logoutRes.body).toHaveProperty('redirectTo');
+
+    const redirectTo = logoutRes.body.redirectTo as string;
+    // Targets the discovered end_session_endpoint...
+    expect(redirectTo).toContain(`${issuerUrl}/endsession`);
+    // ...carrying the id_token_hint (only stored server-side, only leaves here)
+    // and the post_logout_redirect_uri (defaults to ${FRONTEND_URL}/login).
+    const u = new URL(redirectTo);
+    expect(u.searchParams.get('id_token_hint')).toBeTruthy();
+    expect(u.searchParams.get('post_logout_redirect_uri')).toBe('http://localhost:5173/login');
+
+    // The local session is actually destroyed.
+    const meAfter = await agent.get('/api/auth/me');
+    expect(meAfter.status).toBe(401);
+  });
+});

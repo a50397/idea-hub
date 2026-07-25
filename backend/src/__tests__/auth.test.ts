@@ -25,9 +25,21 @@ jest.mock('@prisma/client', () => {
 
 jest.mock('bcrypt');
 
+// Mock the SSO route module so we can drive routes/auth.ts logout branching
+// (redirectTo present / null / discovery failure) without a live IdP. The real
+// end-to-end OIDC end-session URL is covered against a mock IdP in sso.test.ts.
+jest.mock('../routes/sso', () => ({
+  __esModule: true,
+  default: {},
+  buildEndSessionUrl: jest.fn(),
+}));
+
 // Import routes AFTER mocks
 import bcrypt from 'bcrypt';
 import authRoutes from '../routes/auth';
+import { buildEndSessionUrl } from '../routes/sso';
+
+const mockedBuildEndSessionUrl = buildEndSessionUrl as jest.Mock;
 
 function createTestApp() {
   const app = express();
@@ -582,6 +594,128 @@ describe('Authentication API', () => {
       // Logout endpoint should not be rate limited
       const response = await request(app).post('/api/auth/logout');
       expect(response.status).not.toBe(429);
+    });
+  });
+
+  describe('POST /api/auth/logout — SSO RP-initiated logout branching', () => {
+    const SSO_ENV_KEYS = ['SSO_ENABLED', 'SSO_POST_LOGOUT_REDIRECT_URI', 'FRONTEND_URL'];
+    const savedSsoEnv: Record<string, string | undefined> = {};
+
+    // App that seeds an SSO session (with an id_token) the way the real OIDC
+    // callback does, so logout has something to end at the IdP.
+    function createSsoSessionApp() {
+      const ssoApp = express();
+      ssoApp.use(cors());
+      ssoApp.use(express.json());
+      ssoApp.use(
+        session({
+          secret: 'test-secret',
+          resave: false,
+          saveUninitialized: false,
+          cookie: { secure: false },
+        })
+      );
+      ssoApp.post('/sso-test-login', (req, res) => {
+        req.session.userId = 'sso-user';
+        req.session.email = 'sso@example.com';
+        req.session.name = 'SSO User';
+        req.session.role = 'USER';
+        req.session.idToken = 'header.payload.signature';
+        res.status(204).send();
+      });
+      ssoApp.use('/api/auth', authRoutes);
+      return ssoApp;
+    }
+
+    beforeEach(() => {
+      for (const k of SSO_ENV_KEYS) savedSsoEnv[k] = process.env[k];
+      process.env.SSO_ENABLED = 'true';
+      process.env.SSO_POST_LOGOUT_REDIRECT_URI = 'http://localhost:5173/login';
+    });
+
+    afterEach(() => {
+      for (const k of SSO_ENV_KEYS) {
+        if (savedSsoEnv[k] === undefined) delete process.env[k];
+        else process.env[k] = savedSsoEnv[k];
+      }
+    });
+
+    test('LOCAL session (no id_token) gets NO redirectTo even when SSO is enabled', async () => {
+      // Real local login via createTestApp — sets no idToken on the session.
+      const agent = request.agent(app);
+      mockPrismaFunctions.user.findUnique.mockResolvedValue({
+        id: 'user123',
+        name: 'Test User',
+        email: 'test@example.com',
+        passwordHash: 'hash',
+        role: 'USER',
+      });
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+      await agent.post('/api/auth/login').send({ email: 'test@example.com', password: 'password123' });
+
+      const res = await agent.post('/api/auth/logout');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ message: 'Logged out successfully' });
+      expect(res.body).not.toHaveProperty('redirectTo');
+      expect(mockedBuildEndSessionUrl).not.toHaveBeenCalled();
+    });
+
+    test('SSO session with an end_session_endpoint returns { message, redirectTo }', async () => {
+      mockedBuildEndSessionUrl.mockResolvedValue(
+        'https://idp.example/endsession?id_token_hint=header.payload.signature&post_logout_redirect_uri=http%3A%2F%2Flocalhost%3A5173%2Flogin'
+      );
+      const ssoApp = createSsoSessionApp();
+      const agent = request.agent(ssoApp);
+      await agent.post('/sso-test-login');
+
+      const res = await agent.post('/api/auth/logout');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty('message', 'Logged out successfully');
+      expect(res.body.redirectTo).toContain('/endsession');
+      // The captured id_token and configured post-logout URI are passed through.
+      expect(mockedBuildEndSessionUrl).toHaveBeenCalledWith({
+        idToken: 'header.payload.signature',
+        postLogoutRedirectUri: 'http://localhost:5173/login',
+      });
+
+      // Session destroyed.
+      const me = await agent.get('/api/auth/me');
+      expect(me.status).toBe(401);
+    });
+
+    test('SSO session but issuer has no end_session_endpoint -> 200, no redirectTo, session destroyed', async () => {
+      mockedBuildEndSessionUrl.mockResolvedValue(null);
+      const ssoApp = createSsoSessionApp();
+      const agent = request.agent(ssoApp);
+      await agent.post('/sso-test-login');
+
+      const res = await agent.post('/api/auth/logout');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ message: 'Logged out successfully' });
+      expect(res.body).not.toHaveProperty('redirectTo');
+      expect(mockedBuildEndSessionUrl).toHaveBeenCalledTimes(1);
+
+      const me = await agent.get('/api/auth/me');
+      expect(me.status).toBe(401);
+    });
+
+    test('discovery failure at logout is fail-safe -> 200, no redirectTo, session destroyed', async () => {
+      mockedBuildEndSessionUrl.mockRejectedValue(new Error('discovery failed'));
+      const ssoApp = createSsoSessionApp();
+      const agent = request.agent(ssoApp);
+      await agent.post('/sso-test-login');
+
+      const res = await agent.post('/api/auth/logout');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ message: 'Logged out successfully' });
+      expect(res.body).not.toHaveProperty('redirectTo');
+
+      const me = await agent.get('/api/auth/me');
+      expect(me.status).toBe(401);
     });
   });
 });
