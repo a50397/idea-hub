@@ -91,6 +91,44 @@ router.get('/summary', requireAuth, async (req, res) => {
   }
 });
 
+// Get idea counts grouped by department (zero-filled: every department is listed
+// even with a count of 0, sorted by department order).
+router.get('/by-department', requireAuth, async (req, res) => {
+  try {
+    // Standard users can only see their own ideas (same scoping as /summary).
+    const userFilter = req.session.role === Role.USER ? { submitterId: req.session.userId } : {};
+
+    const [departments, grouped] = await Promise.all([
+      prisma.department.findMany({
+        orderBy: [{ order: 'asc' }, { name: 'asc' }],
+      }),
+      prisma.idea.groupBy({
+        by: ['departmentId'],
+        where: { ...userFilter },
+        _count: { id: true },
+      }),
+    ]);
+
+    const countByDepartment = new Map<string, number>();
+    grouped.forEach((g) => {
+      if (g.departmentId) {
+        countByDepartment.set(g.departmentId, g._count.id);
+      }
+    });
+
+    const result = departments.map((d) => ({
+      departmentId: d.id,
+      name: d.name,
+      count: countByDepartment.get(d.id) ?? 0,
+    }));
+
+    res.json(result);
+  } catch (error) {
+    console.error('Error fetching by-department report:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Get monthly trend data
 router.get('/monthly-trend', requireAuth, async (req, res) => {
   try {
@@ -210,6 +248,9 @@ router.get('/filtered', requireAuth, async (req, res) => {
     if (data.assigneeId) {
       where.assigneeId = data.assigneeId;
     }
+    if (data.departmentId) {
+      where.departmentId = data.departmentId;
+    }
     if (data.tags) {
       where.tags = {
         hasSome: Array.isArray(data.tags) ? data.tags : [data.tags],
@@ -239,6 +280,9 @@ router.get('/filtered', requireAuth, async (req, res) => {
           assignee: {
             select: { id: true, name: true, email: true },
           },
+          department: {
+            select: { id: true, name: true },
+          },
         },
         orderBy: { submittedAt: 'desc' },
         skip,
@@ -264,6 +308,7 @@ router.get('/filtered', requireAuth, async (req, res) => {
           'Completed At',
           'Duration (days)',
           'Tags',
+          'Department',
         ].join(','),
       ];
 
@@ -290,6 +335,7 @@ router.get('/filtered', requireAuth, async (req, res) => {
             idea.completedAt ? idea.completedAt.toISOString() : '',
             duration,
             sanitizeCsvField(idea.tags.join(', ')),
+            idea.department ? sanitizeCsvField(idea.department.name) : '',
           ].join(',')
         );
       });

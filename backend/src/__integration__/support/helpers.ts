@@ -9,8 +9,9 @@ import bcrypt from 'bcrypt';
 import { Role, AuthProvider, IdeaStatus, Effort } from '@prisma/client';
 import app from '../../index';
 import prisma from '../../lib/prisma';
+import { ensureDepartments } from '../../utils/init-departments';
 
-export { app, prisma, Role, AuthProvider, IdeaStatus, Effort };
+export { app, prisma, Role, AuthProvider, IdeaStatus, Effort, ensureDepartments };
 
 // The real app enforces CSRF: state-changing requests must carry this header.
 export const XSRF_HEADER = 'X-Requested-With';
@@ -51,8 +52,24 @@ export async function resetDb(): Promise<void> {
   await prisma.ideaEvent.deleteMany({});
   await prisma.ideaStep.deleteMany({});
   await prisma.idea.deleteMany({});
+  await prisma.department.deleteMany({});
   await prisma.user.deleteMany({});
+  // Recreate the default department so every test starts from a valid target
+  // (mirrors the boot seed; idempotent by construction).
+  await ensureDepartments();
   await clearSessions();
+}
+
+// Resolve the current default department id (first by order, tie-break name).
+// resetDb guarantees the seeded default exists, so this is safe post-reset.
+export async function getDefaultDepartmentId(): Promise<string> {
+  const first = await prisma.department.findFirst({
+    orderBy: [{ order: 'asc' }, { name: 'asc' }],
+  });
+  if (!first) {
+    throw new Error('getDefaultDepartmentId: no departments exist (did resetDb run?)');
+  }
+  return first.id;
 }
 
 // The connect-mongo `sessions` collection is not a Prisma model.
@@ -112,6 +129,7 @@ export async function createUser(input: CreateUserInput) {
 
 export interface CreateIdeaInput {
   submitterId: string;
+  departmentId?: string;
   title?: string;
   description?: string;
   benefits?: string;
@@ -128,6 +146,9 @@ export interface CreateIdeaInput {
 }
 
 export async function createIdea(input: CreateIdeaInput) {
+  // Resolve the default department when the caller does not pin one, so direct
+  // fixtures still satisfy the API-layer required-department invariant.
+  const departmentId = input.departmentId ?? (await getDefaultDepartmentId());
   return prisma.idea.create({
     data: {
       title: input.title ?? 'A valid idea title',
@@ -137,6 +158,7 @@ export async function createIdea(input: CreateIdeaInput) {
       status: input.status ?? IdeaStatus.SUBMITTED,
       tags: input.tags ?? [],
       submitterId: input.submitterId,
+      departmentId,
       ...(input.approverId ? { approverId: input.approverId } : {}),
       ...(input.assigneeId ? { assigneeId: input.assigneeId } : {}),
       ...(input.submittedAt ? { submittedAt: input.submittedAt } : {}),
@@ -148,14 +170,17 @@ export async function createIdea(input: CreateIdeaInput) {
   });
 }
 
-// A payload that satisfies createIdeaSchema (title>=5, description>=10, benefits>=10).
-export function validIdeaPayload(overrides: Record<string, unknown> = {}) {
+// A payload that satisfies createIdeaSchema (title>=5, description>=10,
+// benefits>=10, and the now-required departmentId). Stays synchronous: the caller
+// resolves the id (e.g. via getDefaultDepartmentId) and passes it in.
+export function validIdeaPayload(departmentId: string, overrides: Record<string, unknown> = {}) {
   return {
     title: 'Improve the coffee situation',
     description: 'We should switch to a better coffee supplier for the office.',
     benefits: 'Happier, more caffeinated and productive engineers.',
     effort: Effort.LESS_THAN_ONE_DAY,
     tags: ['office', 'perks'],
+    departmentId,
     ...overrides,
   };
 }

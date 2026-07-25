@@ -8,7 +8,12 @@ import {
   updateUserSchema,
   ideasQuerySchema,
   filteredReportQuerySchema,
+  departmentNameSchema,
+  reorderDepartmentsSchema,
 } from '../utils/validation';
+
+// A valid ObjectId used wherever a schema now requires/accepts a department id.
+const VALID_OBJECT_ID = '507f1f77bcf86cd799439011';
 import { Effort } from '@prisma/client';
 
 describe('Validation Schemas', () => {
@@ -61,6 +66,7 @@ describe('Validation Schemas', () => {
         benefits: 'These are the benefits with enough characters',
         effort: Effort.ONE_TO_THREE_DAYS,
         tags: ['test', 'automation'],
+        departmentId: VALID_OBJECT_ID,
       };
 
       const result = createIdeaSchema.safeParse(validData);
@@ -136,6 +142,7 @@ describe('Validation Schemas', () => {
         description: 'Valid description with enough characters',
         benefits: 'Valid benefits with enough characters',
         effort: Effort.ONE_TO_THREE_DAYS,
+        departmentId: VALID_OBJECT_ID,
       };
 
       const result = createIdeaSchema.safeParse(validData);
@@ -152,10 +159,32 @@ describe('Validation Schemas', () => {
         benefits: 'Valid benefits',
         effort: Effort.ONE_TO_THREE_DAYS,
         tags: ['productivity', 'automation', 'process'],
+        departmentId: VALID_OBJECT_ID,
       };
 
       const result = createIdeaSchema.safeParse(validData);
       expect(result.success).toBe(true);
+    });
+
+    test('should reject a missing departmentId (now required)', () => {
+      const result = createIdeaSchema.safeParse({
+        title: 'Valid Title',
+        description: 'Valid description with enough characters',
+        benefits: 'Valid benefits with enough characters',
+        effort: Effort.ONE_TO_THREE_DAYS,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    test('should reject an invalid departmentId format', () => {
+      const result = createIdeaSchema.safeParse({
+        title: 'Valid Title',
+        description: 'Valid description with enough characters',
+        benefits: 'Valid benefits with enough characters',
+        effort: Effort.ONE_TO_THREE_DAYS,
+        departmentId: 'not-an-object-id',
+      });
+      expect(result.success).toBe(false);
     });
   });
 
@@ -192,6 +221,68 @@ describe('Validation Schemas', () => {
     test('should allow empty object (no updates)', () => {
       const result = updateIdeaSchema.safeParse({});
       expect(result.success).toBe(true);
+    });
+
+    test('should accept an optional departmentId', () => {
+      const result = updateIdeaSchema.safeParse({ departmentId: VALID_OBJECT_ID });
+      expect(result.success).toBe(true);
+    });
+
+    test('should reject an invalid departmentId', () => {
+      const result = updateIdeaSchema.safeParse({ departmentId: 'bad' });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('departmentNameSchema', () => {
+    test('should validate a valid name', () => {
+      const result = departmentNameSchema.safeParse({ name: 'Marketing' });
+      expect(result.success).toBe(true);
+    });
+
+    test('should trim surrounding whitespace', () => {
+      const result = departmentNameSchema.safeParse({ name: '  Marketing  ' });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.name).toBe('Marketing');
+      }
+    });
+
+    test('should reject an empty or whitespace-only name', () => {
+      expect(departmentNameSchema.safeParse({ name: '' }).success).toBe(false);
+      expect(departmentNameSchema.safeParse({ name: '   ' }).success).toBe(false);
+    });
+
+    test('should reject a name longer than 100 characters', () => {
+      const result = departmentNameSchema.safeParse({ name: 'A'.repeat(101) });
+      expect(result.success).toBe(false);
+    });
+
+    test('should accept a name of exactly 100 characters', () => {
+      const result = departmentNameSchema.safeParse({ name: 'A'.repeat(100) });
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('reorderDepartmentsSchema', () => {
+    test('should validate a non-empty array of ids', () => {
+      const result = reorderDepartmentsSchema.safeParse({ ids: ['a', 'b', 'c'] });
+      expect(result.success).toBe(true);
+    });
+
+    test('should reject an empty array', () => {
+      const result = reorderDepartmentsSchema.safeParse({ ids: [] });
+      expect(result.success).toBe(false);
+    });
+
+    test('should reject a non-array ids value', () => {
+      const result = reorderDepartmentsSchema.safeParse({ ids: 'not-an-array' });
+      expect(result.success).toBe(false);
+    });
+
+    test('should reject a missing ids field', () => {
+      const result = reorderDepartmentsSchema.safeParse({});
+      expect(result.success).toBe(false);
     });
   });
 
@@ -460,6 +551,16 @@ describe('Validation Schemas', () => {
       const result = ideasQuerySchema.safeParse({ tags: ['automation', 'process'] });
       expect(result.success).toBe(true);
     });
+
+    test('should validate a valid departmentId', () => {
+      const result = ideasQuerySchema.safeParse({ departmentId: VALID_OBJECT_ID });
+      expect(result.success).toBe(true);
+    });
+
+    test('should reject an invalid departmentId', () => {
+      const result = ideasQuerySchema.safeParse({ departmentId: 'nope' });
+      expect(result.success).toBe(false);
+    });
   });
 
   describe('filteredReportQuerySchema', () => {
@@ -518,6 +619,16 @@ describe('Validation Schemas', () => {
 
     test('should reject invalid submitterId', () => {
       const result = filteredReportQuerySchema.safeParse({ submitterId: 'bad' });
+      expect(result.success).toBe(false);
+    });
+
+    test('should validate a valid departmentId', () => {
+      const result = filteredReportQuerySchema.safeParse({ departmentId: VALID_OBJECT_ID });
+      expect(result.success).toBe(true);
+    });
+
+    test('should reject an invalid departmentId', () => {
+      const result = filteredReportQuerySchema.safeParse({ departmentId: 'bad' });
       expect(result.success).toBe(false);
     });
   });

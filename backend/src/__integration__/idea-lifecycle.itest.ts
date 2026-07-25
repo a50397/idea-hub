@@ -16,6 +16,7 @@ import {
   createUser,
   createIdea,
   validIdeaPayload,
+  getDefaultDepartmentId,
 } from './support/helpers';
 import request from 'supertest';
 
@@ -41,7 +42,8 @@ describe('idea lifecycle across roles (real DB)', () => {
     // 1) USER submits.
     const submitterAgent = newAgent();
     await loginAs(submitterAgent, 'submitter@life.test', 'pw');
-    const submitRes = await withCsrf(submitterAgent.post('/api/ideas')).send(validIdeaPayload());
+    const departmentId = await getDefaultDepartmentId();
+    const submitRes = await withCsrf(submitterAgent.post('/api/ideas')).send(validIdeaPayload(departmentId));
     expect(submitRes.status).toBe(201);
     expect(submitRes.body.status).toBe('SUBMITTED');
     expect(submitRes.body.submitterId).toBe(submitter.id);
@@ -107,7 +109,8 @@ describe('idea lifecycle across roles (real DB)', () => {
   });
 
   test('submitting an idea without a session is 401', async () => {
-    const res = await withCsrf(request(app).post('/api/ideas')).send(validIdeaPayload());
+    const departmentId = await getDefaultDepartmentId();
+    const res = await withCsrf(request(app).post('/api/ideas')).send(validIdeaPayload(departmentId));
     expect(res.status).toBe(401);
   });
 

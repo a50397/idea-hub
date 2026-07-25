@@ -21,8 +21,14 @@ const mockPrismaFunctions: Record<string, any> = {
   ideaEvent: {
     create: jest.fn(),
   },
+  department: {
+    findUnique: jest.fn(),
+  },
 };
 mockPrismaFunctions.$transaction = jest.fn((fn: (tx: any) => Promise<any>) => fn(mockPrismaFunctions));
+
+// A valid ObjectId-format department id for the idea-submission steps.
+const DEPT_ID = 'ddddddddddddddddddddd001';
 
 jest.mock('@prisma/client', () => {
   return {
@@ -148,6 +154,7 @@ describe('Integration Tests - Complete Workflows', () => {
 
       mockPrismaFunctions.idea.create.mockResolvedValue(submittedIdea);
       mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
+      mockPrismaFunctions.department.findUnique.mockResolvedValue({ id: DEPT_ID, name: 'Všeobecné' });
 
       const submitResponse = await userAgent.post('/api/ideas').send({
         title: 'Implement Weekly Team Retrospectives',
@@ -155,6 +162,7 @@ describe('Integration Tests - Complete Workflows', () => {
         benefits: 'Improved team communication, faster problem resolution, better morale',
         effort: 'LESS_THAN_ONE_DAY',
         tags: ['process', 'team'],
+        departmentId: DEPT_ID,
       });
 
       expect(submitResponse.status).toBe(201);
@@ -286,12 +294,14 @@ describe('Integration Tests - Complete Workflows', () => {
 
       mockPrismaFunctions.idea.create.mockResolvedValue(submittedIdea);
       mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
+      mockPrismaFunctions.department.findUnique.mockResolvedValue({ id: DEPT_ID, name: 'Všeobecné' });
 
       await userAgent.post('/api/ideas').send({
         title: 'Install Nap Pods',
         description: 'Add nap pods for employees',
         benefits: 'Better rest',
         effort: 'MORE_THAN_THREE_DAYS',
+        departmentId: DEPT_ID,
       });
 
       // Power user rejects idea

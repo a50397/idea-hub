@@ -14,7 +14,22 @@ async function main() {
   // Clear existing data
   await prisma.ideaEvent.deleteMany();
   await prisma.idea.deleteMany();
+  await prisma.department.deleteMany();
   await prisma.user.deleteMany();
+
+  // Create departments. Všeobecné MUST stay order 0 — it is the first-by-order
+  // default the submit form and the boot backfill rely on. This seed also feeds
+  // the E2E global-setup, so that ordering is load-bearing there too.
+  const generalDept = await prisma.department.create({
+    data: { name: 'Všeobecné', order: 0 },
+  });
+  const marketingDept = await prisma.department.create({
+    data: { name: 'Marketing', order: 1 },
+  });
+
+  console.log('Created departments:', {
+    departments: [generalDept.name, marketingDept.name],
+  });
 
   // Create users
   const adminPassword = await bcrypt.hash('admin123', 10);
@@ -91,6 +106,7 @@ async function main() {
       status: IdeaStatus.SUBMITTED,
       submitterId: user1.id,
       tags: ['hr', 'automation', 'employee-experience'],
+      departmentId: generalDept.id,
       submittedAt: yesterday,
     },
   });
@@ -116,6 +132,7 @@ async function main() {
       status: IdeaStatus.SUBMITTED,
       submitterId: user2.id,
       tags: ['health', 'workplace', 'equipment'],
+      departmentId: marketingDept.id,
       submittedAt: now,
     },
   });
@@ -143,6 +160,7 @@ async function main() {
       submitterId: user1.id,
       approverId: powerUser.id,
       tags: ['knowledge-management', 'documentation', 'collaboration'],
+      departmentId: generalDept.id,
       submittedAt: lastWeek,
       approvedAt: new Date(lastWeek.getTime() + 2 * 24 * 60 * 60 * 1000),
     },
@@ -179,6 +197,7 @@ async function main() {
       submitterId: user3.id,
       approverId: powerUser.id,
       tags: ['automation', 'reporting', 'productivity'],
+      departmentId: marketingDept.id,
       submittedAt: lastWeek,
       approvedAt: new Date(lastWeek.getTime() + 1 * 24 * 60 * 60 * 1000),
     },
@@ -217,6 +236,7 @@ async function main() {
       approverId: powerUser.id,
       assigneeId: user2.id,
       tags: ['sustainability', 'environment', 'csr'],
+      departmentId: generalDept.id,
       submittedAt: lastMonth,
       approvedAt: new Date(lastMonth.getTime() + 3 * 24 * 60 * 60 * 1000),
       startedAt: new Date(lastMonth.getTime() + 5 * 24 * 60 * 60 * 1000),
@@ -263,6 +283,7 @@ async function main() {
       approverId: admin.id,
       assigneeId: admin.id,
       tags: ['employee-experience', 'perks'],
+      departmentId: generalDept.id,
       submittedAt: new Date(lastMonth.getTime() - 10 * 24 * 60 * 60 * 1000),
       approvedAt: new Date(lastMonth.getTime() - 8 * 24 * 60 * 60 * 1000),
       startedAt: new Date(lastMonth.getTime() - 7 * 24 * 60 * 60 * 1000),
@@ -316,6 +337,7 @@ async function main() {
       approverId: admin.id,
       assigneeId: powerUser.id,
       tags: ['policy', 'work-life-balance', 'flexibility'],
+      departmentId: marketingDept.id,
       submittedAt: new Date(lastMonth.getTime() - 15 * 24 * 60 * 60 * 1000),
       approvedAt: new Date(lastMonth.getTime() - 12 * 24 * 60 * 60 * 1000),
       startedAt: new Date(lastMonth.getTime() - 10 * 24 * 60 * 60 * 1000),
@@ -368,6 +390,7 @@ async function main() {
       submitterId: user2.id,
       approverId: powerUser.id,
       tags: ['wellness', 'workplace'],
+      departmentId: generalDept.id,
       submittedAt: new Date(lastMonth.getTime() - 20 * 24 * 60 * 60 * 1000),
       rejectedAt: new Date(lastMonth.getTime() - 18 * 24 * 60 * 60 * 1000),
     },

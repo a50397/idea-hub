@@ -23,7 +23,13 @@ const mockPrismaFunctions: Record<string, any> = {
   ideaStep: {
     create: jest.fn(),
   },
+  department: {
+    findUnique: jest.fn(),
+  },
 };
+
+// A valid ObjectId-format department id used across the create/update tests.
+const DEPT_ID = 'ddddddddddddddddddddd001';
 mockPrismaFunctions.$transaction = jest.fn((fn: (tx: any) => Promise<any>) => fn(mockPrismaFunctions));
 
 jest.mock('@prisma/client', () => {
@@ -222,6 +228,22 @@ describe('Ideas API', () => {
         })
       );
     });
+
+    test('should filter ideas by departmentId', async () => {
+      const { agent } = await loginAsUser(app);
+
+      mockPrismaFunctions.idea.findMany.mockResolvedValue([]);
+
+      await agent.get(`/api/ideas?departmentId=${DEPT_ID}`);
+
+      expect(mockPrismaFunctions.idea.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            departmentId: DEPT_ID,
+          }),
+        })
+      );
+    });
   });
 
   describe('GET /api/ideas/:id', () => {
@@ -296,12 +318,15 @@ describe('Ideas API', () => {
       mockPrismaFunctions.idea.create.mockResolvedValue(mockIdea);
       mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
 
+      mockPrismaFunctions.department.findUnique.mockResolvedValue({ id: DEPT_ID, name: 'Všeobecné' });
+
       const response = await agent.post('/api/ideas').send({
         title: 'New Idea',
         description: 'This is a new idea description with enough characters',
         benefits: 'Great benefits that are well described',
         effort: 'ONE_TO_THREE_DAYS',
         tags: ['innovation'],
+        departmentId: DEPT_ID,
       });
 
       expect(response.status).toBe(201);
@@ -384,15 +409,51 @@ describe('Ideas API', () => {
       mockPrismaFunctions.idea.create.mockResolvedValue(mockIdea);
       mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
 
+      mockPrismaFunctions.department.findUnique.mockResolvedValue({ id: DEPT_ID, name: 'Všeobecné' });
+
       const response = await agent.post('/api/ideas').send({
         title: 'New Idea',
         description: 'This is a new idea description',
         benefits: 'Great benefits',
         effort: 'ONE_TO_THREE_DAYS',
+        departmentId: DEPT_ID,
       });
 
       expect(response.status).toBe(201);
       expect(response.body.tags).toEqual([]);
+    });
+
+    test('should fail when departmentId is missing (now required)', async () => {
+      const { agent } = await loginAsUser(app);
+
+      const response = await agent.post('/api/ideas').send({
+        title: 'Valid Title',
+        description: 'Valid description with enough characters',
+        benefits: 'Valid benefits with enough characters',
+        effort: 'ONE_TO_THREE_DAYS',
+      });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty('error');
+      expect(mockPrismaFunctions.idea.create).not.toHaveBeenCalled();
+    });
+
+    test('should fail with 400 when the department does not exist', async () => {
+      const { agent } = await loginAsUser(app);
+
+      mockPrismaFunctions.department.findUnique.mockResolvedValue(null);
+
+      const response = await agent.post('/api/ideas').send({
+        title: 'Valid Title',
+        description: 'Valid description with enough characters',
+        benefits: 'Valid benefits with enough characters',
+        effort: 'ONE_TO_THREE_DAYS',
+        departmentId: DEPT_ID,
+      });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty('error');
+      expect(mockPrismaFunctions.idea.create).not.toHaveBeenCalled();
     });
   });
 

@@ -10,8 +10,10 @@ import ssoRoutes from './routes/sso';
 import ideasRoutes from './routes/ideas';
 import reportsRoutes from './routes/reports';
 import usersRoutes from './routes/users';
+import departmentsRoutes from './routes/departments';
 import crypto from 'crypto';
 import { ensureAdminExists } from './utils/init-admin';
+import { ensureDepartments } from './utils/init-departments';
 import prisma from './lib/prisma';
 
 dotenv.config({ path: '../.env' });
@@ -34,26 +36,31 @@ app.set('trust proxy', 1);
 // Security Middleware
 app.use(helmet());
 
-// Rate Limiting (General)
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per `window` (here, per 15 minutes)
-  standardHeaders: true,
-  legacyHeaders: false,
-  // Disabled under test so the real-DB integration tier (which drives many
-  // requests from a single loopback IP) is not throttled. Mirrors the
-  // loginLimiter / ssoLimiter skip in routes/auth.ts and routes/sso.ts.
-  skip: () => process.env.NODE_ENV === 'test',
-});
-app.use('/api', limiter);
-
-// Middleware
+// CORS must be registered BEFORE the rate limiter. The limiter can short-circuit
+// with a 429, and CORS preflights (which the SPA's axios client forces on every
+// request via its X-Requested-With header) must be answered with
+// Access-Control-Allow-Origin even when throttled — otherwise the browser masks
+// the 429 as an opaque CORS failure and the SPA misreads it as logged-out.
 app.use(
   cors({
     origin: process.env.FRONTEND_URL || 'http://localhost:5173',
     credentials: true,
   })
 );
+
+// Rate Limiting (General)
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 300, // Limit each IP to 300 requests per `window` (here, per 15 minutes)
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Skipped under test so the real-DB integration tier (which drives many
+  // requests from a single loopback IP) is not throttled, and under development
+  // for local-dev ergonomics. Production/staging stay rate-limited. Mirrors the
+  // loginLimiter / ssoLimiter skip in routes/auth.ts and routes/sso.ts.
+  skip: () => process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development',
+});
+app.use('/api', limiter);
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -105,6 +112,7 @@ app.use('/api/auth/sso', ssoRoutes);
 app.use('/api/ideas', ideasRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/users', usersRoutes);
+app.use('/api/departments', departmentsRoutes);
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -125,6 +133,7 @@ const server = app.listen(PORT, async () => {
   console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔗 API available at: http://localhost:${PORT}`);
   await ensureAdminExists();
+  await ensureDepartments();
 });
 
 function gracefulShutdown(signal: string) {

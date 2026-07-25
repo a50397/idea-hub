@@ -29,6 +29,9 @@ router.get('/', requireAuth, async (req, res) => {
     if (data.assigneeId) {
       where.assigneeId = data.assigneeId;
     }
+    if (data.departmentId) {
+      where.departmentId = data.departmentId;
+    }
     if (data.tags) {
       where.tags = {
         hasSome: Array.isArray(data.tags) ? data.tags : [data.tags],
@@ -47,6 +50,9 @@ router.get('/', requireAuth, async (req, res) => {
           },
           assignee: {
             select: { id: true, name: true, email: true },
+          },
+          department: {
+            select: { id: true, name: true },
           },
         },
         orderBy: { submittedAt: 'desc' },
@@ -92,6 +98,9 @@ router.get('/:id', requireAuth, async (req, res) => {
         assignee: {
           select: { id: true, name: true, email: true },
         },
+        department: {
+          select: { id: true, name: true },
+        },
         events: {
           include: {
             byUser: {
@@ -123,6 +132,13 @@ router.post('/', requireAuth, async (req, res) => {
     const data = createIdeaSchema.parse(req.body);
     const userId = req.session.userId!;
 
+    const department = await prisma.department.findUnique({
+      where: { id: data.departmentId },
+    });
+    if (!department) {
+      return res.status(400).json({ error: 'Unknown department' });
+    }
+
     const idea = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const created = await tx.idea.create({
         data: {
@@ -133,6 +149,9 @@ router.post('/', requireAuth, async (req, res) => {
         include: {
           submitter: {
             select: { id: true, name: true, email: true },
+          },
+          department: {
+            select: { id: true, name: true },
           },
         },
       });
@@ -187,6 +206,15 @@ router.patch('/:id', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Can only update ideas in SUBMITTED status' });
     }
 
+    if (data.departmentId) {
+      const department = await prisma.department.findUnique({
+        where: { id: data.departmentId },
+      });
+      if (!department) {
+        return res.status(400).json({ error: 'Unknown department' });
+      }
+    }
+
     const updatedIdea = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const updated = await tx.idea.update({
         where: { id },
@@ -194,6 +222,9 @@ router.patch('/:id', requireAuth, async (req, res) => {
         include: {
           submitter: {
             select: { id: true, name: true, email: true },
+          },
+          department: {
+            select: { id: true, name: true },
           },
         },
       });
@@ -257,6 +288,9 @@ router.patch('/:id/approve', requireRole(Role.POWER_USER, Role.ADMIN), async (re
           },
           approver: {
             select: { id: true, name: true, email: true },
+          },
+          department: {
+            select: { id: true, name: true },
           },
         },
       });
@@ -324,6 +358,9 @@ router.patch('/:id/reject', requireRole(Role.POWER_USER, Role.ADMIN), async (req
           approver: {
             select: { id: true, name: true, email: true },
           },
+          department: {
+            select: { id: true, name: true },
+          },
         },
       });
 
@@ -388,6 +425,9 @@ router.patch('/:id/claim', requireAuth, async (req, res) => {
           },
           assignee: {
             select: { id: true, name: true, email: true },
+          },
+          department: {
+            select: { id: true, name: true },
           },
         },
       });
@@ -457,6 +497,9 @@ router.patch('/:id/complete', requireAuth, async (req, res) => {
           },
           assignee: {
             select: { id: true, name: true, email: true },
+          },
+          department: {
+            select: { id: true, name: true },
           },
         },
       });
