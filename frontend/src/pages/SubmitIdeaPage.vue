@@ -47,6 +47,16 @@
                 :error-messages="errors.effort"
               ></v-select>
 
+              <v-select
+                v-model="formData.departmentId"
+                :label="$t('ideas.department') + ' *'"
+                :items="departmentsStore.sortedByOrder"
+                item-title="name"
+                item-value="id"
+                variant="outlined"
+                :error-messages="errors.department"
+              ></v-select>
+
               <v-combobox
                 v-model="formData.tags"
                 :label="$t('ideas.tags')"
@@ -133,12 +143,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed } from 'vue';
+import { ref, reactive, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { ideasApi } from '../api/ideas';
+import { useDepartmentsStore } from '../stores/departments';
 import { Effort } from '../types';
 
 const { t } = useI18n();
+const departmentsStore = useDepartmentsStore();
 
 const effortOptions = computed(() => [
   { title: t('effort.lessThanOneDay'), value: Effort.LESS_THAN_ONE_DAY },
@@ -151,6 +163,7 @@ const formData = reactive({
   description: '',
   benefits: '',
   effort: null as Effort | null,
+  departmentId: null as string | null,
   tags: [] as string[],
 });
 
@@ -159,6 +172,7 @@ const errors = reactive({
   description: [] as string[],
   benefits: [] as string[],
   effort: [] as string[],
+  department: [] as string[],
 });
 
 const submitting = ref(false);
@@ -170,6 +184,7 @@ function validateForm(): boolean {
   errors.description = [];
   errors.benefits = [];
   errors.effort = [];
+  errors.department = [];
 
   if (!formData.title || formData.title.length < 5) {
     errors.title.push(t('validation.titleMinLength'));
@@ -196,7 +211,17 @@ function validateForm(): boolean {
     errors.effort.push(t('validation.effortRequired'));
   }
 
-  return !errors.title.length && !errors.description.length && !errors.benefits.length && !errors.effort.length;
+  if (!formData.departmentId) {
+    errors.department.push(t('validation.departmentRequired'));
+  }
+
+  return (
+    !errors.title.length &&
+    !errors.description.length &&
+    !errors.benefits.length &&
+    !errors.effort.length &&
+    !errors.department.length
+  );
 }
 
 async function handleSubmit() {
@@ -214,6 +239,7 @@ async function handleSubmit() {
       description: formData.description,
       benefits: formData.benefits,
       effort: formData.effort!,
+      departmentId: formData.departmentId!,
       tags: formData.tags,
     });
     submitSuccess.value = true;
@@ -238,5 +264,18 @@ function resetForm() {
   errors.description = [];
   errors.benefits = [];
   errors.effort = [];
+  errors.department = [];
+  // Re-preselect the default department so the field is never left empty.
+  preselectDefaultDepartment();
 }
+
+// The department is required on submit and defaults to the first-by-order one.
+function preselectDefaultDepartment() {
+  formData.departmentId = departmentsStore.defaultDepartment?.id ?? null;
+}
+
+onMounted(async () => {
+  await departmentsStore.fetchAll();
+  preselectDefaultDepartment();
+});
 </script>

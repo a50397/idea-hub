@@ -1,0 +1,267 @@
+<template>
+  <v-container fluid class="page-container">
+    <h1 class="text-h4 page-title">{{ $t('departments.title') }}</h1>
+
+    <v-card>
+      <v-card-title class="d-flex align-center">
+        <span class="flex-grow-1">{{ $t('departments.departmentsLabel') }}</span>
+        <v-btn @click="showCreateDialog" color="primary" prepend-icon="mdi-plus">
+          {{ $t('departments.createDepartment') }}
+        </v-btn>
+      </v-card-title>
+      <v-card-text>
+        <v-data-table
+          :headers="headers"
+          :items="departmentsStore.sortedByOrder"
+          :loading="departmentsStore.loading"
+          item-value="id"
+        >
+          <template v-slot:item.ideasCount="{ item }">
+            {{ item._count?.ideas ?? 0 }}
+          </template>
+          <template v-slot:item.actions="{ item }">
+            <v-btn
+              icon="mdi-arrow-up"
+              size="small"
+              variant="text"
+              :aria-label="$t('departments.moveUp')"
+              :disabled="isFirst(item) || departmentsStore.loading"
+              @click="moveUp(item)"
+            ></v-btn>
+            <v-btn
+              icon="mdi-arrow-down"
+              size="small"
+              variant="text"
+              :aria-label="$t('departments.moveDown')"
+              :disabled="isLast(item) || departmentsStore.loading"
+              @click="moveDown(item)"
+            ></v-btn>
+            <v-btn
+              icon="mdi-pencil"
+              size="small"
+              variant="text"
+              @click="showEditDialog(item)"
+            ></v-btn>
+            <v-btn
+              icon="mdi-delete"
+              size="small"
+              variant="text"
+              color="error"
+              @click="showDeleteDialog(item)"
+            ></v-btn>
+          </template>
+        </v-data-table>
+      </v-card-text>
+    </v-card>
+
+    <v-dialog v-model="createDialog" max-width="500">
+      <v-card>
+        <v-card-title>{{ $t('departments.createDepartment') }}</v-card-title>
+        <v-card-text>
+          <v-form @submit.prevent="createDepartment">
+            <v-text-field
+              v-model="formName"
+              :label="$t('departments.name') + ' *'"
+              variant="outlined"
+              :error-messages="formErrors.name"
+            ></v-text-field>
+          </v-form>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn @click="createDialog = false">{{ $t('common.cancel') }}</v-btn>
+          <v-btn color="primary" @click="createDepartment" :loading="saving">
+            {{ $t('common.create') }}
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <v-dialog v-model="editDialog" max-width="500">
+      <v-card>
+        <v-card-title>{{ $t('departments.editDepartment') }}</v-card-title>
+        <v-card-text>
+          <v-form @submit.prevent="renameDepartment">
+            <v-text-field
+              v-model="formName"
+              :label="$t('departments.name') + ' *'"
+              variant="outlined"
+              :error-messages="formErrors.name"
+            ></v-text-field>
+          </v-form>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn @click="editDialog = false">{{ $t('common.cancel') }}</v-btn>
+          <v-btn color="primary" @click="renameDepartment" :loading="saving">
+            {{ $t('common.update') }}
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <v-dialog v-model="deleteDialog" max-width="400">
+      <v-card>
+        <v-card-title>{{ $t('departments.deleteDepartment') }}</v-card-title>
+        <v-card-text>
+          {{ $t('departments.deleteConfirm') }} <strong>{{ selectedDepartment?.name }}</strong>?
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn @click="deleteDialog = false">{{ $t('common.cancel') }}</v-btn>
+          <v-btn color="error" @click="deleteDepartment" :loading="deleting">
+            {{ $t('common.delete') }}
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <v-snackbar v-model="snackbar" :color="snackbarColor">
+      {{ snackbarText }}
+    </v-snackbar>
+  </v-container>
+</template>
+
+<script setup lang="ts">
+import { ref, reactive, computed, onMounted } from 'vue';
+import { useI18n } from 'vue-i18n';
+import { useDepartmentsStore } from '../stores/departments';
+import type { Department } from '../types';
+
+const { t } = useI18n();
+const departmentsStore = useDepartmentsStore();
+
+const saving = ref(false);
+const deleting = ref(false);
+const createDialog = ref(false);
+const editDialog = ref(false);
+const deleteDialog = ref(false);
+const selectedDepartment = ref<Department | null>(null);
+const formName = ref('');
+const snackbar = ref(false);
+const snackbarText = ref('');
+const snackbarColor = ref('success');
+
+const formErrors = reactive({
+  name: [] as string[],
+});
+
+const headers = computed(() => [
+  { title: t('departments.order'), key: 'order', sortable: true },
+  { title: t('departments.name'), key: 'name', sortable: true },
+  { title: t('departments.ideasCount'), key: 'ideasCount', sortable: false },
+  { title: t('common.actions'), key: 'actions', sortable: false },
+]);
+
+function isFirst(dept: Department): boolean {
+  return departmentsStore.sortedByOrder[0]?.id === dept.id;
+}
+
+function isLast(dept: Department): boolean {
+  const sorted = departmentsStore.sortedByOrder;
+  return sorted[sorted.length - 1]?.id === dept.id;
+}
+
+function notify(text: string, color: string) {
+  snackbarText.value = text;
+  snackbarColor.value = color;
+  snackbar.value = true;
+}
+
+function validateName(): boolean {
+  formErrors.name = [];
+  if (!formName.value.trim()) {
+    formErrors.name.push(t('departments.nameRequired'));
+    return false;
+  }
+  return true;
+}
+
+function showCreateDialog() {
+  formName.value = '';
+  formErrors.name = [];
+  createDialog.value = true;
+}
+
+function showEditDialog(dept: Department) {
+  selectedDepartment.value = dept;
+  formName.value = dept.name;
+  formErrors.name = [];
+  editDialog.value = true;
+}
+
+function showDeleteDialog(dept: Department) {
+  selectedDepartment.value = dept;
+  deleteDialog.value = true;
+}
+
+async function createDepartment() {
+  if (!validateName()) return;
+  saving.value = true;
+  const ok = await departmentsStore.create(formName.value.trim());
+  saving.value = false;
+  if (ok) {
+    notify(t('departments.createSuccess'), 'success');
+    createDialog.value = false;
+  } else {
+    notify(departmentsStore.error || t('departments.createDepartment'), 'error');
+  }
+}
+
+async function renameDepartment() {
+  if (!selectedDepartment.value) return;
+  if (!validateName()) return;
+  saving.value = true;
+  const ok = await departmentsStore.rename(selectedDepartment.value.id, formName.value.trim());
+  saving.value = false;
+  if (ok) {
+    notify(t('departments.updateSuccess'), 'success');
+    editDialog.value = false;
+  } else {
+    notify(departmentsStore.error || t('departments.editDepartment'), 'error');
+  }
+}
+
+async function deleteDepartment() {
+  if (!selectedDepartment.value) return;
+  deleting.value = true;
+  const ok = await departmentsStore.remove(selectedDepartment.value.id);
+  deleting.value = false;
+  if (ok) {
+    notify(t('departments.deleteSuccess'), 'success');
+    deleteDialog.value = false;
+  } else {
+    // Surface backend 409s (still referenced by ideas / last remaining department).
+    notify(departmentsStore.error || t('departments.deleteDepartment'), 'error');
+  }
+}
+
+// Reorder sends the FULL id permutation (backend requires every id) with the two
+// affected rows swapped, then relies on the store to refresh from the response.
+async function moveUp(dept: Department) {
+  const ids = departmentsStore.sortedByOrder.map((d) => d.id);
+  const i = ids.indexOf(dept.id);
+  if (i <= 0) return;
+  [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]];
+  await submitReorder(ids);
+}
+
+async function moveDown(dept: Department) {
+  const ids = departmentsStore.sortedByOrder.map((d) => d.id);
+  const i = ids.indexOf(dept.id);
+  if (i < 0 || i >= ids.length - 1) return;
+  [ids[i], ids[i + 1]] = [ids[i + 1], ids[i]];
+  await submitReorder(ids);
+}
+
+async function submitReorder(ids: string[]) {
+  const ok = await departmentsStore.reorder(ids);
+  if (!ok) {
+    notify(departmentsStore.error || t('departments.title'), 'error');
+  }
+}
+
+onMounted(() => {
+  departmentsStore.fetchAll();
+});
+</script>

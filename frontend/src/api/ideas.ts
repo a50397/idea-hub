@@ -6,12 +6,14 @@ export const ideasApi = {
     status?: IdeaStatus;
     submitterId?: string;
     assigneeId?: string;
+    departmentId?: string;
     tags?: string[];
   }): Promise<Idea[]> => {
     const params = new URLSearchParams();
     if (filters?.status) params.append('status', filters.status);
     if (filters?.submitterId) params.append('submitterId', filters.submitterId);
     if (filters?.assigneeId) params.append('assigneeId', filters.assigneeId);
+    if (filters?.departmentId) params.append('departmentId', filters.departmentId);
     if (filters?.tags) filters.tags.forEach((tag) => params.append('tags', tag));
 
     const response = await client.get(`/ideas?${params.toString()}`);

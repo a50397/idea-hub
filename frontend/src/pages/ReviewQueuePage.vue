@@ -3,6 +3,19 @@
     <h1 class="text-h4 page-title">{{ $t('review.title') }}</h1>
     <p class="text-subtitle-1 mb-4">{{ $t('review.subtitle') }}</p>
 
+    <v-row class="mb-4">
+      <v-col cols="12" sm="4" md="3">
+        <v-select
+          v-model="departmentFilter"
+          :items="departmentOptions"
+          :label="$t('ideas.filterByDepartment')"
+          variant="outlined"
+          density="compact"
+          @update:model-value="loadIdeas"
+        ></v-select>
+      </v-col>
+    </v-row>
+
     <v-row v-if="loading">
       <v-col cols="12" class="text-center">
         <v-progress-circular indeterminate color="primary"></v-progress-circular>
@@ -117,17 +130,25 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { ideasApi } from '../api/ideas';
+import { useDepartmentsStore } from '../stores/departments';
 import { IdeaStatus, Effort } from '../types';
 import type { Idea } from '../types';
 
 const { t, locale } = useI18n();
 const router = useRouter();
+const departmentsStore = useDepartmentsStore();
 const loading = ref(true);
 const ideas = ref<Idea[]>([]);
+const departmentFilter = ref<string | null>(null);
+
+const departmentOptions = computed(() => [
+  { title: t('ideas.allDepartments'), value: null },
+  ...departmentsStore.sortedByOrder.map((d) => ({ title: d.name, value: d.id })),
+]);
 const approveDialog = ref(false);
 const rejectDialog = ref(false);
 const reviewNote = ref('');
@@ -146,7 +167,11 @@ const effortKeyMap: Record<Effort, string> = {
 async function loadIdeas() {
   loading.value = true;
   try {
-    ideas.value = await ideasApi.getAll({ status: IdeaStatus.SUBMITTED });
+    const filters: any = { status: IdeaStatus.SUBMITTED };
+    if (departmentFilter.value) {
+      filters.departmentId = departmentFilter.value;
+    }
+    ideas.value = await ideasApi.getAll(filters);
   } catch (error) {
     console.error('Error loading ideas:', error);
   } finally {
@@ -218,5 +243,6 @@ async function rejectIdea() {
 
 onMounted(() => {
   loadIdeas();
+  departmentsStore.fetchAll();
 });
 </script>

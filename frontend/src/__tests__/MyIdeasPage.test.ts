@@ -23,6 +23,17 @@ vi.mock('../api/ideas', () => ({
   },
 }));
 
+// The department filter select is populated by the departments store on mount.
+vi.mock('../api/departments', () => ({
+  departmentsApi: {
+    getAll: vi.fn(),
+    create: vi.fn(),
+    rename: vi.fn(),
+    reorder: vi.fn(),
+    remove: vi.fn(),
+  },
+}));
+
 // The store imports authApi at module load; stub it so nothing touches the network.
 vi.mock('../api/auth', () => ({
   authApi: {
@@ -35,7 +46,9 @@ vi.mock('../api/auth', () => ({
 }));
 
 import { ideasApi } from '../api/ideas';
+import { departmentsApi } from '../api/departments';
 const mockedIdeas = vi.mocked(ideasApi);
+const mockedDepartments = vi.mocked(departmentsApi);
 
 function makeIdea(overrides: Partial<Idea> = {}): Idea {
   return {
@@ -66,6 +79,10 @@ describe('MyIdeasPage', () => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
     mockedIdeas.getAll.mockResolvedValue([]);
+    mockedDepartments.getAll.mockResolvedValue([
+      { id: 'd1', name: 'General', order: 0, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+      { id: 'd2', name: 'Marketing', order: 1, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+    ]);
     const auth = useAuthStore();
     auth.user = { id: 'u1', name: 'Me', email: 'me@x.com', role: Role.USER };
   });
@@ -120,6 +137,20 @@ describe('MyIdeasPage', () => {
       expect(mockedIdeas.getAll).toHaveBeenCalledTimes(1);
       expect(mockedIdeas.getAll).toHaveBeenCalledWith({ status, submitterId: 'u1' });
     });
+  });
+
+  it('passes departmentId to getAll when a department filter is selected', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+    mockedIdeas.getAll.mockClear();
+
+    // Second VSelect is the department filter (first is the status filter).
+    const departmentSelect = wrapper.findAllComponents({ name: 'VSelect' })[1];
+    departmentSelect.vm.$emit('update:modelValue', 'd2');
+    await flushPromises();
+
+    expect(mockedIdeas.getAll).toHaveBeenCalledTimes(1);
+    expect(mockedIdeas.getAll).toHaveBeenCalledWith({ departmentId: 'd2', submitterId: 'u1' });
   });
 
   it('omits submitterId when there is no authenticated user', async () => {

@@ -1,5 +1,12 @@
 import client from './client';
-import type { DashboardSummary, MonthlyTrend, TopContributor, Idea, IdeaStatus } from '../types';
+import type {
+  DashboardSummary,
+  MonthlyTrend,
+  TopContributor,
+  DepartmentReport,
+  Idea,
+  IdeaStatus,
+} from '../types';
 
 export const reportsApi = {
   getSummary: async (): Promise<DashboardSummary> => {
@@ -17,12 +24,18 @@ export const reportsApi = {
     return response.data;
   },
 
+  getByDepartment: async (): Promise<DepartmentReport[]> => {
+    const response = await client.get('/reports/by-department');
+    return response.data;
+  },
+
   getFiltered: async (filters?: {
     status?: IdeaStatus;
     startDate?: string;
     endDate?: string;
     submitterId?: string;
     assigneeId?: string;
+    departmentId?: string;
     tags?: string[];
   }): Promise<Idea[]> => {
     const params = new URLSearchParams();
@@ -31,6 +44,7 @@ export const reportsApi = {
     if (filters?.endDate) params.append('endDate', filters.endDate);
     if (filters?.submitterId) params.append('submitterId', filters.submitterId);
     if (filters?.assigneeId) params.append('assigneeId', filters.assigneeId);
+    if (filters?.departmentId) params.append('departmentId', filters.departmentId);
     if (filters?.tags) filters.tags.forEach((tag) => params.append('tags', tag));
 
     const response = await client.get(`/reports/filtered?${params.toString()}`);
@@ -43,6 +57,7 @@ export const reportsApi = {
     endDate?: string;
     submitterId?: string;
     assigneeId?: string;
+    departmentId?: string;
     tags?: string[];
   }): Promise<Blob> => {
     const params = new URLSearchParams();
@@ -52,6 +67,7 @@ export const reportsApi = {
     if (filters?.endDate) params.append('endDate', filters.endDate);
     if (filters?.submitterId) params.append('submitterId', filters.submitterId);
     if (filters?.assigneeId) params.append('assigneeId', filters.assigneeId);
+    if (filters?.departmentId) params.append('departmentId', filters.departmentId);
     if (filters?.tags) filters.tags.forEach((tag) => params.append('tags', tag));
 
     const response = await client.get(`/reports/filtered?${params.toString()}`, {
