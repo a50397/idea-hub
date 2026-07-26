@@ -10,7 +10,7 @@ vi.mock('../api/departments', () => ({
   departmentsApi: {
     getAll: vi.fn(),
     create: vi.fn(),
-    rename: vi.fn(),
+    update: vi.fn(),
     reorder: vi.fn(),
     remove: vi.fn(),
   },
@@ -19,13 +19,14 @@ vi.mock('../api/departments', () => ({
 import { departmentsApi } from '../api/departments';
 const mockedApi = vi.mocked(departmentsApi);
 
-function dept(id: string, name: string, order: number, ideas = 0): Department {
+function dept(id: string, name: string, order: number, ideas = 0, notificationEmails?: string[]): Department {
   return {
     id,
     name,
     order,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
+    ...(notificationEmails ? { notificationEmails } : {}),
     _count: { ideas },
   };
 }
@@ -53,11 +54,29 @@ function dialogButton(wrapper: VueWrapper, label: string) {
   return wrapper.findAllComponents({ name: 'VBtn' }).find((b) => b.text().trim() === label);
 }
 
-// The dialog's name field is the LAST VTextField in tree order — the data-table
-// footer's items-per-page control is itself a VTextField and comes first.
+// The create dialog's name field is the LAST VTextField in tree order — the
+// data-table footer's items-per-page control is itself a VTextField and comes first.
 function setDialogName(wrapper: VueWrapper, value: string) {
   const fields = wrapper.findAllComponents({ name: 'VTextField' });
   fields[fields.length - 1].vm.$emit('update:modelValue', value);
+}
+
+// In the EDIT dialog the notification-emails VCombobox also renders an internal
+// VTextField, so "last VTextField" is ambiguous — target the name field by its
+// label instead ("Name *"; the combobox's label never contains "Name").
+function setEditName(wrapper: VueWrapper, value: string) {
+  const field = wrapper
+    .findAllComponents({ name: 'VTextField' })
+    .find((f) => String(f.props('label') ?? '').includes('Name'));
+  field!.vm.$emit('update:modelValue', value);
+}
+
+function editCombobox(wrapper: VueWrapper) {
+  return wrapper.findComponent({ name: 'VCombobox' });
+}
+
+function setEditEmails(wrapper: VueWrapper, value: string[]) {
+  editCombobox(wrapper).vm.$emit('update:modelValue', value);
 }
 
 describe('DepartmentsPage', () => {
@@ -114,8 +133,8 @@ describe('DepartmentsPage', () => {
     expect(document.body.textContent).toContain('Department name is required');
   });
 
-  it('renames a department through the edit dialog', async () => {
-    mockedApi.rename.mockResolvedValueOnce(dept('alpha', 'Renamed', 0));
+  it('updates a department name and notification emails through the edit dialog', async () => {
+    mockedApi.update.mockResolvedValueOnce(dept('alpha', 'Renamed', 0));
     const wrapper = mountPage();
     await flushPromises();
 
@@ -123,13 +142,63 @@ describe('DepartmentsPage', () => {
     await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
     await flushPromises();
 
-    setDialogName(wrapper, 'Renamed');
+    setEditName(wrapper, 'Renamed');
+    setEditEmails(wrapper, ['ops@corp.example', 'lead@corp.example']);
     await flushPromises();
 
     await dialogButton(wrapper, 'Update')!.trigger('click');
     await flushPromises();
 
-    expect(mockedApi.rename).toHaveBeenCalledWith('alpha', 'Renamed');
+    expect(mockedApi.update).toHaveBeenCalledWith('alpha', {
+      name: 'Renamed',
+      notificationEmails: ['ops@corp.example', 'lead@corp.example'],
+    });
+  });
+
+  it('pre-fills the edit dialog with existing notification emails and can remove one', async () => {
+    mockedApi.getAll.mockResolvedValue([
+      dept('alpha', 'Alpha', 0, 0, ['keep@corp.example', 'drop@corp.example']),
+    ]);
+    mockedApi.update.mockResolvedValueOnce(dept('alpha', 'Alpha', 0));
+    const wrapper = mountPage();
+    await flushPromises();
+
+    await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+    await flushPromises();
+
+    // The combobox is pre-populated from the department's stored addresses.
+    expect(editCombobox(wrapper).props('modelValue')).toEqual([
+      'keep@corp.example',
+      'drop@corp.example',
+    ]);
+
+    // Remove one address, then save.
+    setEditEmails(wrapper, ['keep@corp.example']);
+    await flushPromises();
+    await dialogButton(wrapper, 'Update')!.trigger('click');
+    await flushPromises();
+
+    expect(mockedApi.update).toHaveBeenCalledWith('alpha', {
+      name: 'Alpha',
+      notificationEmails: ['keep@corp.example'],
+    });
+  });
+
+  it('blocks the save and shows a validation message when a notification email is invalid', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+    await flushPromises();
+
+    setEditEmails(wrapper, ['not-an-email']);
+    await flushPromises();
+
+    await dialogButton(wrapper, 'Update')!.trigger('click');
+    await flushPromises();
+
+    expect(mockedApi.update).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain('One or more email addresses are invalid');
   });
 
   it('surfaces a backend 409 when a delete is blocked', async () => {

@@ -19,6 +19,17 @@
           <template v-slot:item.ideasCount="{ item }">
             {{ item._count?.ideas ?? 0 }}
           </template>
+          <template v-slot:item.notifications="{ item }">
+            <v-chip
+              v-if="(item.notificationEmails?.length ?? 0) > 0"
+              size="small"
+              color="info"
+              variant="tonal"
+            >
+              {{ item.notificationEmails?.length ?? 0 }}
+            </v-chip>
+            <span v-else class="text-disabled">0</span>
+          </template>
           <template v-slot:item.actions="{ item }">
             <v-btn
               icon="mdi-arrow-up"
@@ -81,19 +92,30 @@
       <v-card>
         <v-card-title>{{ $t('departments.editDepartment') }}</v-card-title>
         <v-card-text>
-          <v-form @submit.prevent="renameDepartment">
+          <v-form @submit.prevent="updateDepartment">
             <v-text-field
               v-model="formName"
               :label="$t('departments.name') + ' *'"
               variant="outlined"
               :error-messages="formErrors.name"
             ></v-text-field>
+            <v-combobox
+              v-model="formEmails"
+              :label="$t('departments.notificationEmails')"
+              variant="outlined"
+              multiple
+              chips
+              closable-chips
+              :hint="$t('departments.notificationEmailsHint')"
+              persistent-hint
+              :error-messages="formErrors.emails"
+            ></v-combobox>
           </v-form>
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
           <v-btn @click="editDialog = false">{{ $t('common.cancel') }}</v-btn>
-          <v-btn color="primary" @click="renameDepartment" :loading="saving">
+          <v-btn color="primary" @click="updateDepartment" :loading="saving">
             {{ $t('common.update') }}
           </v-btn>
         </v-card-actions>
@@ -138,18 +160,25 @@ const editDialog = ref(false);
 const deleteDialog = ref(false);
 const selectedDepartment = ref<Department | null>(null);
 const formName = ref('');
+const formEmails = ref<string[]>([]);
 const snackbar = ref(false);
 const snackbarText = ref('');
 const snackbarColor = ref('success');
 
 const formErrors = reactive({
   name: [] as string[],
+  emails: [] as string[],
 });
+
+// Pragmatic email shape check for per-entry validation in the edit dialog. The
+// backend (zod .email()) is the authority; this only gives fast inline feedback.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const headers = computed(() => [
   { title: t('departments.order'), key: 'order', sortable: true },
   { title: t('departments.name'), key: 'name', sortable: true },
   { title: t('departments.ideasCount'), key: 'ideasCount', sortable: false },
+  { title: t('departments.notifications'), key: 'notifications', sortable: false },
   { title: t('common.actions'), key: 'actions', sortable: false },
 ]);
 
@@ -177,16 +206,32 @@ function validateName(): boolean {
   return true;
 }
 
+// Every notification-email chip must look like an email; a single invalid entry
+// blocks the save and surfaces a message on the combobox.
+function validateEmails(): boolean {
+  formErrors.emails = [];
+  const hasInvalid = formEmails.value.some((e) => !EMAIL_RE.test(e.trim()));
+  if (hasInvalid) {
+    formErrors.emails.push(t('departments.invalidEmails'));
+    return false;
+  }
+  return true;
+}
+
 function showCreateDialog() {
   formName.value = '';
+  formEmails.value = [];
   formErrors.name = [];
+  formErrors.emails = [];
   createDialog.value = true;
 }
 
 function showEditDialog(dept: Department) {
   selectedDepartment.value = dept;
   formName.value = dept.name;
+  formEmails.value = [...(dept.notificationEmails ?? [])];
   formErrors.name = [];
+  formErrors.emails = [];
   editDialog.value = true;
 }
 
@@ -208,11 +253,17 @@ async function createDepartment() {
   }
 }
 
-async function renameDepartment() {
+async function updateDepartment() {
   if (!selectedDepartment.value) return;
-  if (!validateName()) return;
+  // Run both validators (not short-circuited) so each surfaces its own message.
+  const nameOk = validateName();
+  const emailsOk = validateEmails();
+  if (!nameOk || !emailsOk) return;
   saving.value = true;
-  const ok = await departmentsStore.rename(selectedDepartment.value.id, formName.value.trim());
+  const ok = await departmentsStore.update(selectedDepartment.value.id, {
+    name: formName.value.trim(),
+    notificationEmails: formEmails.value.map((e) => e.trim()),
+  });
   saving.value = false;
   if (ok) {
     notify(t('departments.updateSuccess'), 'success');

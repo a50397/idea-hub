@@ -31,10 +31,11 @@ Implemented per the 2026-07-25 redesign (idea **targets** a department; submitte
 - **E2E:** 3 new specs incl. the spec-pinned "reorder changes the submit-form default"; `departments.spec.ts` runs serial-within-file (reorder's exact-permutation API races concurrent creates under fullyParallel); idea-lifecycle selects its department explicitly.
 - **Verification:** all four tiers green and independently re-verified end-to-end (fresh-context verifier CONFIRMED, incl. live authz probes and the missing-field backfill proof): **backend 266 / integration 54 / frontend 376 / E2E 13** (baselines were 214 / 42 / 349 / 10). No flakes across 4+ full runs. No new dependencies; lockfile untouched; Docker builds not run (no Dockerfile/dependency changes — can run on request).
 
-## 4. Next (⛔ #8 starts only on explicit user go)
+## 4. #8 Email infrastructure — ✅ COMPLETE (2026-07-25, verifier CONFIRMED); #7 in progress
 
-- **#8 Email sending infrastructure** (prerequisite for #7): env-configured SMTP (confirm company relay), `MAIL_ENABLED=false` default, async best-effort send API (never fails a request), dev story (log-only/mailpit), mock-transport tests.
-- **#7 Department notification emails**: each department gets admin-managed notification addresses; idea creation sends a note to the target department. Thin consumer of #2 + #8.
+**#8 shipped** (commit "Add mail infrastructure"): `config/mail.ts` (lazy env getters, mirrors sso config) + `utils/mailer.ts` `sendMail({to,subject,text,html?}) → Promise<boolean>` — best-effort, NEVER throws (dead-relay probe resolved `false` in 4 ms; 10 s timeouts; fresh transport per send; auth only when `SMTP_USER` set; secrets proven absent from logs). `MAIL_ENABLED=false` default (exact `'true'` opt-in); effective-enabled also requires `SMTP_HOST`. Boot guard mirrors SESSION_SECRET: prod exits 1 on enabled-without-host, dev warns + degrades to log-only. Dev story: log-only default; mailpit via `docker compose --profile mail up -d mailpit` (pinned `axllent/mailpit:v1.30.5`, **loopback-bound** 1025/8025 — mongo/Keycloak precedent), `dev/MAIL-TESTING.md`. Deps: nodemailer 9.0.3 (zero transitive) + `@types/nodemailer` (dev), root-lockfile install; `npm audit --omit=dev` still 0; backend image build green. 20 mock-transport tests (backend unit now 286). #7 wiring idiom: `void sendMail(...)` fire-and-forget, never gate a response on it; the `[NOTIFICATION]` approve stub at `ideas.ts:311` remains untouched.
+
+**#7 Department notification emails — ✅ COMPLETE (2026-07-25, verifier CONFIRMED; awaiting user commit)**: `Department.notificationEmails String[]` (missing-field reads proven safe for lists — `[]`, no backfill needed, pinned by raw-insert integration test); admin PATCH accepts name and/or emails (zod: max 20, trim+email, dedupe, empty clears); addresses visible ONLY to ADMIN via fail-closed `serializeDepartment` (leak-checked across all department-returning paths); idea CREATION fire-and-forgets `sendMail` to the target department's list after the 201 (subject `[IdeaHub] New idea for {dept}: {title}`; 201 proven invariant across mail disabled/success/failure/reject; empty list → no send; approve/reject untouched). Frontend: DepartmentsPage edit dialog (chips email input + validation), notifications count column, api/store `rename`→`update`, +4 i18n keys EN+SK. SMTP header injection probed empirically SAFE (nodemailer CRLF folding; no header breakout, no injected recipients). Tiers: backend 301 / integration 59 / frontend 379 green + typechecks + i18n-smoke; E2E extended to 14 expected — not yet run locally (dev servers hold the ports), covered by CI on push.
 
 ## 5. Key decisions log
 
@@ -48,13 +49,17 @@ Implemented per the 2026-07-25 redesign (idea **targets** a department; submitte
 - Idea department = *target* department (not author's org) — redesign decision 2026-07-25.
 - Dev/E2E seed carries a 2nd department ("Marketing", order 1) for filter/report/chip variety — user-approved 2026-07-25. Production boot seeds only "Všeobecné"; no test may depend on Marketing existing.
 - General `/api` rate limit: CORS-before-limiter, 300/15min in prod/staging, skipped in dev+test (user-approved 2026-07-25 after dev lockout). Per-route auth limiters keep their own tighter policies.
+- nodemailer 9 approved as the backend SMTP dep (2026-07-25); mailpit dev service loopback-only behind compose profile `mail`.
 
 ## 6. Open items / follow-ups
 
 - IAM team answers pending (issuer, client registration, claim names + sample org values, role provisioning, `client_secret_basic` support — fallbacks documented in `dev/IAM-REQUEST.md` §F).
+- Company SMTP relay parameters (host/port/auth) TBD with infra team — production mail stays effectively log-only until configured (`dev/MAIL-TESTING.md`).
 - Least-privilege Mongo application user (app currently authenticates as root) — follow-up hardening.
 - Test-tier flake watch: integration ~2% under rapid re-runs (boot-timing suspect, none observed across 4+ full runs 2026-07-25); one unit-tier flake observed 2026-07-25 — mock-IdP "socket hang up" in SSO discovery (auth.ts:119 path), clean on retry; E2E: first local run after a dev vite session can hit 3-4 first-attempt timeouts from cold-start/Vite re-optimization (observed 2026-07-25: cold 1.2m + 4 retried vs warm 8.6s clean 13/13) — retry noise, not regression. All uncharacterized; watch in CI.
 - Frontend: treat 429/network-failure on `/auth/me` as "backend unavailable" (keep auth state, surface an error) instead of silently routing to login — deliberately deferred from the 2026-07-25 limiter fix.
+- Defense-in-depth (both safe today, verifier-noted 2026-07-25): route the departments `PATCH /reorder` response through `serializeDepartment` (currently admin-guard-only protects the emails field); optionally strip CR/LF from user text at the mailer boundary (nodemailer folding empirically neutralizes header injection already).
+- E2E suite (14 expected after #7) pending one local run when ports 3001/5173 are free; CI runs it on push.
 - RTK bash proxy intercepts `npx playwright test` (rewrites to JSON reporter, truncates output) — for trustworthy full output run `rtk proxy npx playwright test --reporter=line`.
 - HSTS: enable in nginx when TLS terminates there (prepared, commented).
 - Prod redeploy needed to pick up: i18n fix (translations broken in deployed images since March), hardened images, Mongo auth (fresh volume).

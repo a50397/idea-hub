@@ -58,6 +58,9 @@ export interface Department {
   order: number;
   createdAt: string;
   updatedAt: string;
+  // Admin-managed notification recipients. Present ONLY in ADMIN responses; the
+  // backend omits it entirely for non-admin sessions, hence optional.
+  notificationEmails?: string[];
   _count?: {
     ideas: number;
   };

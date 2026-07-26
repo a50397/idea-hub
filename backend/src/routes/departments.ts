@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { Role, Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { requireAuth, requireRole } from '../middleware/auth';
-import { departmentNameSchema, reorderDepartmentsSchema, objectIdParamSchema } from '../utils/validation';
+import { departmentNameSchema, updateDepartmentSchema, reorderDepartmentsSchema, objectIdParamSchema } from '../utils/validation';
 
 const router = Router();
 
@@ -12,10 +12,28 @@ const departmentOrderBy: Prisma.DepartmentOrderByWithRelationInput[] = [
   { name: 'asc' },
 ];
 
+type DepartmentWithCount = Prisma.DepartmentGetPayload<{
+  include: { _count: { select: { ideas: true } } };
+}>;
+
+// notificationEmails is INTERNAL, admin-only data. Project it onto the wire
+// representation ONLY for ADMIN sessions; every other authenticated user receives
+// the same id/name/order/_count/timestamps shape as before this feature. Keeping
+// the authz projection in one place makes the visibility rule easy to audit.
+function serializeDepartment(dept: DepartmentWithCount, includeNotificationEmails: boolean) {
+  if (includeNotificationEmails) {
+    return dept;
+  }
+  const { notificationEmails: _omit, ...rest } = dept;
+  return rest;
+}
+
 // List all departments (any authenticated user — the submit form needs it).
-// Returns a plain array (not the ideas {data,pagination} envelope).
+// Returns a plain array (not the ideas {data,pagination} envelope). Admins also
+// receive each department's notificationEmails; non-admins never see them.
 router.get('/', requireAuth, async (req, res) => {
   try {
+    const isAdmin = req.session.role === Role.ADMIN;
     const departments = await prisma.department.findMany({
       orderBy: departmentOrderBy,
       include: {
@@ -25,7 +43,7 @@ router.get('/', requireAuth, async (req, res) => {
       },
     });
 
-    res.json(departments);
+    res.json(departments.map((d) => serializeDepartment(d, isAdmin)));
   } catch (error) {
     console.error('Error fetching departments:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -104,7 +122,10 @@ router.patch('/reorder', requireRole(Role.ADMIN), async (req, res) => {
   }
 });
 
-// Rename a department (Admin only). Always allowed, even when referenced by ideas.
+// Update a department (Admin only): rename and/or set its notification emails.
+// Both are optional, so a rename-only, an emails-only, or a combined update all
+// work. Always allowed, even when the department is referenced by ideas. The
+// response is admin-only, so it always carries notificationEmails.
 router.patch('/:id', requireRole(Role.ADMIN), async (req, res) => {
   try {
     const idParsed = objectIdParamSchema.safeParse(req.params.id);
@@ -112,7 +133,7 @@ router.patch('/:id', requireRole(Role.ADMIN), async (req, res) => {
       return res.status(400).json({ error: 'Invalid department ID format' });
     }
     const id = idParsed.data;
-    const { name } = departmentNameSchema.parse(req.body);
+    const { name, notificationEmails } = updateDepartmentSchema.parse(req.body);
 
     const existing = await prisma.department.findUnique({ where: { id } });
     if (!existing) {
@@ -121,7 +142,12 @@ router.patch('/:id', requireRole(Role.ADMIN), async (req, res) => {
 
     const department = await prisma.department.update({
       where: { id },
-      data: { name },
+      // Prisma skips `undefined` fields, so an absent name or absent
+      // notificationEmails leaves that column untouched. An explicit [] clears.
+      data: {
+        ...(name !== undefined ? { name } : {}),
+        ...(notificationEmails !== undefined ? { notificationEmails } : {}),
+      },
     });
 
     res.json(department);

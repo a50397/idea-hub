@@ -20,7 +20,7 @@ vi.mock('../api/departments', () => ({
   departmentsApi: {
     getAll: vi.fn(),
     create: vi.fn(),
-    rename: vi.fn(),
+    update: vi.fn(),
     reorder: vi.fn(),
     remove: vi.fn(),
   },

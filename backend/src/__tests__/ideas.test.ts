@@ -65,11 +65,21 @@ jest.mock('@prisma/client', () => {
 
 jest.mock('bcrypt');
 
+// The mailer is fully mocked: idea creation fires a best-effort notification, and
+// these tests assert it is invoked (or not) without touching real SMTP. The mock
+// never rejects by default; individual tests override per case.
+jest.mock('../utils/mailer', () => ({
+  sendMail: jest.fn().mockResolvedValue(true),
+}));
+
 // Import routes AFTER mocks
 import bcrypt from 'bcrypt';
 import authRoutes from '../routes/auth';
 import ideasRoutes from '../routes/ideas';
+import { sendMail } from '../utils/mailer';
 import { IdeaStatus, Effort } from '@prisma/client';
+
+const mockedSendMail = jest.mocked(sendMail);
 
 function createTestApp() {
   const app = express();
@@ -454,6 +464,105 @@ describe('Ideas API', () => {
       expect(response.status).toBe(400);
       expect(response.body).toHaveProperty('error');
       expect(mockPrismaFunctions.idea.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /api/ideas — department notification email', () => {
+    const DEPT_WITH_EMAILS = {
+      id: DEPT_ID,
+      name: 'Marketing',
+      notificationEmails: ['ops@corp.example', 'lead@corp.example'],
+    };
+
+    const createdIdea = {
+      id: 'aaaaaaaaaaaaaaaaaaaaa001',
+      title: 'Notify the department please',
+      // 250 chars, so the ~200-char preview is exercised (and truncation proven).
+      description: 'A'.repeat(250),
+      benefits: 'Great benefits that are well described',
+      effort: 'ONE_TO_THREE_DAYS',
+      status: 'SUBMITTED',
+      tags: [],
+      submitterId: 'user123',
+      submitter: { id: 'user123', name: 'Test User', email: 'test@example.com' },
+      department: { id: DEPT_ID, name: 'Marketing' },
+      submittedAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    function validBody() {
+      return {
+        title: 'Notify the department please',
+        description: 'A'.repeat(250),
+        benefits: 'Great benefits that are well described',
+        effort: 'ONE_TO_THREE_DAYS',
+        departmentId: DEPT_ID,
+      };
+    }
+
+    beforeEach(() => {
+      mockedSendMail.mockReset();
+      mockedSendMail.mockResolvedValue(true);
+      mockPrismaFunctions.idea.create.mockResolvedValue(createdIdea);
+      mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
+    });
+
+    test('sends exactly one notification to the department emails with a dept+title subject', async () => {
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue(DEPT_WITH_EMAILS);
+
+      const response = await agent.post('/api/ideas').send(validBody());
+
+      expect(response.status).toBe(201);
+      expect(mockedSendMail).toHaveBeenCalledTimes(1);
+
+      const arg = mockedSendMail.mock.calls[0][0];
+      expect(arg.to).toEqual(['ops@corp.example', 'lead@corp.example']);
+      expect(arg.subject).toBe('[IdeaHub] New idea for Marketing: Notify the department please');
+      // Body carries the submitter, department, a truncated description and the link.
+      expect(arg.text).toContain('Test User');
+      expect(arg.text).toContain('Marketing');
+      expect(arg.text).toContain('/ideas/aaaaaaaaaaaaaaaaaaaaa001');
+      expect(arg.text).toContain('A'.repeat(200));
+      expect(arg.text).not.toContain('A'.repeat(201));
+    });
+
+    test('does NOT send when the department has no notification emails', async () => {
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue({
+        id: DEPT_ID,
+        name: 'Marketing',
+        notificationEmails: [],
+      });
+
+      const response = await agent.post('/api/ideas').send(validBody());
+
+      expect(response.status).toBe(201);
+      expect(mockedSendMail).not.toHaveBeenCalled();
+    });
+
+    test('returns 201 even when the mailer resolves false (best-effort failure)', async () => {
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue(DEPT_WITH_EMAILS);
+      mockedSendMail.mockResolvedValueOnce(false);
+
+      const response = await agent.post('/api/ideas').send(validBody());
+
+      expect(response.status).toBe(201);
+      expect(response.body).toHaveProperty('title', 'Notify the department please');
+      expect(mockedSendMail).toHaveBeenCalledTimes(1);
+    });
+
+    test('returns 201 even when the mailer rejects (defensive; the real mailer never rejects)', async () => {
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue(DEPT_WITH_EMAILS);
+      mockedSendMail.mockRejectedValueOnce(new Error('unexpected transport blow-up'));
+
+      const response = await agent.post('/api/ideas').send(validBody());
+
+      expect(response.status).toBe(201);
+      expect(mockedSendMail).toHaveBeenCalledTimes(1);
     });
   });
 

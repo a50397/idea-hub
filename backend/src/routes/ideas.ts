@@ -3,6 +3,7 @@ import { IdeaStatus, EventType, Role, Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { requireAuth, requireRole } from '../middleware/auth';
 import { createIdeaSchema, reviewIdeaSchema, updateIdeaSchema, ideasQuerySchema, createStepSchema, objectIdParamSchema } from '../utils/validation';
+import { sendMail } from '../utils/mailer';
 
 const router = Router();
 
@@ -132,8 +133,12 @@ router.post('/', requireAuth, async (req, res) => {
     const data = createIdeaSchema.parse(req.body);
     const userId = req.session.userId!;
 
+    // Fetch name + notificationEmails alongside the existence check (no second
+    // query): name feeds the notification subject, notificationEmails its
+    // recipients.
     const department = await prisma.department.findUnique({
       where: { id: data.departmentId },
+      select: { name: true, notificationEmails: true },
     });
     if (!department) {
       return res.status(400).json({ error: 'Unknown department' });
@@ -169,6 +174,31 @@ router.post('/', requireAuth, async (req, res) => {
     });
 
     res.status(201).json(idea);
+
+    // Fire-and-forget department notification (creation only). This runs AFTER the
+    // response so it can never gate, delay, or alter the 201 — the 201 is identical
+    // whether mail is disabled, succeeds, or fails. sendMail() is best-effort and
+    // never rejects by contract; the trailing catch is defense-in-depth so that even
+    // a contract-violating rejection cannot surface as an unhandledRejection. An
+    // empty recipient list sends nothing. The notification body/subject are
+    // intentionally backend-side English (not localized).
+    const recipients = department.notificationEmails ?? [];
+    if (recipients.length > 0) {
+      const link = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/ideas/${idea.id}`;
+      void sendMail({
+        to: recipients,
+        subject: `[IdeaHub] New idea for ${department.name}: ${idea.title}`,
+        text:
+          `A new idea has been submitted for the ${department.name} department.\n\n` +
+          `Title: ${idea.title}\n` +
+          `Submitted by: ${idea.submitter.name}\n` +
+          `Department: ${department.name}\n\n` +
+          `Description:\n${idea.description.slice(0, 200)}\n\n` +
+          `View the idea: ${link}`,
+      }).catch(() => {
+        /* best-effort: the mailer already logs its own failures */
+      });
+    }
   } catch (error) {
     if (error instanceof Error) {
       res.status(400).json({ error: error.message });

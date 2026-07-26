@@ -117,6 +117,18 @@ model Department {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Admin-managed notification recipients. On idea creation a best-effort email is
+  // sent to these addresses (see routes/ideas.ts). This is INTERNAL admin-only
+  // data: GET /api/departments projects it ONLY for ADMIN sessions.
+  //
+  // Pre-existing Mongo documents predate this field. Unlike a missing @db.ObjectId
+  // scalar — which Prisma cannot even *match* (see init-departments.ts's raw
+  // backfill) — the Mongo connector reads a *missing scalar list* as an empty list,
+  // so legacy department docs read as []. Proven by an integration test that
+  // raw-inserts a department without the field and reads it back via Prisma; no
+  // backfill is required.
+  notificationEmails String[]
+
   // Relations
   ideas Idea[]
 

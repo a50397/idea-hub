@@ -35,6 +35,25 @@ export const departmentNameSchema = z.object({
   name: z.string().trim().min(1, 'Name is required').max(100, 'Name must be at most 100 characters'),
 });
 
+// PATCH /api/departments/:id accepts a rename, a notification-emails update, or
+// both — every field is optional, so rename-only and emails-only requests each
+// work. Each notification email is trimmed then validated; the raw array is capped
+// at 20 entries; valid entries are de-duplicated (exact match). An empty array is
+// allowed and clears the list.
+export const updateDepartmentSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, 'Name is required')
+    .max(100, 'Name must be at most 100 characters')
+    .optional(),
+  notificationEmails: z
+    .array(z.string().trim().email('Invalid notification email address'))
+    .max(20, 'At most 20 notification emails are allowed')
+    .transform((emails) => [...new Set(emails)])
+    .optional(),
+});
+
 export const reorderDepartmentsSchema = z.object({
   ids: z.array(z.string()).min(1, 'ids must be a non-empty array'),
 });

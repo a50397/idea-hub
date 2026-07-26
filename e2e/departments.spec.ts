@@ -60,9 +60,9 @@ test('admin creates and renames a department', async ({ page }) => {
   await expect(row).toBeVisible();
   await expect(row.locator('td').nth(2)).toHaveText('0');
 
-  // Rename via the row's (icon-only) pencil → Rename Department dialog.
+  // Rename via the row's (icon-only) pencil → Edit Department dialog.
   await row.locator('button:has(.mdi-pencil)').click();
-  const d = dialog(page, 'Rename Department');
+  const d = dialog(page, 'Edit Department');
   await expect(d).toBeVisible();
   await d.locator('.v-input', { hasText: 'Name' }).locator('input').fill(renamed);
   await d.getByRole('button', { name: 'Update', exact: true }).click();
@@ -104,6 +104,44 @@ test('reordering departments changes the submit-form default', async ({ page }) 
   const del = dialog(page, 'Delete Department');
   await del.getByRole('button', { name: 'Delete', exact: true }).click();
   await expect(deptRow(page, dept)).toHaveCount(0);
+});
+
+test('admin sets a department notification email and it persists', async ({ page }) => {
+  const ts = Date.now();
+  const name = `E2E-notify-${ts}`;
+  const email = `ops-${ts}@corp.example`;
+
+  await gotoDepartments(page);
+
+  // Fresh, unreferenced department so this test never collides with the others.
+  await createDepartment(page, name);
+  await expect(deptRow(page, name)).toBeVisible();
+
+  // Open the Edit dialog (same pencil) and add one notification address to the
+  // combobox (type + Enter commits a chip), then save.
+  await deptRow(page, name).locator('button:has(.mdi-pencil)').click();
+  const d = dialog(page, 'Edit Department');
+  await expect(d).toBeVisible();
+  const combo = d.locator('.v-input', { hasText: 'Notification Emails' });
+  const comboInput = combo.locator('input');
+  // Real keystrokes (not fill) so Vuetify's combobox tracks the pending text and
+  // Enter commits it as a chip.
+  await comboInput.click();
+  await comboInput.pressSequentially(email);
+  await comboInput.press('Enter');
+  await expect(combo.getByText(email)).toBeVisible();
+  await d.getByRole('button', { name: 'Update', exact: true }).click();
+  await expect(d).toBeHidden();
+
+  // The notifications indicator column (4th: Order/Name/Ideas/Notifications) now
+  // shows a count of 1.
+  await expect(deptRow(page, name).locator('td').nth(3)).toContainText('1');
+
+  // Reopen the Edit dialog → the address persisted and renders as a chip.
+  await deptRow(page, name).locator('button:has(.mdi-pencil)').click();
+  const reopened = dialog(page, 'Edit Department');
+  await expect(reopened).toBeVisible();
+  await expect(reopened.getByText(email)).toBeVisible();
 });
 
 test('deleting a referenced department is blocked', async ({ page }) => {

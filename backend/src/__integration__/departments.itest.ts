@@ -15,6 +15,7 @@ import {
   listIndexes,
   ensureDepartments,
   getDefaultDepartmentId,
+  validIdeaPayload,
 } from './support/helpers';
 
 beforeAll(async () => {
@@ -160,5 +161,133 @@ describe('departments (real DB)', () => {
     // Drop one id -> wrong size / set.
     const res = await withCsrf(admin.patch('/api/departments/reorder')).send({ ids: [ids[0]] });
     expect(res.status).toBe(400);
+  });
+});
+
+describe('department notification emails (real DB)', () => {
+  // The critical missing-field proof. Pre-existing department documents predate the
+  // notificationEmails field. Raw-insert a department WITHOUT that field (as a legacy
+  // doc genuinely is) and prove what Prisma does on read: for a missing scalar LIST,
+  // the Mongo connector returns [] (unlike a missing scalar ObjectId, which it cannot
+  // even match — see ensureDepartments). Because reads return [] rather than crashing,
+  // NO $runCommandRaw backfill is required.
+  test('a department document missing notificationEmails reads back as [] via Prisma', async () => {
+    // Insert a raw Mongo document with no notificationEmails field. createdAt/updatedAt
+    // are supplied because Prisma requires those on read; notificationEmails is omitted.
+    await prisma.$runCommandRaw({
+      insert: 'departments',
+      documents: [
+        {
+          name: 'Legacy No Emails',
+          order: 77,
+          createdAt: { $date: '2026-01-01T00:00:00.000Z' },
+          updatedAt: { $date: '2026-01-01T00:00:00.000Z' },
+        },
+      ],
+    });
+
+    // findUnique/findFirst read path must not crash and must yield [].
+    const one = await prisma.department.findFirst({ where: { name: 'Legacy No Emails' } });
+    expect(one).not.toBeNull();
+    expect(one!.notificationEmails).toEqual([]);
+
+    // findMany (the path the GET /api/departments route uses) must not crash either.
+    const many = await prisma.department.findMany();
+    const legacy = many.find((d) => d.name === 'Legacy No Emails');
+    expect(legacy!.notificationEmails).toEqual([]);
+
+    // And the PATCH route can populate the previously-absent field.
+    const admin = await loggedInAdmin();
+    const res = await withCsrf(admin.patch(`/api/departments/${one!.id}`)).send({
+      notificationEmails: ['ops@corp.example'],
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.notificationEmails).toEqual(['ops@corp.example']);
+
+    const after = await prisma.department.findUnique({ where: { id: one!.id } });
+    expect(after!.notificationEmails).toEqual(['ops@corp.example']);
+  });
+
+  test('notification emails persist through PATCH and are visible to admins on GET', async () => {
+    const admin = await loggedInAdmin();
+    const dept = await prisma.department.create({ data: { name: 'Persisted', order: 5 } });
+
+    const set = await withCsrf(admin.patch(`/api/departments/${dept.id}`)).send({
+      notificationEmails: ['  a@corp.example ', 'a@corp.example', 'b@corp.example'],
+    });
+    expect(set.status).toBe(200);
+    // Trimmed + de-duplicated by the API.
+    expect(set.body.notificationEmails).toEqual(['a@corp.example', 'b@corp.example']);
+
+    // Persisted at the DB layer.
+    const stored = await prisma.department.findUnique({ where: { id: dept.id } });
+    expect(stored!.notificationEmails).toEqual(['a@corp.example', 'b@corp.example']);
+
+    // Admin GET surfaces them.
+    const list = await admin.get('/api/departments');
+    const row = list.body.find((d: { id: string }) => d.id === dept.id);
+    expect(row.notificationEmails).toEqual(['a@corp.example', 'b@corp.example']);
+
+    // An empty array clears the list.
+    const cleared = await withCsrf(admin.patch(`/api/departments/${dept.id}`)).send({
+      notificationEmails: [],
+    });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.notificationEmails).toEqual([]);
+  });
+
+  test('a non-admin GET never exposes notificationEmails', async () => {
+    const admin = await loggedInAdmin();
+    const dept = await prisma.department.create({ data: { name: 'Secret Recipients', order: 6 } });
+    await withCsrf(admin.patch(`/api/departments/${dept.id}`)).send({
+      notificationEmails: ['confidential@corp.example'],
+    });
+
+    await createUser({ email: 'plainuser@dep.test', password: 'usersecret1', role: Role.USER });
+    const user = newAgent();
+    await loginAs(user, 'plainuser@dep.test', 'usersecret1');
+
+    const list = await user.get('/api/departments');
+    expect(list.status).toBe(200);
+    for (const row of list.body) {
+      expect(row).not.toHaveProperty('notificationEmails');
+    }
+  });
+
+  test('ensureDepartments (reseed) preserves an existing department\'s notification emails', async () => {
+    // Set emails on the seeded default, then re-run the boot reseed. It must be
+    // idempotent w.r.t. the new field — never clobbering configured recipients.
+    const defaultId = await getDefaultDepartmentId();
+    await prisma.department.update({
+      where: { id: defaultId },
+      data: { notificationEmails: ['kept@corp.example'] },
+    });
+
+    await ensureDepartments();
+
+    const after = await prisma.department.findUnique({ where: { id: defaultId } });
+    expect(after!.notificationEmails).toEqual(['kept@corp.example']);
+  });
+
+  test('POST /api/ideas succeeds (201) with a populated notification list and mail disabled', async () => {
+    // Test env leaves MAIL_ENABLED unset -> the mailer is log-only and resolves true.
+    // Creating an idea against a department WITH recipients must still return a clean
+    // 201 and never crash: the send is fire-and-forget and best-effort.
+    const admin = await loggedInAdmin();
+    const defaultId = await getDefaultDepartmentId();
+    await withCsrf(admin.patch(`/api/departments/${defaultId}`)).send({
+      notificationEmails: ['ops@corp.example', 'lead@corp.example'],
+    });
+
+    const submitter = await createUser({ email: 'submitter@dep.test', password: 'submitsecret1' });
+    const agent = newAgent();
+    await loginAs(agent, 'submitter@dep.test', 'submitsecret1');
+
+    const res = await withCsrf(agent.post('/api/ideas')).send(validIdeaPayload(defaultId));
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ status: 'SUBMITTED', departmentId: defaultId });
+
+    // The idea really landed.
+    expect(await prisma.idea.count({ where: { submitterId: submitter.id } })).toBe(1);
   });
 });

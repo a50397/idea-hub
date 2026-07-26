@@ -12,8 +12,13 @@ export const departmentsApi = {
     return response.data;
   },
 
-  rename: async (id: string, name: string): Promise<Department> => {
-    const response = await client.patch(`/departments/${id}`, { name });
+  // Update a department's name and/or notification emails. Both fields are
+  // optional, so a rename-only or emails-only update each send just that key.
+  update: async (
+    id: string,
+    payload: { name?: string; notificationEmails?: string[] }
+  ): Promise<Department> => {
+    const response = await client.patch(`/departments/${id}`, payload);
     return response.data;
   },
 

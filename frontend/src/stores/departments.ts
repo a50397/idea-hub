@@ -44,16 +44,16 @@ export const useDepartmentsStore = defineStore('departments', () => {
     }
   }
 
-  // PATCH rename returns a bare department (no _count), so refetch.
-  async function rename(id: string, name: string) {
+  // PATCH update returns a bare department (no _count), so refetch for the full shape.
+  async function update(id: string, payload: { name?: string; notificationEmails?: string[] }) {
     loading.value = true;
     error.value = null;
     try {
-      await departmentsApi.rename(id, name);
+      await departmentsApi.update(id, payload);
       departments.value = await departmentsApi.getAll();
       return true;
     } catch (err: any) {
-      error.value = err.response?.data?.error || 'Failed to rename department';
+      error.value = err.response?.data?.error || 'Failed to update department';
       return false;
     } finally {
       loading.value = false;
@@ -98,7 +98,7 @@ export const useDepartmentsStore = defineStore('departments', () => {
     defaultDepartment,
     fetchAll,
     create,
-    rename,
+    update,
     reorder,
     remove,
   };
