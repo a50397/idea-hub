@@ -12,15 +12,17 @@ const departmentOrderBy: Prisma.DepartmentOrderByWithRelationInput[] = [
   { name: 'asc' },
 ];
 
-type DepartmentWithCount = Prisma.DepartmentGetPayload<{
-  include: { _count: { select: { ideas: true } } };
-}>;
-
 // notificationEmails is INTERNAL, admin-only data. Project it onto the wire
 // representation ONLY for ADMIN sessions; every other authenticated user receives
 // the same id/name/order/_count/timestamps shape as before this feature. Keeping
-// the authz projection in one place makes the visibility rule easy to audit.
-function serializeDepartment(dept: DepartmentWithCount, includeNotificationEmails: boolean) {
+// the authz projection in one place makes the visibility rule easy to audit — so
+// EVERY department-returning path (GET list, create, reorder, update) funnels
+// through this one function. Generic over the department shape so it accepts both
+// the enriched list row (with _count) and a plain create/update result.
+function serializeDepartment<T extends { notificationEmails: string[] }>(
+  dept: T,
+  includeNotificationEmails: boolean
+): T | Omit<T, 'notificationEmails'> {
   if (includeNotificationEmails) {
     return dept;
   }
@@ -64,7 +66,9 @@ router.post('/', requireRole(Role.ADMIN), async (req, res) => {
       data: { name, order: nextOrder },
     });
 
-    res.status(201).json(department);
+    // Admin-only route -> include emails, but still funnel through the one
+    // projection so no department-returning path bypasses serializeDepartment.
+    res.status(201).json(serializeDepartment(department, true));
   } catch (error) {
     if (error && typeof error === 'object' && (error as { code?: string }).code === 'P2002') {
       return res.status(409).json({ error: 'A department with this name already exists' });
@@ -112,7 +116,12 @@ router.patch('/reorder', requireRole(Role.ADMIN), async (req, res) => {
       },
     });
 
-    res.json(departments);
+    // Route the response through the central projection instead of returning the
+    // raw findMany (which leaks notificationEmails). This route is requireRole
+    // (ADMIN), so emails SHOULD be included — pass `true`, exactly what GET's
+    // isAdmin evaluates to for an admin — leaving admin behavior unchanged while
+    // ensuring no department-returning path bypasses serializeDepartment.
+    res.json(departments.map((d) => serializeDepartment(d, true)));
   } catch (error) {
     if (error instanceof Error) {
       res.status(400).json({ error: error.message });
@@ -150,7 +159,8 @@ router.patch('/:id', requireRole(Role.ADMIN), async (req, res) => {
       },
     });
 
-    res.json(department);
+    // Admin-only route -> include emails, via the one central projection.
+    res.json(serializeDepartment(department, true));
   } catch (error) {
     if (error && typeof error === 'object' && (error as { code?: string }).code === 'P2002') {
       return res.status(409).json({ error: 'A department with this name already exists' });

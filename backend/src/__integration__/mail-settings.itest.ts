@@ -129,6 +129,51 @@ describe('mail settings (real DB)', () => {
     expect(rawAfterWipe?.passwordEnc).toBe('');
   });
 
+  test('two concurrent first-saves converge to exactly ONE settings document (atomic singleton)', async () => {
+    const admin = await loggedInAdmin();
+
+    // Empty state (resetDb cleared mail_settings). Fire two PUTs "at once": the
+    // DB-enforced unique `singleton` index + upsert must converge to a SINGLE
+    // document. The old findFirst()+create path let two concurrent first-saves both
+    // see null and both create -> duplicate, non-healing config docs.
+    const body = fullBody({
+      enabled: true,
+      host: 'smtp.corp.example',
+      username: 'relay-user',
+      password: 'concurrent-secret',
+    });
+    const [a, b] = await Promise.all([
+      withCsrf(admin.put('/api/mail-settings')).send(body),
+      withCsrf(admin.put('/api/mail-settings')).send(body),
+    ]);
+
+    // At least one save completes cleanly. The loser may fail the unique constraint
+    // (surfaced as a non-200), but it can NEVER insert a duplicate document.
+    expect([a.status, b.status]).toContain(200);
+
+    // The invariant: exactly ONE document — via Prisma AND a raw find that bypasses
+    // Prisma's projection (same mechanism rawMailSettingsDoc uses).
+    expect(await prisma.mailSettings.count()).toBe(1);
+    const rawFind = (await prisma.$runCommandRaw({ find: 'mail_settings', filter: {} })) as any;
+    const rawDocs: Array<Record<string, unknown>> = rawFind?.cursor?.firstBatch ?? [];
+    expect(rawDocs).toHaveLength(1);
+
+    // The surviving document is coherent — a real, masked save (secret never exposed)
+    // that the GET reflects.
+    const got = await admin.get('/api/mail-settings');
+    expect(got.status).toBe(200);
+    expect(got.body).toMatchObject({
+      enabled: true,
+      host: 'smtp.corp.example',
+      username: 'relay-user',
+      hasPassword: true,
+    });
+    expect(got.body).not.toHaveProperty('passwordEnc');
+    expect(JSON.stringify(got.body)).not.toContain('concurrent-secret');
+    // And the stored secret is genuinely encrypted at rest and reversible.
+    expect(decrypt(String(rawDocs[0].passwordEnc))).toBe('concurrent-secret');
+  });
+
   test('enabled=true with an empty host is rejected (400) and nothing is persisted', async () => {
     const admin = await loggedInAdmin();
     const res = await withCsrf(admin.put('/api/mail-settings')).send(

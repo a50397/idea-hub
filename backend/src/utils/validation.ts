@@ -38,8 +38,8 @@ export const departmentNameSchema = z.object({
 // PATCH /api/departments/:id accepts a rename, a notification-emails update, or
 // both — every field is optional, so rename-only and emails-only requests each
 // work. Each notification email is trimmed then validated; the raw array is capped
-// at 20 entries; valid entries are de-duplicated (exact match). An empty array is
-// allowed and clears the list.
+// at 20 entries; valid entries are de-duplicated CASE-INSENSITIVELY. An empty array
+// is allowed and clears the list.
 export const updateDepartmentSchema = z.object({
   name: z
     .string()
@@ -50,7 +50,22 @@ export const updateDepartmentSchema = z.object({
   notificationEmails: z
     .array(z.string().trim().email('Invalid notification email address'))
     .max(20, 'At most 20 notification emails are allowed')
-    .transform((emails) => [...new Set(emails)])
+    // De-duplicate case-INSENSITIVELY (so 'User@X.com' and 'user@x.com' collapse to
+    // one) while PRESERVING the first occurrence's original casing. Email local-
+    // parts are technically case-sensitive, so we never lowercase what gets stored —
+    // we only drop later case-variant duplicates. Order is preserved.
+    .transform((emails) => {
+      const seen = new Set<string>();
+      const deduped: string[] = [];
+      for (const email of emails) {
+        const key = email.toLowerCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          deduped.push(email);
+        }
+      }
+      return deduped;
+    })
     .optional(),
 });
 

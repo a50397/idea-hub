@@ -260,6 +260,7 @@ export default {
     notificationEmails: 'Notification Emails',
     notificationEmailsHint: 'Press Enter to add an email address',
     invalidEmails: 'One or more email addresses are invalid',
+    tooManyEmails: 'At most 20 notification emails are allowed',
     nameRequired: 'Department name is required',
     deleteConfirm: 'Are you sure you want to delete',
     createSuccess: 'Department created successfully!',

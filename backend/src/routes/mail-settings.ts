@@ -21,6 +21,11 @@ import { MAIL_SETTINGS_DEFAULTS, type MailSettingsRecord } from '../config/mail'
 
 const router = Router();
 
+// The constant value of the DB-enforced unique `singleton` discriminator (see
+// prisma/schema.prisma). The PUT write upserts on this key so the collection holds
+// at most one document even under concurrent first-saves.
+const SINGLETON_KEY = 'singleton';
+
 // The subset of a MailSettings document (or the in-code defaults) that leaves the
 // server. CRITICAL: `passwordEnc`/`password` are omitted; only a `hasPassword`
 // boolean is exposed so the ciphertext (and of course the plaintext) never travels
@@ -54,17 +59,26 @@ router.get('/', requireRole(Role.ADMIN), async (req, res) => {
 // PUT: save the singleton. Password keep/set/wipe rules (see below) plus the
 // save-time enabled-requires-host guard that replaces the old boot guard.
 router.put('/', requireRole(Role.ADMIN), async (req, res) => {
+  // House validation pattern (routes/ideas.ts / reports.ts): safeParse and surface
+  // ONLY the first concise issue message, never the whole ZodError dump. A non-Zod
+  // failure (DB write, encrypt throw) is handled by the write try/catch below and
+  // returns 500 — it must never be reported as a 400 validation error.
+  const parsed = updateMailSettingsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.issues[0].message });
+  }
+  const data = parsed.data;
+
+  // Save-time validation (replaces the removed #8 boot guard): a deployment must
+  // not be marked enabled without a host, or it would "work" yet send nowhere.
+  // This is a client error, so it returns 400 BEFORE the write try/catch.
+  if (data.enabled && data.host.length === 0) {
+    return res
+      .status(400)
+      .json({ error: 'An SMTP host is required when outbound email is enabled' });
+  }
+
   try {
-    const data = updateMailSettingsSchema.parse(req.body);
-
-    // Save-time validation (replaces the removed #8 boot guard): a deployment must
-    // not be marked enabled without a host, or it would "work" yet send nowhere.
-    if (data.enabled && data.host.length === 0) {
-      return res
-        .status(400)
-        .json({ error: 'An SMTP host is required when outbound email is enabled' });
-    }
-
     const existing = await prisma.mailSettings.findFirst();
 
     // Password ciphertext to persist:
@@ -92,19 +106,23 @@ router.put('/', requireRole(Role.ADMIN), async (req, res) => {
       subjectTemplate: data.subjectTemplate,
     };
 
-    // Singleton upsert without a synthetic unique key: update the existing doc or
-    // create the first one (mirrors the findFirst + create/update house pattern).
-    const saved = existing
-      ? await prisma.mailSettings.update({ where: { id: existing.id }, data: values })
-      : await prisma.mailSettings.create({ data: values });
+    // Atomic singleton write: upsert on the DB-enforced unique `singleton` key so
+    // two concurrent first-saves converge to exactly ONE document. The unique index
+    // guarantees the invariant even when both requests race to create — the loser
+    // fails the constraint instead of inserting a duplicate, non-healing config doc.
+    // `singleton` is set by its schema default on create and left untouched on
+    // update, so it never appears in `values`.
+    const saved = await prisma.mailSettings.upsert({
+      where: { singleton: SINGLETON_KEY },
+      create: values,
+      update: values,
+    });
 
     res.json(serializeMailSettings(saved));
   } catch (error) {
-    if (error instanceof Error) {
-      res.status(400).json({ error: error.message });
-    } else {
-      res.status(500).json({ error: 'Internal server error' });
-    }
+    // A non-Zod failure (DB write, encrypt) is a server error — never a 400.
+    console.error('Error saving mail settings:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -113,8 +131,16 @@ router.put('/', requireRole(Role.ADMIN), async (req, res) => {
 // `ok` (false = not delivered, e.g. a dead relay or disabled config's failure) —
 // the boolean IS the feedback the admin UI surfaces.
 router.post('/test', requireRole(Role.ADMIN), async (req, res) => {
+  // Same house pattern: concise first-issue 400 on validation failure; a non-Zod
+  // failure returns 500 (sendMail is best-effort and never throws, so the catch is
+  // defensive but keeps the shape consistent).
+  const parsed = mailTestSendSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.issues[0].message });
+  }
+  const { to } = parsed.data;
+
   try {
-    const { to } = mailTestSendSchema.parse(req.body);
     const ok = await sendMail({
       to,
       subject: '[IdeaHub] Test email',
@@ -122,11 +148,8 @@ router.post('/test', requireRole(Role.ADMIN), async (req, res) => {
     });
     res.json({ ok });
   } catch (error) {
-    if (error instanceof Error) {
-      res.status(400).json({ error: error.message });
-    } else {
-      res.status(500).json({ error: 'Internal server error' });
-    }
+    console.error('Error sending test mail:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

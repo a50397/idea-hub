@@ -260,6 +260,7 @@ export default {
     notificationEmails: 'Notifikačné e-maily',
     notificationEmailsHint: 'Stlačte Enter na pridanie e-mailovej adresy',
     invalidEmails: 'Jedna alebo viac e-mailových adries je neplatných',
+    tooManyEmails: 'Povolených je najviac 20 notifikačných e-mailov',
     nameRequired: 'Názov oddelenia je povinný',
     deleteConfirm: 'Naozaj chcete odstrániť',
     createSuccess: 'Oddelenie bolo úspešne vytvorené!',

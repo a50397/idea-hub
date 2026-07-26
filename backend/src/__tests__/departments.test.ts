@@ -260,14 +260,14 @@ describe('Departments API', () => {
   });
 
   describe('PATCH /api/departments/reorder', () => {
-    test('ADMIN reorders departments, applying order = array index', async () => {
+    test('ADMIN reorders departments (order = array index) and returns the serialized admin shape', async () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
       mockPrismaFunctions.department.findMany
         .mockResolvedValueOnce([{ id: 'a' }, { id: 'b' }, { id: 'c' }])
         .mockResolvedValueOnce([
-          { id: 'c', name: 'C', order: 0, _count: { ideas: 0 } },
-          { id: 'a', name: 'A', order: 1, _count: { ideas: 0 } },
-          { id: 'b', name: 'B', order: 2, _count: { ideas: 0 } },
+          { id: 'c', name: 'C', order: 0, notificationEmails: ['ops@corp.example'], _count: { ideas: 0 } },
+          { id: 'a', name: 'A', order: 1, notificationEmails: [], _count: { ideas: 0 } },
+          { id: 'b', name: 'B', order: 2, notificationEmails: [], _count: { ideas: 0 } },
         ]);
       mockPrismaFunctions.department.update.mockResolvedValue({});
 
@@ -275,7 +275,18 @@ describe('Departments API', () => {
 
       expect(response.status).toBe(200);
       expect(response.body).toHaveLength(3);
-      expect(response.body[0]).toMatchObject({ id: 'c', order: 0 });
+      // The reorder response now flows through serializeDepartment(_, admin=true) —
+      // exactly GET's admin projection — instead of returning the raw findMany. So
+      // the shape carries both _count AND notificationEmails, and no department-
+      // returning path bypasses the one projection.
+      expect(response.body[0]).toMatchObject({
+        id: 'c',
+        name: 'C',
+        order: 0,
+        notificationEmails: ['ops@corp.example'],
+        _count: { ideas: 0 },
+      });
+      expect(response.body[0]).toHaveProperty('notificationEmails');
       expect(mockPrismaFunctions.department.update).toHaveBeenCalledWith({ where: { id: 'c' }, data: { order: 0 } });
       expect(mockPrismaFunctions.department.update).toHaveBeenCalledWith({ where: { id: 'a' }, data: { order: 1 } });
       expect(mockPrismaFunctions.department.update).toHaveBeenCalledWith({ where: { id: 'b' }, data: { order: 2 } });

@@ -54,6 +54,18 @@ Implemented per the 2026-07-25 redesign (idea **targets** a department; submitte
 - nodemailer 9 approved as the backend SMTP dep (2026-07-25); mailpit dev service loopback-only behind compose profile `mail`.
 - Mail is admin-configured in the UI (DB singleton), not env (2026-07-26): SMTP password AES-256-GCM at rest keyed by `MAIL_SETTINGS_KEY` (the only remaining mail env var); one email template per installation (language en|sk + optional subject override) lives in the same settings; app is SMTP-only (no IMAP — send-only).
 
+## 5b. Review-hardening pass — ✅ COMPLETE (2026-07-26, verifier CONFIRMED; awaiting user commit)
+
+A 3-lane read-only review (correctness / security / frontend) of the two uncommitted mail changesets found no critical/HIGH defects; the confirmed items were fixed (user-approved). All empirically re-verified. Tiers: backend **368** unit / **68** integration, frontend **402** green.
+- **Idea-creation mail amplifier** → dedicated `ideaCreateLimiter` on POST /api/ideas (30/15min per IP; skip parity with the general limiter so dev/test/integration are never throttled; proven 429 at request 31). Any authed USER could otherwise drive ~20 emails/create through the relay.
+- **Mail-settings singleton race** → `MailSettings.singleton @unique` + atomic `upsert`; concurrent first-saves converge to one doc (DB-enforced).
+- **Subject CR/LF strip at the mailer boundary** (control chars → space; body untouched) — defense-in-depth over nodemailer folding; also neutralizes log-line forging.
+- **Reorder/POST/PATCH department responses** now all flow through `serializeDepartment` (no path bypasses the admin-only `notificationEmails` projection).
+- **mail-settings validation errors** → concise `issues[0].message` (was full ZodError JSON); non-Zod failures → 500.
+- **Notification-email dedupe** now case-insensitive (keeps first casing); `.max(20)` on the raw array, surfaced client-side (combobox blocks >20, splits comma/space-pasted lists).
+- **Password-on-failed-save** kept (intentional: retype-avoidance; field masked, `autocomplete=new-password`, never stored) — now pinned by tests.
+- Rejected: trimming the SMTP password (would corrupt credentials with legitimate whitespace). Downgraded/left as admin-only accepted risk: `POST /test` host:port reachability oracle (inherent to any SMTP-config feature; admin-gated).
+
 ## 6. Open items / follow-ups
 
 - IAM team answers pending (issuer, client registration, claim names + sample org values, role provisioning, `client_secret_basic` support — fallbacks documented in `dev/IAM-REQUEST.md` §F).
@@ -61,7 +73,7 @@ Implemented per the 2026-07-25 redesign (idea **targets** a department; submitte
 - Least-privilege Mongo application user (app currently authenticates as root) — follow-up hardening.
 - Test-tier flake watch: integration ~2% under rapid re-runs (boot-timing suspect, none observed across 4+ full runs 2026-07-25); one unit-tier flake observed 2026-07-25 — mock-IdP "socket hang up" in SSO discovery (auth.ts:119 path), clean on retry; E2E: first local run after a dev vite session can hit 3-4 first-attempt timeouts from cold-start/Vite re-optimization (observed 2026-07-25: cold 1.2m + 4 retried vs warm 8.6s clean 13/13) — retry noise, not regression. All uncharacterized; watch in CI.
 - Frontend: treat 429/network-failure on `/auth/me` as "backend unavailable" (keep auth state, surface an error) instead of silently routing to login — deliberately deferred from the 2026-07-25 limiter fix.
-- Defense-in-depth (both safe today, verifier-noted 2026-07-25): route the departments `PATCH /reorder` response through `serializeDepartment` (currently admin-guard-only protects the emails field); optionally strip CR/LF from user text at the mailer boundary (nodemailer folding empirically neutralizes header injection already).
+- ~~Defense-in-depth: reorder through `serializeDepartment`; CR/LF strip at the mailer boundary~~ — DONE in the 2026-07-26 review-hardening pass (below).
 - E2E suite (15 expected after #7 + admin email settings) pending one local run when ports 3001/5173 are free; CI runs it on push.
 - RTK bash proxy intercepts `npx playwright test` (rewrites to JSON reporter, truncates output) — for trustworthy full output run `rtk proxy npx playwright test --reporter=line`.
 - HSTS: enable in nginx when TLS terminates there (prepared, commented).

@@ -33,21 +33,35 @@ export interface SendMailOptions {
   html?: string;
 }
 
+// Collapse CR/LF and any other control characters in a subject to a single space.
+// Defense-in-depth at the mailer boundary: a newline in a user-controlled idea
+// title must never (a) forge an extra SMTP header (belt-and-braces over
+// nodemailer's own header encoding) nor (b) forge a '[MAIL ...]' log line (log
+// injection). The class folds every C0 control (0x00-0x1F, incl. CR/LF/TAB/VT/FF)
+// and DEL (0x7F); visible characters (hyphens, normal spaces) are preserved and
+// the result is trimmed. Body text is deliberately NOT touched.
+function sanitizeSubject(subject: string): string {
+  return subject.replace(/[\u0000-\u001F\u007F]+/g, ' ').trim();
+}
+
 export async function sendMail(options: SendMailOptions): Promise<boolean> {
   const toDisplay = Array.isArray(options.to) ? options.to.join(', ') : options.to;
+  // Sanitize once, up front, so the folded subject is what reaches BOTH every
+  // '[MAIL ...]' log line below and nodemailer's transport.sendMail.
+  const subject = sanitizeSubject(options.subject);
 
   let cfg;
   try {
     cfg = await getEffectiveMailConfig();
   } catch (err) {
     // Database unreachable (or any settings-read failure): stay best-effort.
-    console.error(`[MAIL] settings read failed to=${toDisplay} subject=${options.subject}:`, err);
+    console.error(`[MAIL] settings read failed to=${toDisplay} subject=${subject}:`, err);
     return false;
   }
 
   if (!cfg.effectiveEnabled) {
     // Disabled or half-configured (no host): never open a socket. Dev story.
-    console.log(`[MAIL disabled] to=${toDisplay} subject=${options.subject}`);
+    console.log(`[MAIL disabled] to=${toDisplay} subject=${subject}`);
     return true;
   }
 
@@ -74,14 +88,14 @@ export async function sendMail(options: SendMailOptions): Promise<boolean> {
     await transport.sendMail({
       from: cfg.from,
       to: options.to,
-      subject: options.subject,
+      subject,
       text: options.text,
       ...(options.html ? { html: options.html } : {}),
     });
     return true;
   } catch (err) {
     // Best-effort: swallow everything so the caller's request never fails.
-    console.error(`[MAIL] send failed to=${toDisplay} subject=${options.subject}:`, err);
+    console.error(`[MAIL] send failed to=${toDisplay} subject=${subject}:`, err);
     return false;
   }
 }

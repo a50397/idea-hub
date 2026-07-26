@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { IdeaStatus, EventType, Role, Prisma } from '@prisma/client';
+import { rateLimit } from 'express-rate-limit';
 import prisma from '../lib/prisma';
 import { requireAuth, requireRole } from '../middleware/auth';
 import { createIdeaSchema, reviewIdeaSchema, updateIdeaSchema, ideasQuerySchema, createStepSchema, objectIdParamSchema } from '../utils/validation';
@@ -8,6 +9,27 @@ import { newIdeaEmail } from '../utils/mail-templates';
 import { getEffectiveMailConfig } from '../config/mail';
 
 const router = Router();
+
+// Dedicated limiter for idea creation. A single POST /api/ideas can fan out up to
+// ~20 department-notification emails carrying a user-controlled subject/body, so
+// this route is a mail amplifier that the general /api limiter alone guards too
+// loosely. Mirrors loginLimiter (routes/auth.ts): same express-rate-limit import,
+// standardHeaders, and house { error } 429 shape.
+//
+// CRITICAL skip parity: identical to the general limiter (index.ts) —
+// test || development (NOT the auth limiters, which skip test only) — so the
+// real-DB integration tier (many creates from one loopback IP) and local dev are
+// NOT throttled, while production/staging still are.
+const ideaCreateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  // 30 is deliberately generous for legitimate use while capping worst-case mail
+  // amplification (~20 recipients × 30 creates per window). Tunable.
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development',
+  message: { error: 'Too many idea submissions. Please try again later.' },
+});
 
 // Get all ideas with filters
 router.get('/', requireAuth, async (req, res) => {
@@ -129,8 +151,10 @@ router.get('/:id', requireAuth, async (req, res) => {
   }
 });
 
-// Create new idea
-router.post('/', requireAuth, async (req, res) => {
+// Create new idea. ideaCreateLimiter runs before requireAuth so the per-IP cap
+// applies to the amplifier regardless of session state (cast `as any` to bridge
+// express-rate-limit's handler type, exactly as routes/auth.ts does).
+router.post('/', ideaCreateLimiter as any, requireAuth, async (req, res) => {
   try {
     const data = createIdeaSchema.parse(req.body);
     const userId = req.session.userId!;

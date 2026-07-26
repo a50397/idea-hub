@@ -609,6 +609,114 @@ describe('Ideas API', () => {
     });
   });
 
+  // The idea-creation limiter (ideaCreateLimiter) blunts mail amplification: one
+  // POST can fan out up to ~20 notification emails, so creation is capped at 30 per
+  // 15-minute window per IP. It mirrors auth.test.ts's approach of toggling NODE_ENV
+  // for the block — BUT note the difference: loginLimiter's skip is test-only, so
+  // auth.test.ts toggles to 'development' to exercise it; THIS limiter's skip ALSO
+  // includes 'development' (the required parity with the general limiter that keeps
+  // the integration tier AND local dev unthrottled), so to actually exercise it we
+  // must toggle to a NON-skipped env — 'production'. Every OTHER test runs under
+  // NODE_ENV=test (skip=true) and so never consumes this limiter's per-IP budget,
+  // keeping the store clean when this test runs (hermetic; restored in a finally).
+  describe('Rate limiting (idea creation)', () => {
+    test('returns 429 on the 31st rapid create from one IP while the first 30 pass', async () => {
+      const originalEnv = process.env.NODE_ENV;
+      try {
+        // 'production' is neither 'test' nor 'development', so skip() returns false
+        // and the limiter is actually active for this block.
+        process.env.NODE_ENV = 'production';
+
+        // Fresh app so the limiter middleware re-evaluates its skip() per request.
+        const rateLimitedApp = createTestApp();
+        const { agent } = await loginAsUser(rateLimitedApp);
+
+        // A department WITHOUT notification recipients -> the create path sends no
+        // mail, keeping each of the 30 creates a clean, self-contained 201.
+        mockPrismaFunctions.department.findUnique.mockResolvedValue({
+          id: DEPT_ID,
+          name: 'Rate Dept',
+          notificationEmails: [],
+        });
+        mockPrismaFunctions.idea.create.mockResolvedValue({
+          id: 'aaaaaaaaaaaaaaaaaaaaa001',
+          title: 'Rate limit probe idea',
+          submitter: { id: 'user123', name: 'Test User', email: 'test@example.com' },
+          department: { id: DEPT_ID, name: 'Rate Dept' },
+        });
+        mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
+
+        const body = {
+          title: 'Rate limit probe idea',
+          description: 'A sufficiently long idea description for validation.',
+          benefits: 'Clear and measurable benefits described here for the test.',
+          effort: 'ONE_TO_THREE_DAYS',
+          departmentId: DEPT_ID,
+        };
+
+        // The cap is 30: the first 30 creates from this IP succeed.
+        for (let i = 0; i < 30; i++) {
+          const ok = await agent.post('/api/ideas').send(body);
+          expect(ok.status).toBe(201);
+        }
+
+        // The 31st from the same IP is throttled with the house 429 shape.
+        const limited = await agent.post('/api/ideas').send(body);
+        expect(limited.status).toBe(429);
+        expect(limited.body).toHaveProperty(
+          'error',
+          'Too many idea submissions. Please try again later.'
+        );
+      } finally {
+        process.env.NODE_ENV = originalEnv;
+      }
+    });
+
+    test('is SKIPPED under BOTH NODE_ENV=test and development (skip parity keeps the integration/E2E tiers and local dev unthrottled)', async () => {
+      // The CRITICAL skip parity — identical to the general limiter (index.ts): under
+      // 'test' (the integration/E2E tier drives many creates from one loopback IP)
+      // AND 'development' (local dev), skip() is true so nothing is throttled. Getting
+      // this wrong would 429 the integration tier and break those gates.
+      const originalEnv = process.env.NODE_ENV;
+      try {
+        for (const env of ['test', 'development']) {
+          process.env.NODE_ENV = env;
+          const freshApp = createTestApp();
+          const { agent } = await loginAsUser(freshApp);
+
+          mockPrismaFunctions.department.findUnique.mockResolvedValue({
+            id: DEPT_ID,
+            name: 'Rate Dept',
+            notificationEmails: [],
+          });
+          mockPrismaFunctions.idea.create.mockResolvedValue({
+            id: 'aaaaaaaaaaaaaaaaaaaaa001',
+            title: 'Unthrottled idea',
+            submitter: { id: 'user123', name: 'Test User', email: 'test@example.com' },
+            department: { id: DEPT_ID, name: 'Rate Dept' },
+          });
+          mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
+
+          const body = {
+            title: 'Unthrottled idea',
+            description: 'A sufficiently long idea description for validation.',
+            benefits: 'Clear and measurable benefits described here for the test.',
+            effort: 'ONE_TO_THREE_DAYS',
+            departmentId: DEPT_ID,
+          };
+
+          // Well past the max of 30 — none throttled because skip() is true for `env`.
+          for (let i = 0; i < 35; i++) {
+            const res = await agent.post('/api/ideas').send(body);
+            expect(res.status).toBe(201);
+          }
+        }
+      } finally {
+        process.env.NODE_ENV = originalEnv;
+      }
+    });
+  });
+
   describe('PATCH /api/ideas/:id', () => {
     test('should update own idea in SUBMITTED status', async () => {
       const { agent, user } = await loginAsUser(app);

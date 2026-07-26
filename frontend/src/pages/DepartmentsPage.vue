@@ -51,12 +51,14 @@
               icon="mdi-pencil"
               size="small"
               variant="text"
+              aria-label="$t('departments.editDepartment')"
               @click="showEditDialog(item)"
             ></v-btn>
             <v-btn
               icon="mdi-delete"
               size="small"
               variant="text"
+              aria-label="$t('departments.deleteDepartment')"
               color="error"
               @click="showDeleteDialog(item)"
             ></v-btn>
@@ -100,7 +102,8 @@
               :error-messages="formErrors.name"
             ></v-text-field>
             <v-combobox
-              v-model="formEmails"
+              :model-value="formEmails"
+              @update:model-value="normalizeEmails"
               :label="$t('departments.notificationEmails')"
               variant="outlined"
               multiple
@@ -174,6 +177,11 @@ const formErrors = reactive({
 // backend (zod .email()) is the authority; this only gives fast inline feedback.
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Mirrors the backend cap (updateDepartmentSchema: .max(20)) so the admin gets an
+// inline message instead of a silent 400. The backend caps the RAW array length
+// (before its case-insensitive de-dup), so we count entries the same way.
+const MAX_NOTIFICATION_EMAILS = 20;
+
 const headers = computed(() => [
   { title: t('departments.order'), key: 'order', sortable: true },
   { title: t('departments.name'), key: 'name', sortable: true },
@@ -207,15 +215,32 @@ function validateName(): boolean {
 }
 
 // Every notification-email chip must look like an email; a single invalid entry
-// blocks the save and surfaces a message on the combobox.
+// blocks the save and surfaces a message on the combobox. The count is capped
+// first (matching the backend) so >20 entries fail with a specific message.
 function validateEmails(): boolean {
   formErrors.emails = [];
+  if (formEmails.value.length > MAX_NOTIFICATION_EMAILS) {
+    formErrors.emails.push(t('departments.tooManyEmails'));
+    return false;
+  }
   const hasInvalid = formEmails.value.some((e) => !EMAIL_RE.test(e.trim()));
   if (hasInvalid) {
     formErrors.emails.push(t('departments.invalidEmails'));
     return false;
   }
   return true;
+}
+
+// A single combobox entry can arrive as a comma/semicolon/whitespace-separated
+// paste (e.g. "a@x.com, b@y.com"); split every entry on those separators, trim,
+// and drop empty fragments so each address becomes its own individually-validated
+// chip. Normal single-entry-then-Enter has no separators, so it passes through
+// unchanged.
+function normalizeEmails(value: string[]) {
+  formEmails.value = value
+    .flatMap((entry) => entry.split(/[,;\s]+/))
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
 }
 
 function showCreateDialog() {

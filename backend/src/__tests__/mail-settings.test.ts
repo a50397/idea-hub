@@ -10,8 +10,8 @@ const mockPrismaFunctions: Record<string, any> = {
   },
   mailSettings: {
     findFirst: jest.fn(),
-    create: jest.fn(),
-    update: jest.fn(),
+    // The PUT write path is now a single atomic upsert on the unique singleton key.
+    upsert: jest.fn(),
   },
 };
 
@@ -131,12 +131,12 @@ describe('Mail settings API', () => {
   beforeEach(() => {
     app = createTestApp();
     jest.clearAllMocks();
-    // Default: echo saved data back so serialize reflects persistence.
-    mockPrismaFunctions.mailSettings.update.mockImplementation(
-      ({ data }: { data: Record<string, unknown> }) => Promise.resolve({ ...settingsDoc(), ...data })
-    );
-    mockPrismaFunctions.mailSettings.create.mockImplementation(
-      ({ data }: { data: Record<string, unknown> }) => Promise.resolve({ ...settingsDoc(), ...data })
+    // Default: echo the upserted values back so the masked response reflects
+    // persistence. The route passes the SAME `values` object as both `create` and
+    // `update`, so echoing `update` covers the create-first and update paths alike.
+    mockPrismaFunctions.mailSettings.upsert.mockImplementation(
+      ({ update }: { update: Record<string, unknown> }) =>
+        Promise.resolve({ ...settingsDoc(), ...update })
     );
   });
 
@@ -170,8 +170,7 @@ describe('Mail settings API', () => {
           expect(response.status).toBe(403);
           expect(response.body).toHaveProperty('error');
           // A non-admin must never trigger a write or a send.
-          expect(mockPrismaFunctions.mailSettings.update).not.toHaveBeenCalled();
-          expect(mockPrismaFunctions.mailSettings.create).not.toHaveBeenCalled();
+          expect(mockPrismaFunctions.mailSettings.upsert).not.toHaveBeenCalled();
           expect(mockedSendMail).not.toHaveBeenCalled();
         });
       }
@@ -238,16 +237,18 @@ describe('Mail settings API', () => {
   // PUT: save-time validation + password keep/set/wipe + masking on the way out.
   // -------------------------------------------------------------------------
   describe('PUT /api/mail-settings', () => {
-    test('creates the first document and returns a masked shape', async () => {
+    test('creates the first document (via upsert on the singleton key) and returns a masked shape', async () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
       mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(null);
 
       const response = await agent.put('/api/mail-settings').send(validBody({ host: 'smtp.corp.example' }));
 
       expect(response.status).toBe(200);
-      expect(mockPrismaFunctions.mailSettings.create).toHaveBeenCalledTimes(1);
-      const created = mockPrismaFunctions.mailSettings.create.mock.calls[0][0].data;
-      expect(created.passwordEnc).toBe(''); // username empty -> no password
+      expect(mockPrismaFunctions.mailSettings.upsert).toHaveBeenCalledTimes(1);
+      const call = mockPrismaFunctions.mailSettings.upsert.mock.calls[0][0];
+      // The atomic write keys on the DB-enforced singleton, so at most one doc exists.
+      expect(call.where).toEqual({ singleton: 'singleton' });
+      expect(call.create.passwordEnc).toBe(''); // username empty -> no password
       expect(response.body).not.toHaveProperty('passwordEnc');
       expect(response.body.hasPassword).toBe(false);
     });
@@ -260,8 +261,7 @@ describe('Mail settings API', () => {
 
       expect(response.status).toBe(400);
       expect(response.body).toHaveProperty('error');
-      expect(mockPrismaFunctions.mailSettings.create).not.toHaveBeenCalled();
-      expect(mockPrismaFunctions.mailSettings.update).not.toHaveBeenCalled();
+      expect(mockPrismaFunctions.mailSettings.upsert).not.toHaveBeenCalled();
     });
 
     test('encrypts and stores a NEW password (set path); ciphertext != plaintext', async () => {
@@ -273,8 +273,8 @@ describe('Mail settings API', () => {
         .send(validBody({ username: 'relay-user', password: 'new-secret-pass' }));
 
       expect(response.status).toBe(200);
-      expect(mockPrismaFunctions.mailSettings.update).toHaveBeenCalledTimes(1);
-      const savedData = mockPrismaFunctions.mailSettings.update.mock.calls[0][0].data;
+      expect(mockPrismaFunctions.mailSettings.upsert).toHaveBeenCalledTimes(1);
+      const savedData = mockPrismaFunctions.mailSettings.upsert.mock.calls[0][0].update;
       expect(savedData.passwordEnc).not.toBe('new-secret-pass');
       expect(savedData.passwordEnc.length).toBeGreaterThan(0);
       // Prove it is a real, reversible encryption of the submitted secret.
@@ -296,7 +296,7 @@ describe('Mail settings API', () => {
         .send(validBody({ username: 'relay-user' })); // no password key
 
       expect(response.status).toBe(200);
-      const savedData = mockPrismaFunctions.mailSettings.update.mock.calls[0][0].data;
+      const savedData = mockPrismaFunctions.mailSettings.upsert.mock.calls[0][0].update;
       expect(savedData.passwordEnc).toBe('EXISTING_ENC');
     });
 
@@ -311,7 +311,7 @@ describe('Mail settings API', () => {
         .send(validBody({ username: 'relay-user', password: '' }));
 
       expect(response.status).toBe(200);
-      const savedData = mockPrismaFunctions.mailSettings.update.mock.calls[0][0].data;
+      const savedData = mockPrismaFunctions.mailSettings.upsert.mock.calls[0][0].update;
       expect(savedData.passwordEnc).toBe('EXISTING_ENC');
     });
 
@@ -324,7 +324,7 @@ describe('Mail settings API', () => {
       const response = await agent.put('/api/mail-settings').send(validBody({ username: '' }));
 
       expect(response.status).toBe(200);
-      const savedData = mockPrismaFunctions.mailSettings.update.mock.calls[0][0].data;
+      const savedData = mockPrismaFunctions.mailSettings.upsert.mock.calls[0][0].update;
       expect(savedData.passwordEnc).toBe('');
     });
 
@@ -339,7 +339,7 @@ describe('Mail settings API', () => {
         .send(validBody({ username: '', password: 'ignored-because-no-username' }));
 
       expect(response.status).toBe(200);
-      const savedData = mockPrismaFunctions.mailSettings.update.mock.calls[0][0].data;
+      const savedData = mockPrismaFunctions.mailSettings.upsert.mock.calls[0][0].update;
       expect(savedData.passwordEnc).toBe('');
     });
 
@@ -356,7 +356,7 @@ describe('Mail settings API', () => {
         })
       );
 
-      const savedData = mockPrismaFunctions.mailSettings.update.mock.calls[0][0].data;
+      const savedData = mockPrismaFunctions.mailSettings.upsert.mock.calls[0][0].update;
       expect(savedData.host).toBe('smtp.corp.example');
       expect(savedData.username).toBe('relay-user');
       expect(savedData.from).toBe('IdeaHub <no-reply@ideahub.local>');
@@ -377,8 +377,21 @@ describe('Mail settings API', () => {
       const response = await agent.put('/api/mail-settings').send(validBody(override));
 
       expect(response.status).toBe(400);
-      expect(mockPrismaFunctions.mailSettings.create).not.toHaveBeenCalled();
-      expect(mockPrismaFunctions.mailSettings.update).not.toHaveBeenCalled();
+      expect(mockPrismaFunctions.mailSettings.upsert).not.toHaveBeenCalled();
+    });
+
+    test('returns ONLY the first concise Zod issue message on a validation failure (house pattern, not the whole ZodError dump)', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(null);
+
+      const response = await agent.put('/api/mail-settings').send(validBody({ language: 'de' }));
+
+      expect(response.status).toBe(400);
+      // The single schema message — not a dumped ZodError issues array.
+      expect(response.body.error).toBe('Language must be en or sk');
+      expect(response.body.error).not.toContain('"code"');
+      expect(response.body.error).not.toContain('[');
+      expect(mockPrismaFunctions.mailSettings.upsert).not.toHaveBeenCalled();
     });
   });
 
@@ -408,13 +421,15 @@ describe('Mail settings API', () => {
       expect(response.body).toEqual({ ok: false });
     });
 
-    test('rejects an invalid recipient with 400 and never sends', async () => {
+    test('rejects an invalid recipient with 400 (concise message) and never sends', async () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
 
       const response = await agent.post('/api/mail-settings/test').send({ to: 'not-an-email' });
 
       expect(response.status).toBe(400);
-      expect(response.body).toHaveProperty('error');
+      // House pattern: the single concise issue message, not the whole ZodError.
+      expect(response.body.error).toBe('Invalid email address');
+      expect(response.body.error).not.toContain('"code"');
       expect(mockedSendMail).not.toHaveBeenCalled();
     });
   });

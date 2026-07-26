@@ -169,6 +169,13 @@ model IdeaStep {
 // only a `hasPassword` boolean), so the ciphertext never leaves the server.
 model MailSettings {
   id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  // DB-enforced singleton discriminator. A unique index on a constant value makes
+  // the collection hold AT MOST ONE document: the PUT route upserts on this key,
+  // so two concurrent first-saves cannot both create a config doc (the second
+  // create loses the unique constraint and the invariant "exactly one" holds).
+  // Safe on this brand-new collection: the field has a default, so no legacy
+  // missing-field/backfill concern (unlike a bare @db.ObjectId scalar).
+  singleton       String   @unique @default("singleton")
   enabled         Boolean  @default(false)
   host            String   @default("")
   port            Int      @default(587)

@@ -202,4 +202,18 @@ describe('SubmitIdeaPage', () => {
     expect(mockedIdeas.create).toHaveBeenCalledTimes(1);
     expect(wrapper.text()).toContain('Server exploded');
   });
+
+  it('surfaces the server rate-limit (429) message when submissions are throttled', async () => {
+    // The backend rate-limiter returns 429 { error } on rapid submits; the catch
+    // already renders error.response.data.error, so the admin sees the real reason.
+    mockedIdeas.create.mockRejectedValueOnce({
+      response: { status: 429, data: { error: 'Too many idea submissions. Please try again later.' } },
+    });
+    const wrapper = mountPage();
+    await fillForm(wrapper, validForm);
+    await submit(wrapper);
+
+    expect(mockedIdeas.create).toHaveBeenCalledTimes(1);
+    expect(wrapper.text()).toContain('Too many idea submissions. Please try again later.');
+  });
 });

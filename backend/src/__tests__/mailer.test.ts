@@ -297,6 +297,57 @@ describe('sendMail (enabled)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// utils/mailer.ts — subject sanitization (header / log injection defense)
+// ---------------------------------------------------------------------------
+describe('sendMail (subject sanitization)', () => {
+  // Control chars are built via fromCharCode so no raw CR/LF byte lives in the
+  // source. CR=13, LF=10.
+  const CR = String.fromCharCode(13);
+  const LF = String.fromCharCode(10);
+
+  it('folds CR/LF out of the subject before handing it to transport (header-injection defense); boolean unaffected', async () => {
+    findFirst.mockResolvedValue(doc({ enabled: true, host: 'smtp.corp.example' }));
+    const send = mockTransport(jest.fn().mockResolvedValue({}));
+
+    // A newline in a user-controlled idea title trying to smuggle an extra header.
+    const injected = `Legit subject${CR}${LF}Bcc: attacker@evil.com`;
+
+    await expect(
+      sendMail({ to: 'alice@example.com', subject: injected, text: 'Body' })
+    ).resolves.toBe(true);
+
+    const sentSubject = send.mock.calls[0][0].subject as string;
+    // No CR/LF reaches nodemailer -> the injected "Bcc:" can never start a new
+    // header line (defense-in-depth over nodemailer's own header encoding).
+    expect(sentSubject).not.toContain(CR);
+    expect(sentSubject).not.toContain(LF);
+    // The two lines are folded onto one with a single space.
+    expect(sentSubject).toBe('Legit subject Bcc: attacker@evil.com');
+    // Body text is deliberately left UNTOUCHED.
+    expect(send.mock.calls[0][0].text).toBe('Body');
+  });
+
+  it('folds CR/LF out of the subject in the [MAIL disabled] log line too (log-injection defense)', async () => {
+    findFirst.mockResolvedValue(null); // disabled -> log-only path, no transport
+
+    await expect(
+      sendMail({
+        to: 'alice@example.com',
+        subject: `Hi${CR}${LF}[MAIL disabled] to=forged`,
+        text: 'Body',
+      })
+    ).resolves.toBe(true);
+
+    expect(createTransport).not.toHaveBeenCalled();
+    const logged = String(logSpy.mock.calls[0][0]);
+    // A single folded line: the newline cannot forge a second, fake log entry.
+    expect(logged).toBe('[MAIL disabled] to=alice@example.com subject=Hi [MAIL disabled] to=forged');
+    expect(logged).not.toContain(CR);
+    expect(logged).not.toContain(LF);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // utils/mailer.ts — failure paths (best-effort: never throws)
 // ---------------------------------------------------------------------------
 describe('sendMail (failure is swallowed)', () => {

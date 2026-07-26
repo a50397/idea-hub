@@ -201,6 +201,53 @@ describe('DepartmentsPage', () => {
     expect(document.body.textContent).toContain('One or more email addresses are invalid');
   });
 
+  it('blocks the save and shows a validation message when more than 20 notification emails are entered', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+    await flushPromises();
+
+    // 21 otherwise-valid addresses exceed the backend cap of 20.
+    const many = Array.from({ length: 21 }, (_, i) => `user${i}@corp.example`);
+    setEditEmails(wrapper, many);
+    await flushPromises();
+
+    await dialogButton(wrapper, 'Update')!.trigger('click');
+    await flushPromises();
+
+    expect(mockedApi.update).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain('At most 20 notification emails are allowed');
+  });
+
+  it('splits a comma/whitespace-separated paste into individual email chips', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+    await flushPromises();
+
+    // A pasted list arrives as ONE combobox entry; it must fan out into chips.
+    setEditEmails(wrapper, ['a@x.com, b@y.com']);
+    await flushPromises();
+
+    expect(editCombobox(wrapper).props('modelValue')).toEqual(['a@x.com', 'b@y.com']);
+  });
+
+  it('drops whitespace-only fragments when splitting a pasted email list', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+    await flushPromises();
+
+    // Double separators and trailing spaces produce empty fragments that are dropped.
+    setEditEmails(wrapper, ['a@x.com , , b@y.com,  ']);
+    await flushPromises();
+
+    expect(editCombobox(wrapper).props('modelValue')).toEqual(['a@x.com', 'b@y.com']);
+  });
+
   it('surfaces a backend 409 when a delete is blocked', async () => {
     mockedApi.remove.mockRejectedValueOnce({
       response: { data: { error: 'Cannot delete a department that still has ideas' } },

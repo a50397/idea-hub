@@ -121,6 +121,52 @@ describe('MailSettingsPage', () => {
     expect(mockedApi.update.mock.calls[0][0]).toMatchObject({ password: 'brand-new-secret' });
   });
 
+  it('RETAINS the typed password and surfaces an error when the save fails', async () => {
+    mockedApi.get.mockResolvedValue(masked({ host: 'smtp.corp.example', username: 'relay-user' }));
+    // The PUT rejects; the store returns false and exposes the server error.
+    mockedApi.update.mockRejectedValueOnce({ response: { data: { error: 'SMTP relay refused' } } });
+    const wrapper = mountPage();
+    await flushPromises();
+
+    setField(wrapper, 'Password', 'kept-secret');
+    await flushPromises();
+
+    await button(wrapper, 'Save settings')!.trigger('click');
+    await flushPromises();
+
+    expect(mockedApi.update).toHaveBeenCalledTimes(1);
+    // The secret is deliberately kept so the admin can fix an unrelated field and
+    // retry without re-typing it.
+    expect(fieldByLabel(wrapper, 'Password')!.props('modelValue')).toBe('kept-secret');
+    // The failure is surfaced through the error snackbar.
+    const snackbar = wrapper.findComponent({ name: 'VSnackbar' });
+    expect(snackbar.props('modelValue')).toBe(true);
+    expect(snackbar.props('color')).toBe('error');
+    expect(document.body.textContent).toContain('SMTP relay refused');
+  });
+
+  it('CLEARS the password and refreshes the hint after a successful save', async () => {
+    mockedApi.get.mockResolvedValue(masked({ host: 'smtp.corp.example', username: 'relay-user', hasPassword: false }));
+    const wrapper = mountPage();
+    await flushPromises();
+    expect(wrapper.text()).toContain('No password saved');
+
+    setField(wrapper, 'Password', 'brand-new-secret');
+    await flushPromises();
+
+    // The server now reports a stored password; applySettings() clears the field
+    // and the hint recomputes.
+    mockedApi.update.mockResolvedValueOnce(
+      masked({ host: 'smtp.corp.example', username: 'relay-user', hasPassword: true })
+    );
+    await button(wrapper, 'Save settings')!.trigger('click');
+    await flushPromises();
+
+    expect(mockedApi.update).toHaveBeenCalledTimes(1);
+    expect(fieldByLabel(wrapper, 'Password')!.props('modelValue')).toBe('');
+    expect(wrapper.text()).toContain('A password is saved');
+  });
+
   it('blocks the save with an inline error when enabled but the host is empty', async () => {
     mockedApi.get.mockResolvedValue(masked({ enabled: true, host: '' }));
     const wrapper = mountPage();
