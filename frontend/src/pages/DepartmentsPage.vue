@@ -51,14 +51,14 @@
               icon="mdi-pencil"
               size="small"
               variant="text"
-              aria-label="$t('departments.editDepartment')"
+              :aria-label="$t('departments.editDepartment')"
               @click="showEditDialog(item)"
             ></v-btn>
             <v-btn
               icon="mdi-delete"
               size="small"
               variant="text"
-              aria-label="$t('departments.deleteDepartment')"
+              :aria-label="$t('departments.deleteDepartment')"
               color="error"
               @click="showDeleteDialog(item)"
             ></v-btn>

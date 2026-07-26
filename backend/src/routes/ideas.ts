@@ -226,8 +226,8 @@ router.post('/', ideaCreateLimiter as any, requireAuth, async (req, res) => {
             subjectTemplate: mailCfg.subjectTemplate,
           });
           await sendMail({ to: recipients, subject, text });
-        } catch {
-          /* best-effort: never affects the already-sent 201 (mailer logs its own failures) */
+        } catch (err) {
+          console.error(`[MAIL] department notification failed ideaId=${idea.id}:`, err);
         }
       })();
     }

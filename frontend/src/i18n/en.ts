@@ -299,6 +299,16 @@ export default {
     sendTest: 'Send test email',
     testSuccess: 'Test email sent successfully.',
     testFailed: 'Test email could not be delivered. Check the settings and try again.',
+    testDisabled: 'Email is disabled — enable it and set an SMTP host to send a test.',
+    testReason: {
+      connection_refused: 'Connection refused — check the SMTP host and port.',
+      auth_failed: 'Authentication failed — check the username and password.',
+      timeout: 'Connection timed out — check the host, port, and network.',
+      host_not_found: 'SMTP host not found — check the host name.',
+      tls_error: 'TLS error — check the implicit-TLS setting and port.',
+      config_error: 'Could not read the mail settings.',
+      unknown: 'Test failed — see the server logs for details.',
+    },
     recipientInvalid: 'Enter a valid email address',
   },
 };

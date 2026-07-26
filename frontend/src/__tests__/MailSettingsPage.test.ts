@@ -59,7 +59,7 @@ describe('MailSettingsPage', () => {
     vi.clearAllMocks();
     mockedApi.get.mockResolvedValue(masked());
     mockedApi.update.mockResolvedValue(masked());
-    mockedApi.sendTest.mockResolvedValue({ ok: true });
+    mockedApi.sendTest.mockResolvedValue({ status: 'sent' });
   });
 
   it('loads the masked settings on mount and shows the "no password saved" hint', async () => {
@@ -180,7 +180,7 @@ describe('MailSettingsPage', () => {
   });
 
   it('sends a test email and surfaces a success result', async () => {
-    mockedApi.sendTest.mockResolvedValueOnce({ ok: true });
+    mockedApi.sendTest.mockResolvedValueOnce({ status: 'sent' });
     const wrapper = mountPage();
     await flushPromises();
 
@@ -192,10 +192,11 @@ describe('MailSettingsPage', () => {
 
     expect(mockedApi.sendTest).toHaveBeenCalledWith('ops@corp.example');
     expect(wrapper.text()).toContain('Test email sent successfully.');
+    expect(wrapper.findComponent({ name: 'VAlert' }).props('type')).toBe('success');
   });
 
-  it('surfaces a best-effort failure (ok:false) from the test send', async () => {
-    mockedApi.sendTest.mockResolvedValueOnce({ ok: false });
+  it('surfaces a failed test send with the reason-specific message (auth_failed)', async () => {
+    mockedApi.sendTest.mockResolvedValueOnce({ status: 'failed', reason: 'auth_failed' });
     const wrapper = mountPage();
     await flushPromises();
 
@@ -206,7 +207,54 @@ describe('MailSettingsPage', () => {
     await flushPromises();
 
     expect(mockedApi.sendTest).toHaveBeenCalledWith('ops@corp.example');
-    expect(wrapper.text()).toContain('Test email could not be delivered');
+    // The fixed reason category is translated to a friendly, admin-facing message.
+    expect(wrapper.text()).toContain('Authentication failed');
+    expect(wrapper.findComponent({ name: 'VAlert' }).props('type')).toBe('error');
+  });
+
+  it('maps the connection_refused reason to its own message', async () => {
+    mockedApi.sendTest.mockResolvedValueOnce({ status: 'failed', reason: 'connection_refused' });
+    const wrapper = mountPage();
+    await flushPromises();
+
+    setField(wrapper, 'Recipient email', 'ops@corp.example');
+    await flushPromises();
+
+    await button(wrapper, 'Send test email')!.trigger('click');
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Connection refused');
+  });
+
+  it('shows an informational (warning) banner when mail is disabled', async () => {
+    mockedApi.sendTest.mockResolvedValueOnce({ status: 'disabled' });
+    const wrapper = mountPage();
+    await flushPromises();
+
+    setField(wrapper, 'Recipient email', 'ops@corp.example');
+    await flushPromises();
+
+    await button(wrapper, 'Send test email')!.trigger('click');
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Email is disabled');
+    // Disabled is neither success nor error — it renders as a warning.
+    expect(wrapper.findComponent({ name: 'VAlert' }).props('type')).toBe('warning');
+  });
+
+  it('surfaces a request-level failure (store returns null) as an error', async () => {
+    mockedApi.sendTest.mockRejectedValueOnce({ response: { data: { error: 'Server exploded' } } });
+    const wrapper = mountPage();
+    await flushPromises();
+
+    setField(wrapper, 'Recipient email', 'ops@corp.example');
+    await flushPromises();
+
+    await button(wrapper, 'Send test email')!.trigger('click');
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Server exploded');
+    expect(wrapper.findComponent({ name: 'VAlert' }).props('type')).toBe('error');
   });
 
   it('does not call the API for an invalid test recipient', async () => {

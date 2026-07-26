@@ -119,24 +119,33 @@ describe('mailSettings store', () => {
   });
 
   describe('sendTest', () => {
-    it('returns the { ok } result on success', async () => {
-      mockedApi.sendTest.mockResolvedValueOnce({ ok: true });
+    it('returns the structured result on a successful send', async () => {
+      mockedApi.sendTest.mockResolvedValueOnce({ status: 'sent' });
       const store = useMailSettingsStore();
 
       const result = await store.sendTest('admin@corp.example');
 
-      expect(result).toEqual({ ok: true });
+      expect(result).toEqual({ status: 'sent' });
       expect(mockedApi.sendTest).toHaveBeenCalledWith('admin@corp.example');
       expect(store.testing).toBe(false);
     });
 
-    it('passes through a best-effort ok:false result', async () => {
-      mockedApi.sendTest.mockResolvedValueOnce({ ok: false });
+    it('passes a failed result (with its fixed reason) straight through', async () => {
+      mockedApi.sendTest.mockResolvedValueOnce({ status: 'failed', reason: 'timeout' });
       const store = useMailSettingsStore();
 
       const result = await store.sendTest('admin@corp.example');
 
-      expect(result).toEqual({ ok: false });
+      expect(result).toEqual({ status: 'failed', reason: 'timeout' });
+    });
+
+    it('passes a disabled result straight through', async () => {
+      mockedApi.sendTest.mockResolvedValueOnce({ status: 'disabled' });
+      const store = useMailSettingsStore();
+
+      const result = await store.sendTest('admin@corp.example');
+
+      expect(result).toEqual({ status: 'disabled' });
     });
 
     it('returns null and captures the error when the request itself fails', async () => {

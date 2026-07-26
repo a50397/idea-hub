@@ -299,6 +299,16 @@ export default {
     sendTest: 'Odoslať testovací e-mail',
     testSuccess: 'Testovací e-mail bol úspešne odoslaný.',
     testFailed: 'Testovací e-mail sa nepodarilo doručiť. Skontrolujte nastavenia a skúste to znova.',
+    testDisabled: 'E-mail je vypnutý — zapnite ho a nastavte SMTP server na odoslanie testu.',
+    testReason: {
+      connection_refused: 'Spojenie odmietnuté — skontrolujte SMTP server a port.',
+      auth_failed: 'Overenie zlyhalo — skontrolujte používateľské meno a heslo.',
+      timeout: 'Časový limit spojenia vypršal — skontrolujte server, port a sieť.',
+      host_not_found: 'SMTP server sa nenašiel — skontrolujte názov servera.',
+      tls_error: 'Chyba TLS — skontrolujte nastavenie implicitného TLS a port.',
+      config_error: 'Nepodarilo sa načítať nastavenia e-mailu.',
+      unknown: 'Test zlyhal — podrobnosti nájdete v serverových logoch.',
+    },
     recipientInvalid: 'Zadajte platnú e-mailovú adresu',
   },
 };

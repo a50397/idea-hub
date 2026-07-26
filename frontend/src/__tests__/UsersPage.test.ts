@@ -46,6 +46,10 @@ function editButtons(wrapper: VueWrapper) {
   return wrapper.findAll('.v-btn').filter((b) => b.html().includes('mdi-pencil'));
 }
 
+function deleteButtons(wrapper: VueWrapper) {
+  return wrapper.findAll('.v-btn').filter((b) => b.html().includes('mdi-delete'));
+}
+
 describe('UsersPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -89,6 +93,56 @@ describe('UsersPage', () => {
     const enabled = edits.filter((b) => !b.classes().includes('v-btn--disabled'));
     expect(disabled).toHaveLength(1); // SSO user
     expect(enabled).toHaveLength(1); // LOCAL user
+  });
+
+  it('disables the delete button for the SSO user and enables it for the LOCAL user', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    const deletes = deleteButtons(wrapper);
+    expect(deletes).toHaveLength(2);
+    const disabled = deletes.filter((b) => b.classes().includes('v-btn--disabled'));
+    const enabled = deletes.filter((b) => !b.classes().includes('v-btn--disabled'));
+    expect(disabled).toHaveLength(1); // SSO user
+    expect(enabled).toHaveLength(1); // LOCAL user
+  });
+
+  it('opens the delete dialog when the LOCAL user delete button is clicked', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    const dialogs = wrapper.findAllComponents({ name: 'VDialog' });
+    // dialogs: [0]=create, [1]=edit, [2]=delete
+    expect(dialogs[2].props('modelValue')).toBe(false);
+
+    const enabledDelete = deleteButtons(wrapper).find(
+      (b) => !b.classes().includes('v-btn--disabled')
+    );
+    await enabledDelete!.trigger('click');
+    await flushPromises();
+
+    expect(dialogs[2].props('modelValue')).toBe(true);
+    expect(document.body.textContent).toContain('Delete User');
+  });
+
+  it('does not open the delete dialog for the SSO user (disabled delete is unreachable)', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    const dialogs = wrapper.findAllComponents({ name: 'VDialog' });
+    // dialogs: [0]=create, [1]=edit, [2]=delete
+    expect(dialogs[2].props('modelValue')).toBe(false);
+
+    const disabledDelete = deleteButtons(wrapper).find((b) =>
+      b.classes().includes('v-btn--disabled')
+    );
+    expect(disabledDelete).toBeTruthy();
+    // The SSO branch renders a disabled button with no @click wiring, so a
+    // click cannot open the delete dialog.
+    await disabledDelete!.trigger('click');
+    await flushPromises();
+
+    expect(dialogs[2].props('modelValue')).toBe(false);
   });
 
   it('opens the edit dialog when the LOCAL user edit button is clicked', async () => {

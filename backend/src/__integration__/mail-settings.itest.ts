@@ -2,7 +2,8 @@
 //   - the masked GET/PUT roundtrip (password NEVER present in any response;
 //     hasPassword flips as the password is set then wiped),
 //   - the save-time enabled-requires-host guard (replaces the old boot guard),
-//   - the best-effort POST /test end-to-end (200 { ok:false } against a dead relay),
+//   - the structured POST /test end-to-end (200 { status:'failed', reason } against
+//     a dead relay, with NO secret in the body; { status:'disabled' } when off),
 //   - idea-creation still notifies through the DB-backed config while disabled
 //     (201 + a '[MAIL disabled]' log),
 //   - encrypted-at-rest proof: the raw Mongo document stores ciphertext, not the
@@ -207,16 +208,47 @@ describe('mail settings (real DB)', () => {
     expect(decrypt(passwordEnc)).toBe(plaintext);
   });
 
-  test('POST /test is best-effort: 200 { ok:false } against an unreachable relay', async () => {
+  test('POST /test against an unreachable relay: 200 { status: failed } with a connection reason; no secret leaks into the body', async () => {
     const admin = await loggedInAdmin();
-    // Enabled + a host that refuses connections quickly (nothing listens on :1).
+    // Enabled + a host that refuses connections quickly (nothing listens on :1),
+    // WITH sentinel credentials so we can prove none of them leak into the response.
+    const SENTINEL_USER = 'sentinel-relay-user';
+    const SENTINEL_PASS = 'sentinel-relay-secret';
     await withCsrf(admin.put('/api/mail-settings')).send(
-      fullBody({ enabled: true, host: '127.0.0.1', port: 1 })
+      fullBody({
+        enabled: true,
+        host: '127.0.0.1',
+        port: 1,
+        username: SENTINEL_USER,
+        password: SENTINEL_PASS,
+      })
     );
 
     const res = await withCsrf(admin.post('/api/mail-settings/test')).send({ to: 'ops@corp.example' });
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ok: false });
+    expect(res.body.status).toBe('failed');
+    // A refused TCP connect maps to connection_refused; accept timeout as a
+    // timing-tolerant alternative. Either way it is a FIXED category code.
+    expect(['connection_refused', 'timeout']).toContain(res.body.reason);
+
+    // Leak probe (the real point of this feature's security rule): the response
+    // body carries ONLY the fixed category — never the configured host, username,
+    // or password, and no legacy `ok` or free-form error text.
+    const serialized = JSON.stringify(res.body);
+    expect(serialized).not.toContain(SENTINEL_USER);
+    expect(serialized).not.toContain(SENTINEL_PASS);
+    expect(serialized).not.toContain('127.0.0.1');
+    expect(res.body).not.toHaveProperty('ok');
+    expect(res.body).not.toHaveProperty('error');
+  });
+
+  test('POST /test reports { status: disabled } (no socket opened) when mail is not enabled', async () => {
+    const admin = await loggedInAdmin();
+    // No settings document (resetDb cleared it) -> the effective config is disabled,
+    // so the diagnostic send must report 'disabled' without opening a socket.
+    const res = await withCsrf(admin.post('/api/mail-settings/test')).send({ to: 'ops@corp.example' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ status: 'disabled' });
   });
 
   test('POST /test rejects an invalid recipient with 400', async () => {

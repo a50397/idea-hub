@@ -16,6 +16,25 @@ export interface MailSettingsUpdate {
   subjectTemplate: string;
 }
 
+// Structured outcome of the ADMIN diagnostic test-send. Mirrors the backend
+// MailTestResult union (backend/src/utils/mailer.ts). A 'failed' result carries a
+// FIXED reason CATEGORY — never any server- or config-derived text — so no SMTP
+// secret can travel back through it. The UI translates the reason to a friendly
+// message (i18n key mailSettings.testReason.<reason>).
+export type MailFailureReason =
+  | 'connection_refused'
+  | 'auth_failed'
+  | 'timeout'
+  | 'host_not_found'
+  | 'tls_error'
+  | 'config_error'
+  | 'unknown';
+
+export type MailTestResult =
+  | { status: 'sent' }
+  | { status: 'disabled' }
+  | { status: 'failed'; reason: MailFailureReason };
+
 export const mailSettingsApi = {
   get: async (): Promise<MailSettings> => {
     const response = await client.get('/mail-settings');
@@ -27,9 +46,10 @@ export const mailSettingsApi = {
     return response.data;
   },
 
-  // Best-effort test send using the SAVED settings. Always resolves 200 with a
-  // boolean; `ok:false` means "not delivered" (dead relay, disabled, etc.).
-  sendTest: async (to: string): Promise<{ ok: boolean }> => {
+  // Diagnostic test send using the SAVED settings. Always resolves 200 with a
+  // structured MailTestResult: 'sent' | 'disabled' | 'failed' (+ a fixed reason
+  // category). The reason NEVER contains any secret-bearing text.
+  sendTest: async (to: string): Promise<MailTestResult> => {
     const response = await client.post('/mail-settings/test', { to });
     return response.data;
   },

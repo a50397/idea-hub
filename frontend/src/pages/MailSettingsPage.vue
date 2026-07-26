@@ -104,12 +104,12 @@
         ></v-text-field>
         <v-alert
           v-if="testResult !== null"
-          :type="testResult ? 'success' : 'error'"
+          :type="testResult.type"
           variant="tonal"
           density="compact"
           class="mb-2"
         >
-          {{ testResult ? $t('mailSettings.testSuccess') : $t('mailSettings.testFailed') }}
+          {{ testResult.text }}
         </v-alert>
       </v-card-text>
       <v-card-actions>
@@ -133,7 +133,7 @@ import { useMailSettingsStore } from '../stores/mailSettings';
 import { useAuthStore } from '../stores/auth';
 import type { MailSettingsUpdate } from '../api/mailSettings';
 
-const { t } = useI18n();
+const { t, te } = useI18n();
 const mailStore = useMailSettingsStore();
 const authStore = useAuthStore();
 
@@ -163,7 +163,10 @@ const formErrors = reactive({
 });
 
 const testTo = ref('');
-const testResult = ref<boolean | null>(null);
+// The inline test-result banner: a small view model (alert type + already-resolved
+// message) so it can render 'sent' | 'disabled' | 'failed' uniformly. Never holds
+// raw server text — 'failed' messages come from a fixed reason -> i18n key.
+const testResult = ref<{ type: 'success' | 'warning' | 'error'; text: string } | null>(null);
 
 const snackbar = ref(false);
 const snackbarText = ref('');
@@ -183,6 +186,13 @@ function notify(text: string, color: string) {
   snackbarText.value = text;
   snackbarColor.value = color;
   snackbar.value = true;
+}
+
+// Show the test-send outcome both inline (persistent banner) and as an ephemeral
+// snackbar, using the same already-resolved text and alert/snackbar color.
+function showTestResult(type: 'success' | 'warning' | 'error', text: string) {
+  testResult.value = { type, text };
+  notify(text, type);
 }
 
 // Copy the masked settings into the local form (password stays empty).
@@ -260,11 +270,21 @@ async function sendTest() {
   }
   const result = await mailStore.sendTest(testTo.value.trim());
   if (result === null) {
-    notify(mailStore.error || t('mailSettings.testFailed'), 'error');
+    // The request itself failed (network / unexpected) — the store holds the error.
+    showTestResult('error', mailStore.error || t('mailSettings.testFailed'));
     return;
   }
-  testResult.value = result.ok;
-  notify(result.ok ? t('mailSettings.testSuccess') : t('mailSettings.testFailed'), result.ok ? 'success' : 'error');
+  if (result.status === 'sent') {
+    showTestResult('success', t('mailSettings.testSuccess'));
+  } else if (result.status === 'disabled') {
+    showTestResult('warning', t('mailSettings.testDisabled'));
+  } else {
+    // status === 'failed': translate the FIXED reason category into a friendly,
+    // admin-facing message. Fall back to the 'unknown' wording if a reason is ever
+    // unmapped (belt-and-braces; the union is exhaustive today).
+    const key = `mailSettings.testReason.${result.reason}`;
+    showTestResult('error', te(key) ? t(key) : t('mailSettings.testReason.unknown'));
+  }
 }
 
 onMounted(async () => {

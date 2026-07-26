@@ -19,8 +19,9 @@ jest.mock('nodemailer', () => ({
   createTransport: jest.fn(),
 }));
 
+import os from 'node:os';
 import nodemailer from 'nodemailer';
-import { sendMail } from '../utils/mailer';
+import { sendMail, sendTestMail } from '../utils/mailer';
 import { getEffectiveMailConfig } from '../config/mail';
 import { encrypt } from '../utils/secretbox';
 
@@ -401,5 +402,204 @@ describe('sendMail (settings read failure)', () => {
       expect.stringContaining('[MAIL] settings read failed'),
       expect.anything()
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// utils/mailer.ts — sendTestMail(): STRUCTURED diagnostic result for the ADMIN
+// "Send test email" button. Mirrors sendMail's config-read + transport-build but
+// returns { status } instead of a boolean, and maps a failure to a FIXED reason
+// category (never any secret- or error-derived text).
+// ---------------------------------------------------------------------------
+describe('sendTestMail (disabled / not sent)', () => {
+  it('returns { status: disabled } and opens NO socket when disabled (no document)', async () => {
+    findFirst.mockResolvedValue(null);
+    await expect(sendTestMail('ops@corp.example')).resolves.toEqual({ status: 'disabled' });
+    expect(createTransport).not.toHaveBeenCalled();
+  });
+
+  it('treats enabled-but-no-host as disabled (no transport, no socket)', async () => {
+    findFirst.mockResolvedValue(doc({ enabled: true, host: '' }));
+    await expect(sendTestMail('ops@corp.example')).resolves.toEqual({ status: 'disabled' });
+    expect(createTransport).not.toHaveBeenCalled();
+  });
+
+  it('returns { status: failed, reason: config_error } when the settings read throws (no socket)', async () => {
+    findFirst.mockRejectedValue(new Error('mongo unreachable'));
+    await expect(sendTestMail('ops@corp.example')).resolves.toEqual({
+      status: 'failed',
+      reason: 'config_error',
+    });
+    expect(createTransport).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[MAIL] test settings read failed'),
+      expect.anything()
+    );
+  });
+});
+
+describe('sendTestMail (real send path)', () => {
+  it('returns { status: sent } and builds the same transport shape as a real send', async () => {
+    findFirst.mockResolvedValue(doc({ enabled: true, host: 'smtp.corp.example', port: 2525 }));
+    const send = mockTransport(jest.fn().mockResolvedValue({ messageId: 'x' }));
+
+    await expect(sendTestMail('ops@corp.example')).resolves.toEqual({ status: 'sent' });
+
+    expect(createTransport).toHaveBeenCalledWith(
+      expect.objectContaining({ host: 'smtp.corp.example', port: 2525, secure: false })
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ to: 'ops@corp.example', subject: '[IdeaHub] Test email' })
+    );
+  });
+
+  it('authenticates with the decrypted password when a username is configured', async () => {
+    findFirst.mockResolvedValue(
+      doc({
+        enabled: true,
+        host: 'smtp.corp.example',
+        username: 'relay-user',
+        passwordEnc: encrypt('relay-pass'),
+      })
+    );
+    mockTransport(jest.fn().mockResolvedValue({}));
+
+    await expect(sendTestMail('ops@corp.example')).resolves.toEqual({ status: 'sent' });
+    expect(createTransport).toHaveBeenCalledWith(
+      expect.objectContaining({ auth: { user: 'relay-user', pass: 'relay-pass' } })
+    );
+  });
+});
+
+describe('sendTestMail (error -> fixed reason category)', () => {
+  beforeEach(() => {
+    findFirst.mockResolvedValue(doc({ enabled: true, host: 'smtp.corp.example' }));
+  });
+
+  // Each thrown error's .code (the nodemailer "type") maps to exactly one fixed
+  // MailFailureReason. These are the documented codes; the ESOCKET-with-errno
+  // recovery (nodemailer's real refused-connection shape) is exercised below.
+  const codeCases: Array<[string, string]> = [
+    ['EAUTH', 'auth_failed'],
+    ['ECONNREFUSED', 'connection_refused'],
+    ['ETIMEDOUT', 'timeout'],
+    ['EDNS', 'host_not_found'],
+    ['ENOTFOUND', 'host_not_found'],
+    ['EAI_AGAIN', 'host_not_found'],
+    ['ESOCKET', 'tls_error'], // no errno -> genuine TLS/socket error
+    ['ETLS', 'tls_error'],
+    ['ERR_TLS_CERT_ALTNAME_INVALID', 'tls_error'],
+    ['ERR_SSL_WRONG_VERSION_NUMBER', 'tls_error'],
+    ['EENVELOPE', 'unknown'],
+    ['ESOMETHINGELSE', 'unknown'],
+  ];
+
+  for (const [code, reason] of codeCases) {
+    it(`maps code ${code} -> reason ${reason}`, async () => {
+      const err: any = new Error(`boom ${code}`);
+      err.code = code;
+      mockTransport(jest.fn().mockRejectedValue(err));
+
+      await expect(sendTestMail('ops@corp.example')).resolves.toEqual({
+        status: 'failed',
+        reason,
+      });
+      // The full error is ALWAYS logged server-side (operators keep the detail).
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('[MAIL] test send failed'),
+        err
+      );
+    });
+  }
+
+  it('maps a plain Error with no .code to reason unknown', async () => {
+    mockTransport(jest.fn().mockRejectedValue(new Error('mystery failure')));
+    await expect(sendTestMail('ops@corp.example')).resolves.toEqual({
+      status: 'failed',
+      reason: 'unknown',
+    });
+  });
+
+  it('recovers a refused connection that nodemailer masked as ESOCKET (real shape) -> connection_refused', async () => {
+    // nodemailer relabels a refused TCP connect as code ESOCKET but leaves the OS
+    // errno on the error; util.getSystemErrorName(errno) recovers ECONNREFUSED.
+    const err: any = new Error('connect ECONNREFUSED 127.0.0.1:1');
+    err.code = 'ESOCKET';
+    err.errno = -Math.abs(os.constants.errno.ECONNREFUSED); // portable libuv errno
+    err.syscall = 'connect';
+    mockTransport(jest.fn().mockRejectedValue(err));
+
+    await expect(sendTestMail('ops@corp.example')).resolves.toEqual({
+      status: 'failed',
+      reason: 'connection_refused',
+    });
+  });
+
+  it('recovers a timeout masked as ESOCKET via the system errno -> timeout', async () => {
+    const err: any = new Error('socket ETIMEDOUT');
+    err.code = 'ESOCKET';
+    err.errno = -Math.abs(os.constants.errno.ETIMEDOUT);
+    mockTransport(jest.fn().mockRejectedValue(err));
+
+    await expect(sendTestMail('ops@corp.example')).resolves.toEqual({
+      status: 'failed',
+      reason: 'timeout',
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SECURITY: the SMTP password / username / host must NEVER leak into the result
+// the route serializes back to the client — only the fixed reason category may.
+// Force a realistic EAUTH failure whose message/response/command embed sentinel
+// secrets AND configure a real (encrypted) sentinel password, then assert the
+// serialized MailTestResult carries the category and NONE of the sentinels.
+// (The route does `res.json(result)`, so JSON.stringify(result) IS the body.)
+// ---------------------------------------------------------------------------
+describe('sendTestMail (SECURITY: no secret leaks into the structured result)', () => {
+  const SENTINEL_PASSWORD = 'S3NTINEL-PASSWORD-do-not-leak-42';
+  const SENTINEL_USERNAME = 'sentinel-relay-username';
+  const SENTINEL_HOST = 'sentinel-smtp-host.internal';
+
+  it('an EAUTH failure returns only { status: failed, reason: auth_failed } with no config or error text', async () => {
+    findFirst.mockResolvedValue(
+      doc({
+        enabled: true,
+        host: SENTINEL_HOST,
+        username: SENTINEL_USERNAME,
+        passwordEnc: encrypt(SENTINEL_PASSWORD),
+      })
+    );
+
+    // A nodemailer-shaped auth error that embeds the sentinels in the very fields
+    // (message/response/command) a naive implementation might forward to the client.
+    const eauth: any = new Error(
+      `Invalid login: 535 auth failed for ${SENTINEL_USERNAME}/${SENTINEL_PASSWORD} at ${SENTINEL_HOST}`
+    );
+    eauth.code = 'EAUTH';
+    eauth.response = `535 5.7.8 bad credentials user=${SENTINEL_USERNAME} pass=${SENTINEL_PASSWORD}`;
+    eauth.responseCode = 535;
+    eauth.command = 'AUTH LOGIN';
+    mockTransport(jest.fn().mockRejectedValue(eauth));
+
+    const result = await sendTestMail('ops@corp.example');
+
+    // Correct category...
+    expect(result).toEqual({ status: 'failed', reason: 'auth_failed' });
+
+    // ...and the serialized result (== the /test response body) leaks NOTHING.
+    const serialized = JSON.stringify(result);
+    expect(serialized).toContain('auth_failed');
+    expect(serialized).not.toContain(SENTINEL_PASSWORD);
+    expect(serialized).not.toContain(SENTINEL_USERNAME);
+    expect(serialized).not.toContain(SENTINEL_HOST);
+    expect(serialized).not.toContain('535');
+    expect(serialized).not.toContain('AUTH LOGIN');
+
+    // The full error IS still logged server-side (detail is preserved, not hidden).
+    const logged = errorSpy.mock.calls.find((c) => String(c[0]).includes('[MAIL] test send failed'));
+    expect(logged).toBeDefined();
+    expect(logged![1]).toBe(eauth);
+    expect(String((logged![1] as Error).message)).toContain(SENTINEL_PASSWORD);
   });
 });

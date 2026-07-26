@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
-import { mailSettingsApi, type MailSettingsUpdate } from '../api/mailSettings';
+import { mailSettingsApi, type MailSettingsUpdate, type MailTestResult } from '../api/mailSettings';
 import type { MailSettings } from '../types';
 
 export const useMailSettingsStore = defineStore('mailSettings', () => {
@@ -38,9 +38,10 @@ export const useMailSettingsStore = defineStore('mailSettings', () => {
     }
   }
 
-  // Returns the { ok } result on success, or null when the request itself failed
-  // (network/validation/authz) — distinct from a delivered-but-failed ok:false.
-  async function sendTest(to: string): Promise<{ ok: boolean } | null> {
+  // Returns the structured MailTestResult on success, or null when the request
+  // itself failed (network/validation/authz) — distinct from a delivered result
+  // whose own status may be 'failed'/'disabled'.
+  async function sendTest(to: string): Promise<MailTestResult | null> {
     testing.value = true;
     error.value = null;
     try {

@@ -60,7 +60,21 @@
               variant="text"
               @click="showEditDialog(item)"
             ></v-btn>
+            <v-tooltip v-if="isSso(item)" :text="$t('users.managedBySso')" location="top">
+              <template v-slot:activator="{ props }">
+                <span v-bind="props">
+                  <v-btn
+                    icon="mdi-delete"
+                    size="small"
+                    variant="text"
+                    color="error"
+                    disabled
+                  ></v-btn>
+                </span>
+              </template>
+            </v-tooltip>
             <v-btn
+              v-else
               icon="mdi-delete"
               size="small"
               variant="text"

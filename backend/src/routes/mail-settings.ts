@@ -16,7 +16,7 @@ import prisma from '../lib/prisma';
 import { requireRole } from '../middleware/auth';
 import { updateMailSettingsSchema, mailTestSendSchema } from '../utils/validation';
 import { encrypt } from '../utils/secretbox';
-import { sendMail } from '../utils/mailer';
+import { sendTestMail } from '../utils/mailer';
 import { MAIL_SETTINGS_DEFAULTS, type MailSettingsRecord } from '../config/mail';
 
 const router = Router();
@@ -127,13 +127,16 @@ router.put('/', requireRole(Role.ADMIN), async (req, res) => {
 });
 
 // POST /test: send a short message with the SAVED settings. Delivery is
-// best-effort, so this always responds 200 and reports sendMail's boolean as
-// `ok` (false = not delivered, e.g. a dead relay or disabled config's failure) —
-// the boolean IS the feedback the admin UI surfaces.
+// best-effort, so this ALWAYS responds 200; the structured MailTestResult's
+// `status` field carries the outcome ('sent' | 'disabled' | 'failed'), and a
+// 'failed' result includes a FIXED reason CATEGORY the admin UI translates.
+// CRITICAL: the reason is one of a closed set of enum codes and NEVER contains
+// any config- or error-derived text, so no SMTP secret can leak here (the full
+// error stays in the server log). See utils/mailer.ts sendTestMail().
 router.post('/test', requireRole(Role.ADMIN), async (req, res) => {
   // Same house pattern: concise first-issue 400 on validation failure; a non-Zod
-  // failure returns 500 (sendMail is best-effort and never throws, so the catch is
-  // defensive but keeps the shape consistent).
+  // failure returns 500 (sendTestMail is best-effort and never throws, so the catch
+  // is defensive but keeps the shape consistent).
   const parsed = mailTestSendSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.issues[0].message });
@@ -141,12 +144,8 @@ router.post('/test', requireRole(Role.ADMIN), async (req, res) => {
   const { to } = parsed.data;
 
   try {
-    const ok = await sendMail({
-      to,
-      subject: '[IdeaHub] Test email',
-      text: 'This is a test email from IdeaHub to verify your outbound mail settings.',
-    });
-    res.json({ ok });
+    const result = await sendTestMail(to);
+    res.json(result);
   } catch (error) {
     console.error('Error sending test mail:', error);
     res.status(500).json({ error: 'Internal server error' });

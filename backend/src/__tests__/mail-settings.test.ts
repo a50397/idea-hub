@@ -28,10 +28,11 @@ jest.mock('@prisma/client', () => {
 
 jest.mock('bcrypt');
 
-// The mailer is fully mocked: POST /test must call it and map its boolean without
-// touching real SMTP (or the DB-backed config).
+// The mailer is fully mocked: POST /test must call sendTestMail and return its
+// structured result without touching real SMTP (or the DB-backed config).
 jest.mock('../utils/mailer', () => ({
   sendMail: jest.fn(),
+  sendTestMail: jest.fn(),
 }));
 
 // Import routes AFTER mocks. secretbox is REAL so the "set password" path proves
@@ -39,10 +40,10 @@ jest.mock('../utils/mailer', () => ({
 import bcrypt from 'bcrypt';
 import authRoutes from '../routes/auth';
 import mailSettingsRoutes from '../routes/mail-settings';
-import { sendMail } from '../utils/mailer';
+import { sendTestMail } from '../utils/mailer';
 import { decrypt } from '../utils/secretbox';
 
-const mockedSendMail = jest.mocked(sendMail);
+const mockedSendTestMail = jest.mocked(sendTestMail);
 
 // 64 hex chars == 32 bytes.
 const TEST_KEY = '00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff';
@@ -171,7 +172,7 @@ describe('Mail settings API', () => {
           expect(response.body).toHaveProperty('error');
           // A non-admin must never trigger a write or a send.
           expect(mockPrismaFunctions.mailSettings.upsert).not.toHaveBeenCalled();
-          expect(mockedSendMail).not.toHaveBeenCalled();
+          expect(mockedSendTestMail).not.toHaveBeenCalled();
         });
       }
     }
@@ -396,29 +397,44 @@ describe('Mail settings API', () => {
   });
 
   // -------------------------------------------------------------------------
-  // POST /test: calls the mailer with the saved settings and maps its boolean.
+  // POST /test: calls sendTestMail with the recipient and returns its structured
+  // MailTestResult verbatim (always 200; the `status` field is the outcome).
   // -------------------------------------------------------------------------
   describe('POST /api/mail-settings/test', () => {
-    test('sends via the mailer and maps ok=true', async () => {
+    test('calls sendTestMail with the recipient and returns its structured result (sent)', async () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
-      mockedSendMail.mockResolvedValue(true);
+      mockedSendTestMail.mockResolvedValue({ status: 'sent' });
 
       const response = await agent.post('/api/mail-settings/test').send({ to: 'admin@example.com' });
 
       expect(response.status).toBe(200);
-      expect(response.body).toEqual({ ok: true });
-      expect(mockedSendMail).toHaveBeenCalledTimes(1);
-      expect(mockedSendMail.mock.calls[0][0]).toMatchObject({ to: 'admin@example.com' });
+      expect(response.body).toEqual({ status: 'sent' });
+      expect(mockedSendTestMail).toHaveBeenCalledTimes(1);
+      // sendTestMail takes the plain recipient string (not a SendMailOptions object).
+      expect(mockedSendTestMail.mock.calls[0][0]).toBe('admin@example.com');
     });
 
-    test('maps a best-effort failure to 200 { ok: false }', async () => {
+    test('passes a disabled result straight through as 200 { status: disabled }', async () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
-      mockedSendMail.mockResolvedValue(false);
+      mockedSendTestMail.mockResolvedValue({ status: 'disabled' });
 
       const response = await agent.post('/api/mail-settings/test').send({ to: 'admin@example.com' });
 
       expect(response.status).toBe(200);
-      expect(response.body).toEqual({ ok: false });
+      expect(response.body).toEqual({ status: 'disabled' });
+    });
+
+    test('passes a failed result (fixed reason only) through as 200; body carries no ok/error text', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockedSendTestMail.mockResolvedValue({ status: 'failed', reason: 'auth_failed' });
+
+      const response = await agent.post('/api/mail-settings/test').send({ to: 'admin@example.com' });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ status: 'failed', reason: 'auth_failed' });
+      // The route emits ONLY the structured result — no legacy `ok`, no free-form error.
+      expect(response.body).not.toHaveProperty('ok');
+      expect(response.body).not.toHaveProperty('error');
     });
 
     test('rejects an invalid recipient with 400 (concise message) and never sends', async () => {
@@ -430,7 +446,7 @@ describe('Mail settings API', () => {
       // House pattern: the single concise issue message, not the whole ZodError.
       expect(response.body.error).toBe('Invalid email address');
       expect(response.body.error).not.toContain('"code"');
-      expect(mockedSendMail).not.toHaveBeenCalled();
+      expect(mockedSendTestMail).not.toHaveBeenCalled();
     });
   });
 });

@@ -73,11 +73,13 @@ services:
       # Mail is ADMIN-MANAGED at runtime (the Email settings page) and stored in the
       # database — there are no SMTP_* / MAIL_* env vars anymore. The ONLY mail env
       # is MAIL_SETTINGS_KEY, which encrypts the stored SMTP password (AES-256-GCM).
-      # Optional in dev: if unset the backend generates an ephemeral key and warns
-      # (any previously saved password stays undecryptable until a stable key is
-      # provided), so set it in .env for stable local dev. Generate one with:
+      # REQUIRED here (fail-fast via :?, like SESSION_SECRET/ADMIN_* above): this
+      # stack runs NODE_ENV=production, and the backend fatally exits at boot without
+      # the key outside development. (Host-run dev — `npm run dev` with
+      # NODE_ENV=development — instead generates an ephemeral key and warns.)
+      # Generate a stable one with:
       #   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-      MAIL_SETTINGS_KEY: ${MAIL_SETTINGS_KEY:-}
+      MAIL_SETTINGS_KEY: ${MAIL_SETTINGS_KEY:?MAIL_SETTINGS_KEY must be set in .env}
     expose:
       - '3001'
     depends_on:
