@@ -12,21 +12,26 @@ _Last updated: 2026-07-25. Living document — update as phases complete._
 | Frontend component tests | 8 suites / 78 tests (stores, pages, interceptor) | committed, verified |
 | Backend integration tier | `npm run test:integration`, 42 tests vs real Mongo (sessions, indexes, lifecycle, SSO upserts). Caught the real session-invalidation bug (F14) | committed, verified |
 | Playwright E2E | 10 tests: local login, idea lifecycle, RBAC, SSO round-trip vs mock IdP, i18n toggle. New `e2e.yml` workflow | committed, verified |
-| Dev tooling | VS Code debug configs (gitignored), Keycloak testing kit `dev/`, `scripts/build-images.sh` (amd64 target default, validated), `dev/IAM-REQUEST.md` sec-team checklist | committed / pending commit |
+| Dev tooling | VS Code debug configs (gitignored), Keycloak testing kit `dev/`, `scripts/build-images.sh` (amd64 target default, validated), `dev/IAM-REQUEST.md` sec-team checklist | committed |
 
 ## 2. Security hardening (task #3) — ✅ COMPLETE (2026-07-25, verifier CONFIRMED)
 
 Implemented and mostly verified (5 waves): Mongo **auth enabled** (root creds + auto-generated keyFile, authed healthcheck; local volume already migrated; other machines need one-time `docker compose down -v && docker compose up -d`), deterministic root-context `npm ci` builds off the single root lockfile, pinned base images, non-root nginx (uid 101) + extended CSP (`base-uri`/`form-action`/`object-src`; **never** re-add `unsafe-eval`), prod-compose fail-fast guards, login timing equalization, password min 12 (new passwords only), **F14 fixed**: role/email change now truly destroys the target's sessions (`stringify:false` + `collectionP`), regression test active.
 
+**Addendum 2026-07-25 (evening, verifier CONFIRMED):** general `/api` limiter reworked after it locked the user out of dev (429s without CORS headers masqueraded as CORS failures → SPA showed logout/no-SSO): `cors()` now precedes the limiter (throttled responses and preflights carry ACAO; preflights no longer consume budget — they previously double-billed every request), cap 100→300/15min, skip extended to `NODE_ENV=development`. Per-route login (10) / password-change (5) / SSO (30) limiters unchanged. Single-file fix (`backend/src/index.ts`), uncommitted.
+
 **Close-out record:** the first verification refuted one item — `bcrypt@5.1.1` (production dep) shipped a critical `tar` chain into the backend image. Remediated per user's option (b): lockfile restored to HEAD baseline (user-run git), targeted in-range bumps re-applied (`axios 1.18.1`, `body-parser 1.20.6`, `@babel/core 7.29.7`), **bcrypt ^6.0.0** (+`@types/bcrypt` ^6) eliminating the tar/node-pre-gyp chain, and the session-invalidation error-handling hardened in `users.ts`. Final state, independently re-verified: `npm audit --omit=dev` = **0 vulnerabilities**; full tree 0 critical / 26 high all devDependencies-only (jest/ts-jest/vue-tsc chains — clearing them requires major tool bumps, accepted residual); tar & node-pre-gyp absent from lockfile AND built image; bcrypt 6 proven functional on alpine/musl; lockfile diff surgical (+42/−372); all four tiers green (214 / 42 / 349 / 10).
 
-## 3. Next — Feature 2: departments (redesigned 2026-07-25; ⛔ starts only on explicit user go)
+## 3. Feature 2 — departments — ✅ COMPLETE (2026-07-25, verifier CONFIRMED; awaiting user commit)
 
-Departments are an **admin-managed list**; an idea's department = the department the idea **targets** (submitter picks one; required; defaults to first-by-order). Auto-seeded default **"Všeobecné"**; all existing ideas backfilled to it (idempotent, at boot). Admin CRUD: create, rename (always allowed), **reorder** (first = default), delete blocked while referenced or when last remaining. `User.department` (author's org claim, from F1) stays as a separate, orthogonal attribute.
+Implemented per the 2026-07-25 redesign (idea **targets** a department; submitter picks; required; defaults to first-by-order; `User.department` stays orthogonal):
 
-Implementation notes: `Department {name @unique, order}`; `Idea.departmentId` **optional in Prisma schema but required at API layer** (required-field-on-existing-Mongo-docs crashes reads — lesson from F1's `authProvider`). Department filter/chips on all idea lists + detail; reports by-department + CSV column (appended last — a test pins column order); dashboard chart; new admin Departments page; EN+SK labels (department *names* are data — never in locale files). Coverage in all four test tiers, incl. E2E "reorder changes the submit-form default".
+- **Backend:** `Department {name @unique, order}`; `Idea.departmentId` **optional in schema / required at API** (as planned). Boot-time idempotent `ensureDepartments()` seeds default **"Všeobecné"** and backfills legacy ideas via **raw Mongo command** — Prisma `updateMany` cannot match a *missing* ObjectId field (only explicit null); empirically verified, integration-tested with a genuine missing-field doc. Admin CRUD `/api/departments`: rename always allowed; reorder = exact-permutation body → order=index (route registered before `/:id`); delete 409 while referenced or when last remaining. `?departmentId` filter on ideas list + filtered reports; `GET /api/reports/by-department` (zero-filled, role-scoped like /summary); CSV `Department` column appended **last** (header now 14 columns; pinned assertions updated).
+- **Frontend:** departments Pinia store (2nd store; `defaultDepartment` = first-by-order); required submit-form select preselecting the default; department filter + chips on all six list surfaces (incl. ReviewQueue, Reports) + detail sidebar; dashboard "Ideas by Department" bar chart; admin Departments page (dialog CRUD mirroring UsersPage, up/down reorder buttons); 25 i18n keys in EN+SK (genuinely different Slovak, no department names in locales, **no new parity allowlist entries**).
+- **E2E:** 3 new specs incl. the spec-pinned "reorder changes the submit-form default"; `departments.spec.ts` runs serial-within-file (reorder's exact-permutation API races concurrent creates under fullyParallel); idea-lifecycle selects its department explicitly.
+- **Verification:** all four tiers green and independently re-verified end-to-end (fresh-context verifier CONFIRMED, incl. live authz probes and the missing-field backfill proof): **backend 266 / integration 54 / frontend 376 / E2E 13** (baselines were 214 / 42 / 349 / 10). No flakes across 4+ full runs. No new dependencies; lockfile untouched; Docker builds not run (no Dockerfile/dependency changes — can run on request).
 
-## 4. Later
+## 4. Next (⛔ #8 starts only on explicit user go)
 
 - **#8 Email sending infrastructure** (prerequisite for #7): env-configured SMTP (confirm company relay), `MAIL_ENABLED=false` default, async best-effort send API (never fails a request), dev story (log-only/mailpit), mock-transport tests.
 - **#7 Department notification emails**: each department gets admin-managed notification addresses; idea creation sends a note to the target department. Thin consumer of #2 + #8.
@@ -41,12 +46,16 @@ Implementation notes: `Department {name @unique, order}`; `Idea.departmentId` **
 - `@intlify/unplugin-vue-i18n` pinned **^4** while vue-i18n is v9 (CSP-safe JIT); bump only together.
 - Git operations (branch/commit/push/restore) are performed by the user; assistant edits files and runs checks only.
 - Idea department = *target* department (not author's org) — redesign decision 2026-07-25.
+- Dev/E2E seed carries a 2nd department ("Marketing", order 1) for filter/report/chip variety — user-approved 2026-07-25. Production boot seeds only "Všeobecné"; no test may depend on Marketing existing.
+- General `/api` rate limit: CORS-before-limiter, 300/15min in prod/staging, skipped in dev+test (user-approved 2026-07-25 after dev lockout). Per-route auth limiters keep their own tighter policies.
 
 ## 6. Open items / follow-ups
 
 - IAM team answers pending (issuer, client registration, claim names + sample org values, role provisioning, `client_secret_basic` support — fallbacks documented in `dev/IAM-REQUEST.md` §F).
 - Least-privilege Mongo application user (app currently authenticates as root) — follow-up hardening.
-- Integration tier ~2% flake under rapid re-runs (boot-timing suspect) — uncharacterized, watch in CI.
+- Test-tier flake watch: integration ~2% under rapid re-runs (boot-timing suspect, none observed across 4+ full runs 2026-07-25); one unit-tier flake observed 2026-07-25 — mock-IdP "socket hang up" in SSO discovery (auth.ts:119 path), clean on retry; E2E: first local run after a dev vite session can hit 3-4 first-attempt timeouts from cold-start/Vite re-optimization (observed 2026-07-25: cold 1.2m + 4 retried vs warm 8.6s clean 13/13) — retry noise, not regression. All uncharacterized; watch in CI.
+- Frontend: treat 429/network-failure on `/auth/me` as "backend unavailable" (keep auth state, surface an error) instead of silently routing to login — deliberately deferred from the 2026-07-25 limiter fix.
+- RTK bash proxy intercepts `npx playwright test` (rewrites to JSON reporter, truncates output) — for trustworthy full output run `rtk proxy npx playwright test --reporter=line`.
 - HSTS: enable in nginx when TLS terminates there (prepared, commented).
 - Prod redeploy needed to pick up: i18n fix (translations broken in deployed images since March), hardened images, Mongo auth (fresh volume).
-- Playwright X-Forwarded-For fixture now redundant (limiter skips under NODE_ENV=test) — harmless, optional cleanup.
+- Playwright X-Forwarded-For fixture: earlier noted as redundant, but 2026-07-25 recon found it is **active infrastructure** — the E2E backend does not run under NODE_ENV=test, so the per-context random IP genuinely isolates rate-limit buckets. Keep it.

@@ -52,6 +52,17 @@ export interface AuthConfig {
   ssoEnabled: boolean;
 }
 
+export interface Department {
+  id: string;
+  name: string;
+  order: number;
+  createdAt: string;
+  updatedAt: string;
+  _count?: {
+    ideas: number;
+  };
+}
+
 export interface LogoutResponse {
   message: string;
   // Present only for SSO sessions: the IdP end-session (RP-initiated logout)
@@ -67,6 +78,8 @@ export interface Idea {
   effort: Effort;
   status: IdeaStatus;
   tags: string[];
+  departmentId?: string | null;
+  department?: { id: string; name: string } | null;
   submitterId: string;
   submitter: User;
   approverId?: string;
@@ -106,6 +119,7 @@ export interface CreateIdeaInput {
   description: string;
   benefits: string;
   effort: Effort;
+  departmentId: string;
   tags?: string[];
 }
 
@@ -114,6 +128,7 @@ export interface UpdateIdeaInput {
   description?: string;
   benefits?: string;
   effort?: Effort;
+  departmentId?: string;
   tags?: string[];
 }
 
@@ -146,6 +161,14 @@ export interface TopContributor {
   userName: string;
   userEmail: string;
   completedIdeas: number;
+}
+
+// Note the field names differ from Department: the backend by-department report
+// returns { departmentId, name, count } (zero-filled, sorted by order).
+export interface DepartmentReport {
+  departmentId: string;
+  name: string;
+  count: number;
 }
 
 export interface CreateUserInput {

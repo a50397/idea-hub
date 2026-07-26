@@ -10,6 +10,9 @@
       <v-chip size="small" variant="outlined" class="mr-2">
         {{ $t(`effort.${effortKeyMap[idea.effort]}`) }}
       </v-chip>
+      <v-chip v-if="idea.department" size="small" variant="tonal" color="primary" class="mr-2">
+        {{ idea.department.name }}
+      </v-chip>
       <span class="text-caption">{{ $t('ideas.submittedBy') }} {{ idea.submitter.name }}</span>
     </v-card-subtitle>
     <v-card-text>

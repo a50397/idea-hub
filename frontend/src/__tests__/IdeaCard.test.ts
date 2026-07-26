@@ -108,6 +108,19 @@ describe('IdeaCard', () => {
     });
   });
 
+  it('renders a department chip with the name when the idea has a department', () => {
+    const wrapper = mountCard(makeIdea({ department: { id: 'd1', name: 'Marketing' }, tags: [] }));
+    const chipTexts = wrapper.findAllComponents({ name: 'VChip' }).map((c) => c.text().trim());
+    expect(chipTexts).toContain('Marketing');
+  });
+
+  it('omits the department chip when the idea has no department', () => {
+    const wrapper = mountCard(makeIdea({ department: null, tags: [] }));
+    // Only the status and effort chips remain (no department, no tags).
+    expect(wrapper.findAllComponents({ name: 'VChip' })).toHaveLength(2);
+    expect(wrapper.text()).not.toContain('Marketing');
+  });
+
   it('translates the status label when locale is SK', () => {
     const wrapper = mountCard(makeIdea({ status: IdeaStatus.SUBMITTED }), 'sk');
     const chip = wrapper.findAllComponents({ name: 'VChip' })[0];

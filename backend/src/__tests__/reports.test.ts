@@ -14,6 +14,9 @@ const mockPrismaFunctions = {
     findMany: jest.fn(),
     groupBy: jest.fn(),
   },
+  department: {
+    findMany: jest.fn(),
+  },
 };
 
 jest.mock('@prisma/client', () => {
@@ -204,6 +207,66 @@ describe('Reports API', () => {
       expect(response.status).toBe(200);
       expect(response.body.counts.total).toBe(0);
       expect(response.body.averageTimes.submittedToApprovedDays).toBe(0);
+    });
+  });
+
+  describe('GET /api/reports/by-department', () => {
+    test('returns every department zero-filled and sorted by order', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+
+      mockPrismaFunctions.department.findMany.mockResolvedValue([
+        { id: 'd1', name: 'Všeobecné', order: 0 },
+        { id: 'd2', name: 'Marketing', order: 1 },
+        { id: 'd3', name: 'Sales', order: 2 },
+      ]);
+      mockPrismaFunctions.idea.groupBy.mockResolvedValue([
+        { departmentId: 'd1', _count: { id: 4 } },
+        { departmentId: 'd3', _count: { id: 2 } },
+      ]);
+
+      const response = await agent.get('/api/reports/by-department');
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual([
+        { departmentId: 'd1', name: 'Všeobecné', count: 4 },
+        { departmentId: 'd2', name: 'Marketing', count: 0 },
+        { departmentId: 'd3', name: 'Sales', count: 2 },
+      ]);
+    });
+
+    test('scopes the counts to the user\'s own ideas for a standard USER', async () => {
+      const { agent, user } = await loginAsUser(app, 'USER');
+
+      mockPrismaFunctions.department.findMany.mockResolvedValue([{ id: 'd1', name: 'Všeobecné', order: 0 }]);
+      mockPrismaFunctions.idea.groupBy.mockResolvedValue([]);
+
+      await agent.get('/api/reports/by-department');
+
+      expect(mockPrismaFunctions.idea.groupBy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ submitterId: user.id }),
+        })
+      );
+    });
+
+    test('does not scope the counts for an ADMIN', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+
+      mockPrismaFunctions.department.findMany.mockResolvedValue([{ id: 'd1', name: 'Všeobecné', order: 0 }]);
+      mockPrismaFunctions.idea.groupBy.mockResolvedValue([]);
+
+      await agent.get('/api/reports/by-department');
+
+      expect(mockPrismaFunctions.idea.groupBy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.not.objectContaining({ submitterId: expect.anything() }),
+        })
+      );
+    });
+
+    test('requires authentication', async () => {
+      const response = await request(app).get('/api/reports/by-department');
+      expect(response.status).toBe(401);
     });
   });
 

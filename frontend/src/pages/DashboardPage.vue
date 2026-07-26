@@ -101,7 +101,7 @@
       </v-row>
 
       <v-row>
-        <v-col cols="12">
+        <v-col cols="12" md="6">
           <v-card>
             <v-card-title>{{ $t('dashboard.monthlyTrend') }}</v-card-title>
             <v-card-text>
@@ -114,6 +114,19 @@
             </v-card-text>
           </v-card>
         </v-col>
+        <v-col cols="12" md="6">
+          <v-card>
+            <v-card-title>{{ $t('dashboard.ideasByDepartment') }}</v-card-title>
+            <v-card-text>
+              <div v-if="byDepartment.length" class="chart-container">
+                <Bar :data="departmentChartData" :options="chartOptions" />
+              </div>
+              <div v-else class="text-center pa-4">
+                <p>{{ $t('dashboard.noDepartmentData') }}</p>
+              </div>
+            </v-card-text>
+          </v-card>
+        </v-col>
       </v-row>
     </div>
   </v-container>
@@ -122,22 +135,23 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Line } from 'vue-chartjs';
+import { Line, Bar } from 'vue-chartjs';
 import {
   Chart as ChartJS,
   CategoryScale,
   LinearScale,
   PointElement,
   LineElement,
+  BarElement,
   Title,
   Tooltip,
   Legend,
 } from 'chart.js';
 import { reportsApi } from '../api/reports';
 import { useAuthStore } from '../stores/auth';
-import type { DashboardSummary, MonthlyTrend, TopContributor } from '../types';
+import type { DashboardSummary, MonthlyTrend, TopContributor, DepartmentReport } from '../types';
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend);
 
 const { t } = useI18n();
 const authStore = useAuthStore();
@@ -145,6 +159,7 @@ const loading = ref(true);
 const summary = ref<DashboardSummary | null>(null);
 const monthlyTrend = ref<MonthlyTrend[]>([]);
 const topContributors = ref<TopContributor[]>([]);
+const byDepartment = ref<DepartmentReport[]>([]);
 
 const chartData = computed(() => ({
   labels: monthlyTrend.value.map((item) => item.month),
@@ -155,6 +170,19 @@ const chartData = computed(() => ({
       borderColor: '#1976D2',
       backgroundColor: 'rgba(25, 118, 210, 0.1)',
       tension: 0.3,
+    },
+  ],
+}));
+
+const departmentChartData = computed(() => ({
+  labels: byDepartment.value.map((item) => item.name),
+  datasets: [
+    {
+      label: t('dashboard.ideasByDepartment'),
+      data: byDepartment.value.map((item) => item.count),
+      backgroundColor: 'rgba(25, 118, 210, 0.6)',
+      borderColor: '#1976D2',
+      borderWidth: 1,
     },
   ],
 }));
@@ -183,12 +211,14 @@ const chartOptions = {
 async function loadDashboard() {
   loading.value = true;
   try {
-    const [summaryData, trendData] = await Promise.all([
+    const [summaryData, trendData, byDepartmentData] = await Promise.all([
       reportsApi.getSummary(),
       reportsApi.getMonthlyTrend(),
+      reportsApi.getByDepartment(),
     ]);
     summary.value = summaryData;
     monthlyTrend.value = trendData;
+    byDepartment.value = byDepartmentData;
 
     if (authStore.isPowerUser) {
       topContributors.value = await reportsApi.getTopContributors(5);

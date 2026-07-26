@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
+import { setActivePinia, createPinia } from 'pinia';
 import SubmitIdeaPage from '../pages/SubmitIdeaPage.vue';
 import { Effort } from '../types';
+import type { Department } from '../types';
 import { createTestI18n, createTestVuetify } from './helpers';
 
 vi.mock('../api/ideas', () => ({
@@ -14,8 +16,26 @@ vi.mock('../api/ideas', () => ({
   },
 }));
 
+vi.mock('../api/departments', () => ({
+  departmentsApi: {
+    getAll: vi.fn(),
+    create: vi.fn(),
+    rename: vi.fn(),
+    reorder: vi.fn(),
+    remove: vi.fn(),
+  },
+}));
+
 import { ideasApi } from '../api/ideas';
+import { departmentsApi } from '../api/departments';
 const mockedIdeas = vi.mocked(ideasApi);
+const mockedDepartments = vi.mocked(departmentsApi);
+
+// Sorted by order: General (0) is the default preselection, Marketing (1) second.
+const departments: Department[] = [
+  { id: 'd1', name: 'General', order: 0, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'd2', name: 'Marketing', order: 1, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+];
 
 interface FormData {
   title: string;
@@ -57,8 +77,10 @@ async function submit(wrapper: VueWrapper) {
 
 describe('SubmitIdeaPage', () => {
   beforeEach(() => {
+    setActivePinia(createPinia());
     vi.clearAllMocks();
     mockedIdeas.create.mockResolvedValue({} as any);
+    mockedDepartments.getAll.mockResolvedValue(departments);
   });
 
   it('renders the submission form and guidelines', () => {
@@ -117,7 +139,7 @@ describe('SubmitIdeaPage', () => {
     expect(mockedIdeas.create).not.toHaveBeenCalled();
   });
 
-  it('calls ideasApi.create with the payload on valid input and shows success', async () => {
+  it('calls ideasApi.create with the payload (incl. preselected departmentId) and shows success', async () => {
     const wrapper = mountPage();
     await fillForm(wrapper, { ...validForm, tags: ['ux', 'perf'] });
     await submit(wrapper);
@@ -128,11 +150,47 @@ describe('SubmitIdeaPage', () => {
       description: 'This is a valid, long-enough description.',
       benefits: 'These are valid, long-enough benefits.',
       effort: Effort.ONE_TO_THREE_DAYS,
+      departmentId: 'd1',
       tags: ['ux', 'perf'],
     });
     // NOTE: this page does not navigate on success (unlike the ticket wording);
     // it surfaces a success alert and resets the form instead.
     expect(wrapper.text()).toContain('Idea submitted successfully!');
+  });
+
+  it('fetches departments on mount and preselects the default (first-by-order)', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(mockedDepartments.getAll).toHaveBeenCalledTimes(1);
+    const departmentSelect = wrapper.findAllComponents({ name: 'VSelect' })[1];
+    expect(departmentSelect.props('modelValue')).toBe('d1');
+  });
+
+  it('submits the chosen department when the user changes it', async () => {
+    const wrapper = mountPage();
+    await fillForm(wrapper, validForm);
+    // Second VSelect is the department (first is effort).
+    wrapper.findAllComponents({ name: 'VSelect' })[1].vm.$emit('update:modelValue', 'd2');
+    await flushPromises();
+    await submit(wrapper);
+
+    expect(mockedIdeas.create).toHaveBeenCalledTimes(1);
+    expect(mockedIdeas.create).toHaveBeenCalledWith(
+      expect.objectContaining({ departmentId: 'd2' })
+    );
+  });
+
+  it('blocks submission and shows a required error when no department is selected', async () => {
+    const wrapper = mountPage();
+    await fillForm(wrapper, validForm);
+    // Clear the preselected department.
+    wrapper.findAllComponents({ name: 'VSelect' })[1].vm.$emit('update:modelValue', null);
+    await flushPromises();
+    await submit(wrapper);
+
+    expect(wrapper.text()).toContain('Department is required');
+    expect(mockedIdeas.create).not.toHaveBeenCalled();
   });
 
   it('surfaces a server error message when create rejects', async () => {

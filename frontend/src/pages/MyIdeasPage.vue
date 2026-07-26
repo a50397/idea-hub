@@ -15,6 +15,16 @@
           @update:model-value="loadIdeas"
         ></v-select>
       </v-col>
+      <v-col cols="12" sm="4" md="3">
+        <v-select
+          v-model="departmentFilter"
+          :items="departmentOptions"
+          :label="$t('ideas.filterByDepartment')"
+          variant="outlined"
+          density="compact"
+          @update:model-value="loadIdeas"
+        ></v-select>
+      </v-col>
     </v-row>
 
     <v-row v-if="loading">
@@ -42,6 +52,7 @@ import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { ideasApi } from '../api/ideas';
 import { useAuthStore } from '../stores/auth';
+import { useDepartmentsStore } from '../stores/departments';
 import { IdeaStatus } from '../types';
 import type { Idea } from '../types';
 import IdeaCard from '../components/IdeaCard.vue';
@@ -49,9 +60,11 @@ import IdeaCard from '../components/IdeaCard.vue';
 const { t } = useI18n();
 const router = useRouter();
 const authStore = useAuthStore();
+const departmentsStore = useDepartmentsStore();
 const loading = ref(true);
 const ideas = ref<Idea[]>([]);
 const statusFilter = ref<IdeaStatus | null>(null);
+const departmentFilter = ref<string | null>(null);
 
 const statusOptions = computed(() => [
   { title: t('status.submitted'), value: IdeaStatus.SUBMITTED },
@@ -61,12 +74,20 @@ const statusOptions = computed(() => [
   { title: t('status.rejected'), value: IdeaStatus.REJECTED },
 ]);
 
+const departmentOptions = computed(() => [
+  { title: t('ideas.allDepartments'), value: null },
+  ...departmentsStore.sortedByOrder.map((d) => ({ title: d.name, value: d.id })),
+]);
+
 async function loadIdeas() {
   loading.value = true;
   try {
     const filters: any = {};
     if (statusFilter.value) {
       filters.status = statusFilter.value;
+    }
+    if (departmentFilter.value) {
+      filters.departmentId = departmentFilter.value;
     }
     if (authStore.user?.id) {
       filters.submitterId = authStore.user.id;
@@ -85,5 +106,6 @@ function viewIdea(id: string) {
 
 onMounted(() => {
   loadIdeas();
+  departmentsStore.fetchAll();
 });
 </script>

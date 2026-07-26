@@ -104,6 +104,10 @@
                   <v-list-item-title>{{ $t('ideas.submittedBy') }}</v-list-item-title>
                   <v-list-item-subtitle>{{ idea.submitter.name }}</v-list-item-subtitle>
                 </v-list-item>
+                <v-list-item v-if="idea.department">
+                  <v-list-item-title>{{ $t('ideas.department') }}</v-list-item-title>
+                  <v-list-item-subtitle>{{ idea.department.name }}</v-list-item-subtitle>
+                </v-list-item>
                 <v-list-item v-if="idea.approver">
                   <v-list-item-title>{{ $t('ideas.approvedByLabel') }}</v-list-item-title>
                   <v-list-item-subtitle>{{ idea.approver.name }}</v-list-item-subtitle>

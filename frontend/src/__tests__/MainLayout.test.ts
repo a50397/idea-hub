@@ -37,6 +37,7 @@ function makeRouter(): Router {
       { path: '/reports', name: 'Reports', component: Dummy },
       { path: '/change-password', name: 'ChangePassword', component: Dummy },
       { path: '/users', name: 'Users', component: Dummy },
+      { path: '/departments', name: 'Departments', component: Dummy },
     ],
   });
 }
@@ -93,17 +94,18 @@ describe('MainLayout', () => {
   });
 
   const roleCases = [
-    { role: Role.USER, reviewQueue: false, users: false },
-    { role: Role.POWER_USER, reviewQueue: true, users: false },
-    { role: Role.ADMIN, reviewQueue: true, users: true },
+    { role: Role.USER, reviewQueue: false, users: false, departments: false },
+    { role: Role.POWER_USER, reviewQueue: true, users: false, departments: false },
+    { role: Role.ADMIN, reviewQueue: true, users: true, departments: true },
   ] as const;
 
-  describe.each(roleCases)('role-based nav for $role', ({ role, reviewQueue, users }) => {
-    it(`${reviewQueue ? 'shows' : 'hides'} Review Queue and ${users ? 'shows' : 'hides'} Users`, async () => {
+  describe.each(roleCases)('role-based nav for $role', ({ role, reviewQueue, users, departments }) => {
+    it(`${reviewQueue ? 'shows' : 'hides'} Review Queue, ${users ? 'shows' : 'hides'} Users, ${departments ? 'shows' : 'hides'} Departments`, async () => {
       const { wrapper } = await mountLayout(role);
       const titles = navTitles(wrapper);
       expect(titles.includes('Review Queue')).toBe(reviewQueue);
       expect(titles.includes('Users')).toBe(users);
+      expect(titles.includes('Departments')).toBe(departments);
     });
   });
 

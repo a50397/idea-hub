@@ -3,6 +3,19 @@
     <h1 class="text-h4 page-title">{{ $t('approved.title') }}</h1>
     <p class="text-subtitle-1 mb-4">{{ $t('approved.subtitle') }}</p>
 
+    <v-row class="mb-4">
+      <v-col cols="12" sm="4" md="3">
+        <v-select
+          v-model="departmentFilter"
+          :items="departmentOptions"
+          :label="$t('ideas.filterByDepartment')"
+          variant="outlined"
+          density="compact"
+          @update:model-value="loadIdeas"
+        ></v-select>
+      </v-col>
+    </v-row>
+
     <v-row v-if="loading">
       <v-col cols="12" class="text-center">
         <v-progress-circular indeterminate color="primary"></v-progress-circular>
@@ -38,7 +51,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { ideasApi } from '../api/ideas';
@@ -46,21 +59,32 @@ import { IdeaStatus } from '../types';
 import type { Idea } from '../types';
 import IdeaCard from '../components/IdeaCard.vue';
 import { useAuthStore } from '../stores/auth';
+import { useDepartmentsStore } from '../stores/departments';
 
 const { t } = useI18n();
 const router = useRouter();
+const departmentsStore = useDepartmentsStore();
 const loading = ref(true);
 const ideas = ref<Idea[]>([]);
 const claimingId = ref<string | null>(null);
+const departmentFilter = ref<string | null>(null);
 const snackbar = ref(false);
 const snackbarText = ref('');
 const snackbarColor = ref('success');
+
+const departmentOptions = computed(() => [
+  { title: t('ideas.allDepartments'), value: null },
+  ...departmentsStore.sortedByOrder.map((d) => ({ title: d.name, value: d.id })),
+]);
 
 async function loadIdeas() {
   loading.value = true;
   try {
     const authStore = useAuthStore();
     const filters: any = { status: IdeaStatus.APPROVED };
+    if (departmentFilter.value) {
+      filters.departmentId = departmentFilter.value;
+    }
     if (!authStore.isPowerUser && !authStore.isAdmin && authStore.user?.id) {
       filters.submitterId = authStore.user.id;
     }
@@ -95,5 +119,6 @@ async function claimIdea(id: string) {
 
 onMounted(() => {
   loadIdeas();
+  departmentsStore.fetchAll();
 });
 </script>

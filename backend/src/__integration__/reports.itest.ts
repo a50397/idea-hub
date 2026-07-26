@@ -18,7 +18,7 @@ let userU: { id: string };
 let other: { id: string };
 
 const CSV_HEADER =
-  'ID,Title,Status,Effort,Submitter,Approver,Assignee,Submitted At,Approved At,Started At,Completed At,Duration (days),Tags';
+  'ID,Title,Status,Effort,Submitter,Approver,Assignee,Submitted At,Approved At,Started At,Completed At,Duration (days),Tags,Department';
 
 beforeAll(async () => {
   await waitForBoot();
@@ -75,6 +75,26 @@ describe('reports aggregations (real DB)', () => {
     });
   });
 
+  test('GET /by-department as ADMIN counts every idea, zero-filling departments', async () => {
+    const res = await adminAgent.get('/api/reports/by-department');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    // All seeded ideas target the default department; it must reflect the full count.
+    const general = res.body.find((d: { name: string }) => d.name === 'Všeobecné');
+    expect(general).toBeDefined();
+    expect(general.count).toBe(7);
+    // Every returned row carries the zero-fill shape.
+    expect(res.body.every((d: any) => typeof d.departmentId === 'string' && typeof d.count === 'number')).toBe(true);
+  });
+
+  test('GET /by-department as USER is scoped to the user\'s own ideas', async () => {
+    const res = await userAgent.get('/api/reports/by-department');
+    expect(res.status).toBe(200);
+    const general = res.body.find((d: { name: string }) => d.name === 'Všeobecné');
+    expect(general).toBeDefined();
+    expect(general.count).toBe(3);
+  });
+
   test('GET /monthly-trend as ADMIN groups completed ideas by month', async () => {
     const res = await adminAgent.get('/api/reports/monthly-trend');
     expect(res.status).toBe(200);
@@ -106,7 +126,7 @@ describe('reports aggregations (real DB)', () => {
 
     const lines = res.text.split('\n');
     expect(lines[0]).toBe(CSV_HEADER);
-    expect(lines[0].split(',')).toHaveLength(13);
+    expect(lines[0].split(',')).toHaveLength(14);
     // header + one row per DONE idea
     expect(lines).toHaveLength(3);
   });

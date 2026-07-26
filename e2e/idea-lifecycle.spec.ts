@@ -36,6 +36,11 @@ test('idea lifecycle: submit → approve → claim → complete, chips reflect e
   await textField('Benefits').fill(benefits);
   await page.locator('.v-input', { hasText: 'Estimated Effort' }).locator('.v-field').click();
   await page.getByRole('option', { name: '1-3 days' }).click();
+  // Pin the department explicitly instead of trusting the preselected default:
+  // the departments spec transiently reorders the first-by-order default, so we
+  // select Všeobecné to match the detail-metadata assertion below.
+  await page.locator('.v-input', { hasText: 'Department' }).locator('.v-field').click();
+  await page.getByRole('option', { name: 'Všeobecné' }).click();
   await page.getByRole('button', { name: 'Submit Idea' }).click();
   await expect(page.getByText('Idea submitted successfully!')).toBeVisible();
 
@@ -70,6 +75,10 @@ test('idea lifecycle: submit → approve → claim → complete, chips reflect e
   await card().getByRole('button', { name: 'View Details' }).click();
   await expect(page).toHaveURL(/\/ideas\/[a-f0-9]+$/);
   await expect(page.locator('.v-card-title', { hasText: title })).toBeVisible();
+  // The department chosen at submit time is shown in the detail metadata sidebar.
+  await expect(
+    page.locator('.v-card', { hasText: 'Details' }).locator('.v-list-item', { hasText: 'Department' })
+  ).toContainText('Všeobecné');
 
   await page.getByPlaceholder('Describe what was done...').fill(stepText);
   await page.getByRole('button', { name: 'Add Step' }).click();

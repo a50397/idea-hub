@@ -37,6 +37,16 @@
               hide-details
             ></v-text-field>
           </v-col>
+          <v-col cols="12" sm="auto" style="min-width: 200px; max-width: 250px;">
+            <v-select
+              v-model="filters.departmentId"
+              :label="$t('ideas.filterByDepartment')"
+              :items="departmentOptions"
+              variant="outlined"
+              density="compact"
+              hide-details
+            ></v-select>
+          </v-col>
           <v-col cols="12" sm="auto" class="d-flex align-center">
             <v-btn @click="applyFilters" color="primary" class="mr-2">
               {{ $t('common.apply') }}
@@ -101,6 +111,9 @@
               <template v-slot:item.duration="{ item }">
                 {{ calculateDuration(item) }}
               </template>
+              <template v-slot:item.department="{ item }">
+                {{ item.department?.name ?? '' }}
+              </template>
               <template v-slot:item.actions="{ item }" v-if="authStore.isAdmin">
                 <v-btn
                   icon
@@ -149,10 +162,12 @@ import { ideasApi } from '../api/ideas';
 import { IdeaStatus, Effort, statusColors } from '../types';
 import type { Idea } from '../types';
 import { useAuthStore } from '../stores/auth';
+import { useDepartmentsStore } from '../stores/departments';
 
 const { t, locale } = useI18n();
 const router = useRouter();
 const authStore = useAuthStore();
+const departmentsStore = useDepartmentsStore();
 const loading = ref(false);
 const exporting = ref(false);
 const ideas = ref<Idea[]>([]);
@@ -167,6 +182,7 @@ const filters = reactive({
   status: null as IdeaStatus | null,
   startDate: '',
   endDate: '',
+  departmentId: null as string | null,
 });
 
 const statusKeyMap: Record<IdeaStatus, string> = {
@@ -190,6 +206,11 @@ const statusOptions = computed(() =>
   }))
 );
 
+const departmentOptions = computed(() => [
+  { title: t('ideas.allDepartments'), value: null },
+  ...departmentsStore.sortedByOrder.map((d) => ({ title: d.name, value: d.id })),
+]);
+
 const headers = computed(() => {
   const cols = [
     { title: t('reports.headerTitle'), key: 'title', sortable: true },
@@ -199,6 +220,7 @@ const headers = computed(() => {
     { title: t('reports.headerAssignee'), key: 'assignee', sortable: true },
     { title: t('reports.headerSubmitted'), key: 'submittedAt', sortable: true },
     { title: t('reports.headerDuration'), key: 'duration', sortable: true },
+    { title: t('reports.headerDepartment'), key: 'department', sortable: true },
   ];
   if (authStore.isAdmin) {
     cols.push({ title: t('reports.headerActions'), key: 'actions', sortable: false });
@@ -213,6 +235,7 @@ async function applyFilters() {
     if (filters.status) filterParams.status = filters.status;
     if (filters.startDate) filterParams.startDate = filters.startDate;
     if (filters.endDate) filterParams.endDate = filters.endDate;
+    if (filters.departmentId) filterParams.departmentId = filters.departmentId;
 
     if (!authStore.isPowerUser && !authStore.isAdmin && authStore.user?.id) {
       filterParams.submitterId = authStore.user.id;
@@ -233,6 +256,7 @@ function resetFilters() {
   filters.status = null;
   filters.startDate = '';
   filters.endDate = '';
+  filters.departmentId = null;
   applyFilters();
 }
 
@@ -243,6 +267,7 @@ async function exportCSV() {
     if (filters.status) filterParams.status = filters.status;
     if (filters.startDate) filterParams.startDate = filters.startDate;
     if (filters.endDate) filterParams.endDate = filters.endDate;
+    if (filters.departmentId) filterParams.departmentId = filters.departmentId;
 
     if (!authStore.isPowerUser && !authStore.isAdmin && authStore.user?.id) {
       filterParams.submitterId = authStore.user.id;
@@ -317,5 +342,6 @@ async function deleteIdea() {
 
 onMounted(() => {
   applyFilters();
+  departmentsStore.fetchAll();
 });
 </script>

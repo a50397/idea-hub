@@ -21,6 +21,8 @@
 
         <v-list-item v-if="authStore.isAdmin" prepend-icon="mdi-account-group" :title="$t('nav.users')" :to="{ name: 'Users' }"></v-list-item>
 
+        <v-list-item v-if="authStore.isAdmin" prepend-icon="mdi-office-building" :title="$t('nav.departments')" :to="{ name: 'Departments' }"></v-list-item>
+
         <v-list-item v-if="!isSsoUser" prepend-icon="mdi-lock-reset" :title="$t('nav.changePassword')" :to="{ name: 'ChangePassword' }"></v-list-item>
       </v-list>
 

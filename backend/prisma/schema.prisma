@@ -46,13 +46,13 @@ enum EventType {
 }
 
 model User {
-  id           String        @id @default(auto()) @map("_id") @db.ObjectId
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
   name         String
-  email        String        @unique
+  email        String   @unique
   passwordHash String?
-  role         Role          @default(USER)
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  role         Role     @default(USER)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   // SSO / OIDC. authProvider is nullable with no default: a null value means
   // LOCAL, so pre-existing Mongo documents (which lack the field) still read.
@@ -89,19 +89,38 @@ model Idea {
   assigneeId String? @db.ObjectId
   assignee   User?   @relation("AssignedIdeas", fields: [assigneeId], references: [id])
 
-  submittedAt  DateTime  @default(now())
-  approvedAt   DateTime?
-  startedAt    DateTime?
-  completedAt  DateTime?
-  rejectedAt   DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  // departmentId is nullable with no default: pre-existing Mongo documents predate
+  // departments and lack the field, so a required column would fail to read them.
+  // Required-ness is enforced at the API layer only (createIdeaSchema).
+  departmentId String?     @db.ObjectId
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  submittedAt DateTime  @default(now())
+  approvedAt  DateTime?
+  startedAt   DateTime?
+  completedAt DateTime?
+  rejectedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   // Relations
   events IdeaEvent[]
   steps  IdeaStep[]
 
   @@map("ideas")
+}
+
+model Department {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  name      String   @unique
+  order     Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  ideas Idea[]
+
+  @@map("departments")
 }
 
 model IdeaEvent {

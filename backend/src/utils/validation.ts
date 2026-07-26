@@ -17,6 +17,9 @@ export const createIdeaSchema = z.object({
   benefits: z.string().min(10, 'Benefits must be at least 10 characters').max(3000, 'Benefits must be at most 3000 characters'),
   effort: z.nativeEnum(Effort, { errorMap: () => ({ message: 'Invalid effort value' }) }),
   tags: z.array(z.string()).optional().default([]),
+  // departmentId is optional in the Prisma schema (legacy docs) but REQUIRED here:
+  // every new idea targets a department. Existence is verified in the handler.
+  departmentId: z.string().regex(objectIdRegex, 'Invalid department ID'),
 });
 
 export const updateIdeaSchema = z.object({
@@ -25,6 +28,15 @@ export const updateIdeaSchema = z.object({
   benefits: z.string().min(10).max(3000).optional(),
   effort: z.nativeEnum(Effort).optional(),
   tags: z.array(z.string()).optional(),
+  departmentId: z.string().regex(objectIdRegex, 'Invalid department ID').optional(),
+});
+
+export const departmentNameSchema = z.object({
+  name: z.string().trim().min(1, 'Name is required').max(100, 'Name must be at most 100 characters'),
+});
+
+export const reorderDepartmentsSchema = z.object({
+  ids: z.array(z.string()).min(1, 'ids must be a non-empty array'),
 });
 
 export const reviewIdeaSchema = z.object({
@@ -63,6 +75,7 @@ export const ideasQuerySchema = z.object({
   status: ideaStatusEnum.optional(),
   submitterId: z.string().regex(objectIdRegex, 'Invalid submitter ID').optional(),
   assigneeId: z.string().regex(objectIdRegex, 'Invalid assignee ID').optional(),
+  departmentId: z.string().regex(objectIdRegex, 'Invalid department ID').optional(),
   tags: z.union([z.string(), z.array(z.string())]).optional(),
   ...paginationSchema,
 });
@@ -71,6 +84,7 @@ export const filteredReportQuerySchema = z.object({
   status: ideaStatusEnum.optional(),
   submitterId: z.string().regex(objectIdRegex, 'Invalid submitter ID').optional(),
   assigneeId: z.string().regex(objectIdRegex, 'Invalid assignee ID').optional(),
+  departmentId: z.string().regex(objectIdRegex, 'Invalid department ID').optional(),
   tags: z.union([z.string(), z.array(z.string())]).optional(),
   startDate: z.string().datetime({ offset: true }).or(z.string().date()).optional(),
   endDate: z.string().datetime({ offset: true }).or(z.string().date()).optional(),
