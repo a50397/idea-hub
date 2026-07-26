@@ -225,7 +225,9 @@ router.post('/', ideaCreateLimiter as any, requireAuth, async (req, res) => {
             language: mailCfg.language,
             subjectTemplate: mailCfg.subjectTemplate,
           });
-          await sendMail({ to: recipients, subject, text });
+          // Pass the config we ALREADY read (above) so sendMail does NOT read the
+          // settings a second time — exactly one settings read per notification.
+          await sendMail({ to: recipients, subject, text }, mailCfg);
         } catch (err) {
           console.error(`[MAIL] department notification failed ideaId=${idea.id}:`, err);
         }

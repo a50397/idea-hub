@@ -9,7 +9,7 @@ const mockPrismaFunctions: Record<string, any> = {
     findUnique: jest.fn(),
   },
   mailSettings: {
-    findFirst: jest.fn(),
+    findUnique: jest.fn(),
     // The PUT write path is now a single atomic upsert on the unique singleton key.
     upsert: jest.fn(),
   },
@@ -116,6 +116,13 @@ function settingsDoc(overrides: Record<string, unknown> = {}) {
   };
 }
 
+// A Prisma-style known-request error carries a `.code`; the PUT write path branches
+// on it (P2002 == unique-constraint violation) via the repo's duck-typed `.code`
+// check, exactly like the departments route. Mirrors departments.test.ts's helper.
+function prismaError(code: string) {
+  return Object.assign(new Error(`Prisma error ${code}`), { code });
+}
+
 beforeAll(() => {
   savedKey = process.env.MAIL_SETTINGS_KEY;
   process.env.MAIL_SETTINGS_KEY = TEST_KEY;
@@ -132,9 +139,11 @@ describe('Mail settings API', () => {
   beforeEach(() => {
     app = createTestApp();
     jest.clearAllMocks();
-    // Default: echo the upserted values back so the masked response reflects
-    // persistence. The route passes the SAME `values` object as both `create` and
-    // `update`, so echoing `update` covers the create-first and update paths alike.
+    // Default: echo the upserted UPDATE payload back so the masked response reflects
+    // persistence. The route now builds `update` SEPARATELY from `create` — update
+    // OMITS passwordEnc in the keep case to avoid clobbering a concurrent change — so
+    // tests that assert the write shape inspect the upsert call's `create`/`update`
+    // directly rather than relying on this echo.
     mockPrismaFunctions.mailSettings.upsert.mockImplementation(
       ({ update }: { update: Record<string, unknown> }) =>
         Promise.resolve({ ...settingsDoc(), ...update })
@@ -184,7 +193,7 @@ describe('Mail settings API', () => {
   describe('GET /api/mail-settings', () => {
     test('never exposes the password and reports hasPassword=true when one is stored', async () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
-      mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(
+      mockPrismaFunctions.mailSettings.findUnique.mockResolvedValue(
         settingsDoc({ enabled: true, host: 'smtp.corp.example', username: 'relay-user', passwordEnc: 'stored-ciphertext-value' })
       );
 
@@ -204,7 +213,7 @@ describe('Mail settings API', () => {
 
     test('reports hasPassword=false when no password is stored', async () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
-      mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(settingsDoc({ passwordEnc: '' }));
+      mockPrismaFunctions.mailSettings.findUnique.mockResolvedValue(settingsDoc({ passwordEnc: '' }));
 
       const response = await agent.get('/api/mail-settings');
 
@@ -215,7 +224,7 @@ describe('Mail settings API', () => {
 
     test('returns disabled defaults (hasPassword=false) when no document exists yet', async () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
-      mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(null);
+      mockPrismaFunctions.mailSettings.findUnique.mockResolvedValue(null);
 
       const response = await agent.get('/api/mail-settings');
 
@@ -240,7 +249,7 @@ describe('Mail settings API', () => {
   describe('PUT /api/mail-settings', () => {
     test('creates the first document (via upsert on the singleton key) and returns a masked shape', async () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
-      mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(null);
+      mockPrismaFunctions.mailSettings.findUnique.mockResolvedValue(null);
 
       const response = await agent.put('/api/mail-settings').send(validBody({ host: 'smtp.corp.example' }));
 
@@ -254,9 +263,84 @@ describe('Mail settings API', () => {
       expect(response.body.hasPassword).toBe(false);
     });
 
+    test('converges to 200 by re-reading the winner when the atomic upsert loses the unique-singleton race (P2002)', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      // First-save race: THIS request sees no doc yet (existing == null), but a
+      // concurrent WINNER has already persisted the singleton. The upsert create
+      // therefore loses the unique `singleton` key and rejects with P2002; the route
+      // must re-read the winner's document and return it (200) — not a misleading 500.
+      const persisted = settingsDoc({
+        id: 'winner',
+        enabled: true,
+        host: 'smtp.corp.example',
+        username: 'relay-user',
+        passwordEnc: 'winner-ciphertext',
+      });
+      mockPrismaFunctions.mailSettings.findUnique
+        .mockResolvedValueOnce(null) // pre-write existing lookup
+        .mockResolvedValueOnce(persisted); // convergence re-read after P2002
+      mockPrismaFunctions.mailSettings.upsert.mockRejectedValue(prismaError('P2002'));
+
+      const response = await agent
+        .put('/api/mail-settings')
+        .send(
+          validBody({
+            enabled: true,
+            host: 'smtp.corp.example',
+            username: 'relay-user',
+            password: 'concurrent-secret',
+          })
+        );
+
+      // Converged cleanly to 200 with the persisted singleton — NOT a 500.
+      expect(response.status).toBe(200);
+      // The re-read happened: findUnique was called a SECOND time on the singleton key.
+      expect(mockPrismaFunctions.mailSettings.findUnique).toHaveBeenCalledTimes(2);
+      expect(mockPrismaFunctions.mailSettings.findUnique).toHaveBeenLastCalledWith({
+        where: { singleton: 'singleton' },
+      });
+      // Masked shape via the SAME serializer as the normal path: hasPassword only,
+      // and NEVER the stored ciphertext or a plaintext password — no secret material
+      // leaks into the convergence body.
+      expect(response.body.hasPassword).toBe(true);
+      expect(response.body).not.toHaveProperty('passwordEnc');
+      expect(response.body).not.toHaveProperty('password');
+      expect(JSON.stringify(response.body)).not.toContain('winner-ciphertext');
+      expect(JSON.stringify(response.body)).not.toContain('concurrent-secret');
+      expect(response.body).toMatchObject({
+        enabled: true,
+        host: 'smtp.corp.example',
+        username: 'relay-user',
+      });
+    });
+
+    test('a NON-P2002 upsert rejection still returns 500 and does not re-read', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockPrismaFunctions.mailSettings.findUnique.mockResolvedValue(null); // existing lookup
+      // A different write failure (not the unique-constraint race) must keep the
+      // existing 500 behavior and must NOT trigger the convergence re-read.
+      mockPrismaFunctions.mailSettings.upsert.mockRejectedValue(prismaError('P2000'));
+      // The 500 path logs the underlying error; keep the test output clean.
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+      try {
+        const response = await agent
+          .put('/api/mail-settings')
+          .send(validBody({ host: 'smtp.corp.example' }));
+
+        expect(response.status).toBe(500);
+        expect(response.body).toHaveProperty('error');
+        // No convergence re-read for a non-P2002 error: findUnique ran ONCE (the
+        // pre-write existing lookup) and was not called again.
+        expect(mockPrismaFunctions.mailSettings.findUnique).toHaveBeenCalledTimes(1);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
     test('rejects enabled=true with an empty host (400) and never writes', async () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
-      mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(null);
+      mockPrismaFunctions.mailSettings.findUnique.mockResolvedValue(null);
 
       const response = await agent.put('/api/mail-settings').send(validBody({ enabled: true, host: '' }));
 
@@ -267,7 +351,7 @@ describe('Mail settings API', () => {
 
     test('encrypts and stores a NEW password (set path); ciphertext != plaintext', async () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
-      mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(settingsDoc({ id: 's1', passwordEnc: '' }));
+      mockPrismaFunctions.mailSettings.findUnique.mockResolvedValue(settingsDoc({ id: 's1', passwordEnc: '' }));
 
       const response = await agent
         .put('/api/mail-settings')
@@ -286,9 +370,9 @@ describe('Mail settings API', () => {
       expect(response.body.hasPassword).toBe(true);
     });
 
-    test('KEEPS the existing password when none is provided (keep path)', async () => {
+    test('KEEPS the existing password when none is provided (keep path): update OMITS passwordEnc, create carries it', async () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
-      mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(
+      mockPrismaFunctions.mailSettings.findUnique.mockResolvedValue(
         settingsDoc({ id: 's1', username: 'relay-user', passwordEnc: 'EXISTING_ENC' })
       );
 
@@ -297,13 +381,19 @@ describe('Mail settings API', () => {
         .send(validBody({ username: 'relay-user' })); // no password key
 
       expect(response.status).toBe(200);
-      const savedData = mockPrismaFunctions.mailSettings.upsert.mock.calls[0][0].update;
-      expect(savedData.passwordEnc).toBe('EXISTING_ENC');
+      const call = mockPrismaFunctions.mailSettings.upsert.mock.calls[0][0];
+      // KEEP: the UPDATE payload OMITS passwordEnc entirely, so Prisma leaves the
+      // stored ciphertext untouched — a password a concurrent admin changed between
+      // our read and our write is NOT clobbered (lost update). CREATE (first-ever
+      // save, nothing to clobber) still carries the kept ciphertext.
+      expect(call.update).not.toHaveProperty('passwordEnc');
+      expect('passwordEnc' in call.update).toBe(false);
+      expect(call.create.passwordEnc).toBe('EXISTING_ENC');
     });
 
-    test('treats an empty-string password as "keep" (not a wipe)', async () => {
+    test('treats an empty-string password as "keep" (not a wipe): update OMITS passwordEnc', async () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
-      mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(
+      mockPrismaFunctions.mailSettings.findUnique.mockResolvedValue(
         settingsDoc({ id: 's1', username: 'relay-user', passwordEnc: 'EXISTING_ENC' })
       );
 
@@ -312,13 +402,16 @@ describe('Mail settings API', () => {
         .send(validBody({ username: 'relay-user', password: '' }));
 
       expect(response.status).toBe(200);
-      const savedData = mockPrismaFunctions.mailSettings.upsert.mock.calls[0][0].update;
-      expect(savedData.passwordEnc).toBe('EXISTING_ENC');
+      const call = mockPrismaFunctions.mailSettings.upsert.mock.calls[0][0];
+      // Empty-string password is a KEEP, not a change: UPDATE omits passwordEnc,
+      // CREATE keeps the existing ciphertext.
+      expect(call.update).not.toHaveProperty('passwordEnc');
+      expect(call.create.passwordEnc).toBe('EXISTING_ENC');
     });
 
     test('WIPES the stored password when the username is saved empty (wipe path)', async () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
-      mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(
+      mockPrismaFunctions.mailSettings.findUnique.mockResolvedValue(
         settingsDoc({ id: 's1', username: 'relay-user', passwordEnc: 'EXISTING_ENC' })
       );
 
@@ -331,7 +424,7 @@ describe('Mail settings API', () => {
 
     test('an empty username wins over a provided password (wipe precedence)', async () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
-      mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(
+      mockPrismaFunctions.mailSettings.findUnique.mockResolvedValue(
         settingsDoc({ id: 's1', username: 'relay-user', passwordEnc: 'EXISTING_ENC' })
       );
 
@@ -346,7 +439,7 @@ describe('Mail settings API', () => {
 
     test('trims host/username/from/subjectTemplate before saving', async () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
-      mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(settingsDoc({ id: 's1' }));
+      mockPrismaFunctions.mailSettings.findUnique.mockResolvedValue(settingsDoc({ id: 's1' }));
 
       await agent.put('/api/mail-settings').send(
         validBody({
@@ -373,7 +466,7 @@ describe('Mail settings API', () => {
       ['an empty from', { from: '   ' }],
     ])('rejects %s with 400 and does not write', async (_label, override) => {
       const { agent } = await loginAsUser(app, 'ADMIN');
-      mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(null);
+      mockPrismaFunctions.mailSettings.findUnique.mockResolvedValue(null);
 
       const response = await agent.put('/api/mail-settings').send(validBody(override));
 
@@ -383,7 +476,7 @@ describe('Mail settings API', () => {
 
     test('returns ONLY the first concise Zod issue message on a validation failure (house pattern, not the whole ZodError dump)', async () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
-      mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(null);
+      mockPrismaFunctions.mailSettings.findUnique.mockResolvedValue(null);
 
       const response = await agent.put('/api/mail-settings').send(validBody({ language: 'de' }));
 

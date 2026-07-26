@@ -17,14 +17,9 @@ import { requireRole } from '../middleware/auth';
 import { updateMailSettingsSchema, mailTestSendSchema } from '../utils/validation';
 import { encrypt } from '../utils/secretbox';
 import { sendTestMail } from '../utils/mailer';
-import { MAIL_SETTINGS_DEFAULTS, type MailSettingsRecord } from '../config/mail';
+import { MAIL_SETTINGS_DEFAULTS, MAIL_SETTINGS_SINGLETON, type MailSettingsRecord } from '../config/mail';
 
 const router = Router();
-
-// The constant value of the DB-enforced unique `singleton` discriminator (see
-// prisma/schema.prisma). The PUT write upserts on this key so the collection holds
-// at most one document even under concurrent first-saves.
-const SINGLETON_KEY = 'singleton';
 
 // The subset of a MailSettings document (or the in-code defaults) that leaves the
 // server. CRITICAL: `passwordEnc`/`password` are omitted; only a `hasPassword`
@@ -48,7 +43,7 @@ function serializeMailSettings(record: MailSettingsRecord | null) {
 // GET the current (masked) settings, or the in-code defaults when none saved yet.
 router.get('/', requireRole(Role.ADMIN), async (req, res) => {
   try {
-    const doc = await prisma.mailSettings.findFirst();
+    const doc = await prisma.mailSettings.findUnique({ where: { singleton: MAIL_SETTINGS_SINGLETON } });
     res.json(serializeMailSettings(doc));
   } catch (error) {
     console.error('Error fetching mail settings:', error);
@@ -79,9 +74,18 @@ router.put('/', requireRole(Role.ADMIN), async (req, res) => {
   }
 
   try {
-    const existing = await prisma.mailSettings.findFirst();
+    const existing = await prisma.mailSettings.findUnique({ where: { singleton: MAIL_SETTINGS_SINGLETON } });
 
-    // Password ciphertext to persist:
+    // Does this save INTEND to change the stored password? TRUE on a WIPE (username
+    // saved empty -> drop the secret) or a SET (a new non-empty password); FALSE in
+    // the KEEP case (a username with no new password). This flag gates whether the
+    // upsert UPDATE writes passwordEnc at all — see the upsert below.
+    const changesPassword =
+      data.username.length === 0 || (data.password !== undefined && data.password.length > 0);
+
+    // Password ciphertext to persist. The upsert UPDATE OMITS passwordEnc in the KEEP
+    // case to avoid clobbering a concurrent change (see below): there this value is
+    // only the ciphertext read at the top of THIS request and is NOT written back.
     //   - username saved empty  -> wipe any stored password (no auth without a user)
     //   - password present+non-empty -> encrypt and store the new secret
     //   - password absent/empty -> keep whatever is already stored
@@ -106,20 +110,56 @@ router.put('/', requireRole(Role.ADMIN), async (req, res) => {
       subjectTemplate: data.subjectTemplate,
     };
 
+    // The UPDATE payload is every field EXCEPT passwordEnc, with passwordEnc added
+    // back ONLY when this request changes it (SET or WIPE). Omitting it in the KEEP
+    // case leaves the stored ciphertext untouched (Prisma skips omitted fields), so a
+    // password another admin changed between our read and our write is NOT clobbered
+    // (a lost update). CREATE always writes the full `values` (see below).
+    const { passwordEnc: _omitPasswordEnc, ...valuesWithoutPassword } = values;
+    const updateValues = {
+      ...valuesWithoutPassword,
+      ...(changesPassword ? { passwordEnc } : {}),
+    };
+
     // Atomic singleton write: upsert on the DB-enforced unique `singleton` key so
     // two concurrent first-saves converge to exactly ONE document. The unique index
     // guarantees the invariant even when both requests race to create — the loser
-    // fails the constraint instead of inserting a duplicate, non-healing config doc.
-    // `singleton` is set by its schema default on create and left untouched on
-    // update, so it never appears in `values`.
+    // fails the unique constraint (Prisma error P2002) instead of inserting a
+    // duplicate, non-healing config doc. On that P2002 the winner has ALREADY
+    // persisted the singleton, so the loser re-reads it and returns the persisted
+    // document with 200 (see the catch below): both concurrent callers converge
+    // cleanly rather than the loser receiving a misleading 500. `singleton` is set by
+    // its schema default on create and left untouched on update, so it never appears
+    // in `values`. CREATE always writes the full `values` (with passwordEnc): the
+    // first-ever save has no stored value to clobber and the column is non-null.
     const saved = await prisma.mailSettings.upsert({
-      where: { singleton: SINGLETON_KEY },
+      where: { singleton: MAIL_SETTINGS_SINGLETON },
       create: values,
-      update: values,
+      update: updateValues,
     });
 
     res.json(serializeMailSettings(saved));
   } catch (error) {
+    // Convergence on a lost first-save race: a concurrent creator won the unique
+    // `singleton` key and this request's create hit P2002. The one document already
+    // exists, so re-read it and return it with 200 — through the SAME masked
+    // serializer the normal path uses, so the stored `passwordEnc` is NEVER exposed —
+    // instead of a spurious 500. P2002 is detected with the repo's duck-typed `.code`
+    // check (mirrors the routes/departments.ts duplicate-name path). A null re-read
+    // (should not happen after a P2002) or a re-read that itself fails falls through
+    // to the existing 500, and any NON-P2002 error keeps the existing 500 behavior.
+    if (error && typeof error === 'object' && (error as { code?: string }).code === 'P2002') {
+      try {
+        const reread = await prisma.mailSettings.findUnique({
+          where: { singleton: MAIL_SETTINGS_SINGLETON },
+        });
+        if (reread) {
+          return res.json(serializeMailSettings(reread));
+        }
+      } catch (rereadError) {
+        console.error('Error re-reading mail settings after concurrent create (P2002):', rereadError);
+      }
+    }
     // A non-Zod failure (DB write, encrypt) is a server error — never a 400.
     console.error('Error saving mail settings:', error);
     res.status(500).json({ error: 'Internal server error' });

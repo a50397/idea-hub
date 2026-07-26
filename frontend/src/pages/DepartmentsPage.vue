@@ -104,6 +104,7 @@
             <v-combobox
               :model-value="formEmails"
               @update:model-value="normalizeEmails"
+              @keydown.enter.prevent
               :label="$t('departments.notificationEmails')"
               variant="outlined"
               multiple

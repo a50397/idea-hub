@@ -79,6 +79,37 @@ function setEditEmails(wrapper: VueWrapper, value: string[]) {
   editCombobox(wrapper).vm.$emit('update:modelValue', value);
 }
 
+// The combobox's real <input>. A native keydown is used (below) so the event can
+// carry key/composition flags and expose defaultPrevented — neither of which
+// @vue/test-utils' trigger() surfaces.
+function comboboxInput(wrapper: VueWrapper): HTMLInputElement {
+  return editCombobox(wrapper).find('input').element as HTMLInputElement;
+}
+
+// Simulate typing a not-yet-committed address into the combobox's search field so
+// Vuetify has pending text to turn into a chip on Enter.
+function typeInEmails(wrapper: VueWrapper, text: string): HTMLInputElement {
+  const input = comboboxInput(wrapper);
+  input.value = text;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  return input;
+}
+
+// Dispatch a native Enter keydown on the field and return the event so the caller
+// can read defaultPrevented. `isComposing` reproduces the fast-typing IME state in
+// which Vuetify's own combobox handler bails out and skips its own preventDefault.
+function pressEnter(input: HTMLInputElement, isComposing = false): KeyboardEvent {
+  const ev = new window.KeyboardEvent('keydown', {
+    key: 'Enter',
+    code: 'Enter',
+    bubbles: true,
+    cancelable: true,
+    isComposing,
+  });
+  input.dispatchEvent(ev);
+  return ev;
+}
+
 describe('DepartmentsPage', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
@@ -246,6 +277,52 @@ describe('DepartmentsPage', () => {
     await flushPromises();
 
     expect(editCombobox(wrapper).props('modelValue')).toEqual(['a@x.com', 'b@y.com']);
+  });
+
+  it('commits a chip on Enter in the emails combobox without saving or closing the dialog', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+    await flushPromises();
+
+    // Type an address but do NOT press Update; Enter should only turn it into a chip.
+    const input = typeInEmails(wrapper, 'ops@corp.example');
+    await flushPromises();
+
+    const ev = pressEnter(input);
+    await flushPromises();
+
+    // Vuetify's own Enter handling still commits the typed text as a chip...
+    expect(editCombobox(wrapper).props('modelValue')).toEqual(['ops@corp.example']);
+    // ...while the browser's implicit form submission (Enter's default action) is
+    // prevented, so the edit form never submits: update is not called and the
+    // dialog (its Update button) stays open. This is the root-cause UX bug.
+    expect(ev.defaultPrevented).toBe(true);
+    expect(mockedApi.update).not.toHaveBeenCalled();
+    expect(dialogButton(wrapper, 'Update')).toBeTruthy();
+  });
+
+  it('blocks Enter from submitting the edit form even when the keydown is mid-composition', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+    await flushPromises();
+
+    const input = typeInEmails(wrapper, 'lead@corp.example');
+    await flushPromises();
+
+    // Reproduces the e2e flake: after real per-key typing, the Enter keydown can
+    // still report isComposing=true. Vuetify's combobox handler then returns early
+    // and skips ITS preventDefault, so without the field's own @keydown.enter.prevent
+    // the browser would implicitly submit the form and save-and-close the dialog.
+    const ev = pressEnter(input, true);
+    await flushPromises();
+
+    expect(ev.defaultPrevented).toBe(true);
+    expect(mockedApi.update).not.toHaveBeenCalled();
+    expect(dialogButton(wrapper, 'Update')).toBeTruthy();
   });
 
   it('surfaces a backend 409 when a delete is blocked', async () => {

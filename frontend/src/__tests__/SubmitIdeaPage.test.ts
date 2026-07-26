@@ -75,6 +75,37 @@ async function submit(wrapper: VueWrapper) {
   await flushPromises();
 }
 
+// The tags combobox's real <input>. A native keydown is used (below) so the event
+// can carry key/composition flags and expose defaultPrevented — neither of which
+// @vue/test-utils' trigger() surfaces.
+function tagsInput(wrapper: VueWrapper): HTMLInputElement {
+  return wrapper.findComponent({ name: 'VCombobox' }).find('input').element as HTMLInputElement;
+}
+
+// Simulate typing a not-yet-committed tag into the combobox's search field so
+// Vuetify has pending text to turn into a chip on Enter.
+function typeInTags(wrapper: VueWrapper, text: string): HTMLInputElement {
+  const input = tagsInput(wrapper);
+  input.value = text;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  return input;
+}
+
+// Dispatch a native Enter keydown on the field and return the event so the caller
+// can read defaultPrevented. `isComposing` reproduces the fast-typing IME state in
+// which Vuetify's own combobox handler bails out and skips its own preventDefault.
+function pressEnter(input: HTMLInputElement, isComposing = false): KeyboardEvent {
+  const ev = new window.KeyboardEvent('keydown', {
+    key: 'Enter',
+    code: 'Enter',
+    bubbles: true,
+    cancelable: true,
+    isComposing,
+  });
+  input.dispatchEvent(ev);
+  return ev;
+}
+
 describe('SubmitIdeaPage', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
@@ -215,5 +246,44 @@ describe('SubmitIdeaPage', () => {
 
     expect(mockedIdeas.create).toHaveBeenCalledTimes(1);
     expect(wrapper.text()).toContain('Too many idea submissions. Please try again later.');
+  });
+
+  it('commits a tag chip on Enter without submitting the idea form', async () => {
+    const wrapper = mountPage();
+    // The form is fully valid, so a leaked implicit submit WOULD call create.
+    await fillForm(wrapper, validForm);
+
+    const input = typeInTags(wrapper, 'backend');
+    await flushPromises();
+
+    const ev = pressEnter(input);
+    await flushPromises();
+
+    // Vuetify's own Enter handling still commits the typed text as a chip...
+    expect(wrapper.findComponent({ name: 'VCombobox' }).props('modelValue')).toEqual(['backend']);
+    // ...while Enter's default action (implicit form submission — this form has a
+    // real type="submit" button) is prevented: the idea is NOT submitted.
+    expect(ev.defaultPrevented).toBe(true);
+    expect(mockedIdeas.create).not.toHaveBeenCalled();
+    expect(wrapper.text()).not.toContain('Idea submitted successfully!');
+  });
+
+  it('blocks Enter from submitting the idea even when the keydown is mid-composition', async () => {
+    const wrapper = mountPage();
+    await fillForm(wrapper, validForm);
+
+    const input = typeInTags(wrapper, 'ux');
+    await flushPromises();
+
+    // After real per-key typing the Enter keydown can still report isComposing=true;
+    // Vuetify's combobox handler then returns early and skips ITS preventDefault, so
+    // without the field's own @keydown.enter.prevent the browser would implicitly
+    // submit the whole idea through the form's real type="submit" button.
+    const ev = pressEnter(input, true);
+    await flushPromises();
+
+    expect(ev.defaultPrevented).toBe(true);
+    expect(mockedIdeas.create).not.toHaveBeenCalled();
+    expect(wrapper.text()).not.toContain('Idea submitted successfully!');
   });
 });

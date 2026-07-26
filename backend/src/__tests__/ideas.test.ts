@@ -546,6 +546,25 @@ describe('Ideas API', () => {
       expect(arg.text).not.toContain('A'.repeat(201));
     });
 
+    test('reads the effective mail config exactly ONCE and hands it to sendMail (single read per notification — FIX 4)', async () => {
+      // One identifiable config object: the notification path reads it once (to build
+      // the template) and must pass that SAME object to sendMail as its second arg, so
+      // sendMail does NOT read the settings again — exactly one read per notification.
+      const cfg = { language: 'en', subjectTemplate: '' } as any;
+      mockedGetConfig.mockReset();
+      mockedGetConfig.mockResolvedValue(cfg);
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue(DEPT_WITH_EMAILS);
+
+      const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
+
+      expect(response.status).toBe(201);
+      expect(mockedGetConfig).toHaveBeenCalledTimes(1);
+      expect(mockedSendMail).toHaveBeenCalledTimes(1);
+      expect(mockedSendMail.mock.calls[0][1]).toBe(cfg);
+    });
+
     test('uses Slovak wording (subject + body) for the notification when the settings language is sk', async () => {
       // utils/mail-templates.ts is real; the language now comes from the effective
       // mail config (mocked here) instead of any environment variable.

@@ -9,7 +9,7 @@
 //      missing/invalid key all return null and NEVER throw.
 //   4. The key accepts BOTH 64-char hex (documented default) and 32-byte base64.
 
-import { encrypt, decrypt } from '../utils/secretbox';
+import { encrypt, decrypt, isMailKeyValid } from '../utils/secretbox';
 
 // Two distinct valid 32-byte keys, in hex (the documented form).
 const KEY_A = '00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff';
@@ -125,5 +125,58 @@ describe('encrypt key handling', () => {
   it('rejects a base64 key of the wrong length', () => {
     process.env.MAIL_SETTINGS_KEY = Buffer.from('short').toString('base64');
     expect(() => encrypt('x')).toThrow(/MAIL_SETTINGS_KEY/);
+  });
+});
+
+// isMailKeyValid() is the boot-time guard's format check (index.ts): it returns a
+// boolean for exactly the values loadKey() accepts, reading process.env at CALL
+// TIME (never cached) and NEVER logging the key. Proving true/false here is the
+// unit coverage that lets index.ts reject a MALFORMED key at boot (not just an
+// absent one), so a bad key fails fast instead of 500ing on the first save.
+describe('isMailKeyValid', () => {
+  it('is true for a valid 64-char hex key (the documented default form)', () => {
+    process.env.MAIL_SETTINGS_KEY = KEY_A;
+    expect(isMailKeyValid()).toBe(true);
+  });
+
+  it('is true for a base64 key decoding to exactly 32 bytes', () => {
+    process.env.MAIL_SETTINGS_KEY = Buffer.from(KEY_A, 'hex').toString('base64');
+    expect(isMailKeyValid()).toBe(true);
+  });
+
+  it('is false when the key is unset', () => {
+    delete process.env.MAIL_SETTINGS_KEY;
+    expect(isMailKeyValid()).toBe(false);
+  });
+
+  it('is false when the key is blank / whitespace-only', () => {
+    process.env.MAIL_SETTINGS_KEY = '';
+    expect(isMailKeyValid()).toBe(false);
+    process.env.MAIL_SETTINGS_KEY = '   ';
+    expect(isMailKeyValid()).toBe(false);
+  });
+
+  it("is false for an arbitrary non-key string ('hunter2')", () => {
+    process.env.MAIL_SETTINGS_KEY = 'hunter2';
+    expect(isMailKeyValid()).toBe(false);
+  });
+
+  it('is false for 63 hex chars (one short of a valid hex key)', () => {
+    process.env.MAIL_SETTINGS_KEY = KEY_A.slice(0, 63);
+    expect(isMailKeyValid()).toBe(false);
+  });
+
+  it('is false for 65 hex chars (one over a valid hex key)', () => {
+    process.env.MAIL_SETTINGS_KEY = KEY_A + 'a';
+    expect(isMailKeyValid()).toBe(false);
+  });
+
+  it('is false for a base64 value decoding to a length other than 32 bytes', () => {
+    // 'short' -> 5 bytes decoded, not 32.
+    process.env.MAIL_SETTINGS_KEY = Buffer.from('short').toString('base64');
+    expect(isMailKeyValid()).toBe(false);
+    // A 16-byte value's base64 also decodes to != 32 bytes.
+    process.env.MAIL_SETTINGS_KEY = Buffer.alloc(16, 7).toString('base64');
+    expect(isMailKeyValid()).toBe(false);
   });
 });

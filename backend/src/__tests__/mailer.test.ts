@@ -7,8 +7,8 @@
 // mock) to control the single MailSettings document. nodemailer is mocked. The
 // REAL secretbox is used with a fixed test key so decryption is genuine.
 
-const mockPrisma: { mailSettings: { findFirst: jest.Mock } } = {
-  mailSettings: { findFirst: jest.fn() },
+const mockPrisma: { mailSettings: { findUnique: jest.Mock } } = {
+  mailSettings: { findUnique: jest.fn() },
 };
 
 jest.mock('@prisma/client', () => ({
@@ -22,11 +22,14 @@ jest.mock('nodemailer', () => ({
 import os from 'node:os';
 import nodemailer from 'nodemailer';
 import { sendMail, sendTestMail } from '../utils/mailer';
-import { getEffectiveMailConfig } from '../config/mail';
+// Namespace import so we can jest.spyOn the SAME getEffectiveMailConfig binding the
+// mailer calls internally, to assert a caller-provided override SKIPS the read.
+import * as mailConfig from '../config/mail';
+import { getEffectiveMailConfig, type EffectiveMailConfig } from '../config/mail';
 import { encrypt } from '../utils/secretbox';
 
 const createTransport = nodemailer.createTransport as jest.Mock;
-const findFirst = mockPrisma.mailSettings.findFirst;
+const findUnique = mockPrisma.mailSettings.findUnique;
 
 const DEFAULT_FROM = 'IdeaHub <no-reply@ideahub.local>';
 // 64 hex chars == 32 bytes (the documented hex key form).
@@ -73,7 +76,7 @@ afterAll(() => {
 });
 
 beforeEach(() => {
-  findFirst.mockReset();
+  findUnique.mockReset();
   createTransport.mockReset();
   logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
   errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
@@ -91,7 +94,7 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 describe('getEffectiveMailConfig', () => {
   it('returns disabled defaults when no settings document exists', async () => {
-    findFirst.mockResolvedValue(null);
+    findUnique.mockResolvedValue(null);
     const cfg = await getEffectiveMailConfig();
     expect(cfg.enabled).toBe(false);
     expect(cfg.effectiveEnabled).toBe(false);
@@ -108,7 +111,7 @@ describe('getEffectiveMailConfig', () => {
   });
 
   it('reads host/port/secure/username/from and is effectiveEnabled when enabled with a host', async () => {
-    findFirst.mockResolvedValue(
+    findUnique.mockResolvedValue(
       doc({
         enabled: true,
         host: 'smtp.corp.example',
@@ -129,14 +132,14 @@ describe('getEffectiveMailConfig', () => {
   });
 
   it('is enabled but NOT effectiveEnabled when the host is empty', async () => {
-    findFirst.mockResolvedValue(doc({ enabled: true, host: '' }));
+    findUnique.mockResolvedValue(doc({ enabled: true, host: '' }));
     const cfg = await getEffectiveMailConfig();
     expect(cfg.enabled).toBe(true);
     expect(cfg.effectiveEnabled).toBe(false);
   });
 
   it('decrypts a stored password (roundtrip via the real secretbox)', async () => {
-    findFirst.mockResolvedValue(
+    findUnique.mockResolvedValue(
       doc({ enabled: true, host: 'h', username: 'u', passwordEnc: encrypt('relay-pass') })
     );
     const cfg = await getEffectiveMailConfig();
@@ -146,7 +149,7 @@ describe('getEffectiveMailConfig', () => {
   });
 
   it('tolerates an undecryptable stored password (null-safe, no throw)', async () => {
-    findFirst.mockResolvedValue(
+    findUnique.mockResolvedValue(
       doc({ enabled: true, host: 'h', username: 'u', passwordEnc: 'not-valid-ciphertext' })
     );
     const cfg = await getEffectiveMailConfig();
@@ -156,14 +159,14 @@ describe('getEffectiveMailConfig', () => {
   });
 
   it('normalizes the language (sk kept; unknown falls back to en)', async () => {
-    findFirst.mockResolvedValue(doc({ language: 'sk' }));
+    findUnique.mockResolvedValue(doc({ language: 'sk' }));
     expect((await getEffectiveMailConfig()).language).toBe('sk');
-    findFirst.mockResolvedValue(doc({ language: 'de' }));
+    findUnique.mockResolvedValue(doc({ language: 'de' }));
     expect((await getEffectiveMailConfig()).language).toBe('en');
   });
 
   it('treats a whitespace-only subjectTemplate as empty (built-in subject)', async () => {
-    findFirst.mockResolvedValue(doc({ subjectTemplate: '   ' }));
+    findUnique.mockResolvedValue(doc({ subjectTemplate: '   ' }));
     expect((await getEffectiveMailConfig()).subjectTemplate).toBe('');
   });
 });
@@ -173,7 +176,7 @@ describe('getEffectiveMailConfig', () => {
 // ---------------------------------------------------------------------------
 describe('sendMail (disabled / log-only)', () => {
   it('resolves true and never builds a transport when disabled (no document)', async () => {
-    findFirst.mockResolvedValue(null);
+    findUnique.mockResolvedValue(null);
     await expect(
       sendMail({ to: 'alice@example.com', subject: 'Hello', text: 'Body' })
     ).resolves.toBe(true);
@@ -182,7 +185,7 @@ describe('sendMail (disabled / log-only)', () => {
   });
 
   it('treats enabled-but-no-host as disabled (no transport)', async () => {
-    findFirst.mockResolvedValue(doc({ enabled: true, host: '' }));
+    findUnique.mockResolvedValue(doc({ enabled: true, host: '' }));
     await expect(
       sendMail({ to: 'alice@example.com', subject: 'Hello', text: 'Body' })
     ).resolves.toBe(true);
@@ -191,7 +194,7 @@ describe('sendMail (disabled / log-only)', () => {
   });
 
   it('joins an array of recipients for the disabled log line', async () => {
-    findFirst.mockResolvedValue(null);
+    findUnique.mockResolvedValue(null);
     await expect(
       sendMail({ to: ['a@x.com', 'b@y.com'], subject: 'Hi', text: 'Body' })
     ).resolves.toBe(true);
@@ -204,7 +207,7 @@ describe('sendMail (disabled / log-only)', () => {
 // ---------------------------------------------------------------------------
 describe('sendMail (enabled)', () => {
   it('creates a transport with host/port/secure and NO auth when the username is unset', async () => {
-    findFirst.mockResolvedValue(doc({ enabled: true, host: 'smtp.corp.example', port: 2525 }));
+    findUnique.mockResolvedValue(doc({ enabled: true, host: 'smtp.corp.example', port: 2525 }));
     const send = mockTransport(jest.fn().mockResolvedValue({ messageId: 'x' }));
 
     await expect(
@@ -227,7 +230,7 @@ describe('sendMail (enabled)', () => {
   });
 
   it('includes an auth object (with the decrypted password) only when a username is set', async () => {
-    findFirst.mockResolvedValue(
+    findUnique.mockResolvedValue(
       doc({
         enabled: true,
         host: 'smtp.corp.example',
@@ -245,7 +248,7 @@ describe('sendMail (enabled)', () => {
   });
 
   it('passes secure=true through as implicit TLS', async () => {
-    findFirst.mockResolvedValue(doc({ enabled: true, host: 'smtp.corp.example', secure: true }));
+    findUnique.mockResolvedValue(doc({ enabled: true, host: 'smtp.corp.example', secure: true }));
     mockTransport(jest.fn().mockResolvedValue({}));
 
     await sendMail({ to: 'alice@example.com', subject: 'Hello', text: 'Body' });
@@ -254,7 +257,7 @@ describe('sendMail (enabled)', () => {
   });
 
   it('forwards an array of recipients unchanged to sendMail', async () => {
-    findFirst.mockResolvedValue(doc({ enabled: true, host: 'smtp.corp.example' }));
+    findUnique.mockResolvedValue(doc({ enabled: true, host: 'smtp.corp.example' }));
     const send = mockTransport(jest.fn().mockResolvedValue({}));
 
     await sendMail({ to: ['a@x.com', 'b@y.com'], subject: 'Hi', text: 'Body' });
@@ -263,7 +266,7 @@ describe('sendMail (enabled)', () => {
   });
 
   it('includes html only when provided', async () => {
-    findFirst.mockResolvedValue(doc({ enabled: true, host: 'smtp.corp.example' }));
+    findUnique.mockResolvedValue(doc({ enabled: true, host: 'smtp.corp.example' }));
     const send = mockTransport(jest.fn().mockResolvedValue({}));
 
     await sendMail({ to: 'alice@example.com', subject: 'Hello', text: 'Body', html: '<p>Body</p>' });
@@ -272,7 +275,7 @@ describe('sendMail (enabled)', () => {
   });
 
   it('warns (without logging the secret) on an undecryptable stored password and sends without it', async () => {
-    findFirst.mockResolvedValue(
+    findUnique.mockResolvedValue(
       doc({
         enabled: true,
         host: 'smtp.corp.example',
@@ -307,7 +310,7 @@ describe('sendMail (subject sanitization)', () => {
   const LF = String.fromCharCode(10);
 
   it('folds CR/LF out of the subject before handing it to transport (header-injection defense); boolean unaffected', async () => {
-    findFirst.mockResolvedValue(doc({ enabled: true, host: 'smtp.corp.example' }));
+    findUnique.mockResolvedValue(doc({ enabled: true, host: 'smtp.corp.example' }));
     const send = mockTransport(jest.fn().mockResolvedValue({}));
 
     // A newline in a user-controlled idea title trying to smuggle an extra header.
@@ -329,7 +332,7 @@ describe('sendMail (subject sanitization)', () => {
   });
 
   it('folds CR/LF out of the subject in the [MAIL disabled] log line too (log-injection defense)', async () => {
-    findFirst.mockResolvedValue(null); // disabled -> log-only path, no transport
+    findUnique.mockResolvedValue(null); // disabled -> log-only path, no transport
 
     await expect(
       sendMail({
@@ -353,7 +356,7 @@ describe('sendMail (subject sanitization)', () => {
 // ---------------------------------------------------------------------------
 describe('sendMail (failure is swallowed)', () => {
   beforeEach(() => {
-    findFirst.mockResolvedValue(doc({ enabled: true, host: 'smtp.corp.example' }));
+    findUnique.mockResolvedValue(doc({ enabled: true, host: 'smtp.corp.example' }));
   });
 
   it('resolves false and logs when transport.sendMail rejects', async () => {
@@ -391,7 +394,7 @@ describe('sendMail (failure is swallowed)', () => {
 // ---------------------------------------------------------------------------
 describe('sendMail (settings read failure)', () => {
   it('resolves false and logs, never building a transport, when the settings read rejects', async () => {
-    findFirst.mockRejectedValue(new Error('mongo unreachable'));
+    findUnique.mockRejectedValue(new Error('mongo unreachable'));
 
     await expect(
       sendMail({ to: 'alice@example.com', subject: 'Hello', text: 'Body' })
@@ -406,6 +409,131 @@ describe('sendMail (settings read failure)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// utils/mailer.ts — sendMail(options, cfgOverride): FIX 4 — the caller (the idea
+// notification path) already read the effective config to build the template, so it
+// passes that SAME config through and sendMail must NOT read it again. When the
+// override is provided, getEffectiveMailConfig is never called (proven via a spy)
+// and no DB read happens (findUnique untouched); every other guarantee is identical
+// to the self-read path. Without an override, the self-read behavior is unchanged.
+// ---------------------------------------------------------------------------
+describe('sendMail (caller-provided config override — FIX 4: single read)', () => {
+  let cfgSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    // Spy on the exact binding sendMail calls internally. Left calling through so the
+    // no-override test still reads the (mocked) DB via the real getEffectiveMailConfig.
+    cfgSpy = jest.spyOn(mailConfig, 'getEffectiveMailConfig');
+  });
+
+  afterEach(() => {
+    cfgSpy.mockRestore();
+  });
+
+  /** A full EffectiveMailConfig (enabled defaults) the caller would hand through. */
+  function effCfg(overrides: Partial<EffectiveMailConfig> = {}): EffectiveMailConfig {
+    return {
+      enabled: true,
+      effectiveEnabled: true,
+      host: 'smtp.override.example',
+      port: 2525,
+      secure: false,
+      user: '',
+      pass: '',
+      from: DEFAULT_FROM,
+      language: 'en',
+      subjectTemplate: '',
+      hasPassword: false,
+      passwordDecryptable: false,
+      ...overrides,
+    };
+  }
+
+  it('uses an ENABLED override and does NOT read the settings again (getEffectiveMailConfig + DB untouched)', async () => {
+    const send = mockTransport(jest.fn().mockResolvedValue({ messageId: 'x' }));
+
+    await expect(
+      sendMail(
+        { to: 'alice@example.com', subject: 'Hello', text: 'Body' },
+        effCfg({ host: 'smtp.override.example', port: 2525 })
+      )
+    ).resolves.toBe(true);
+
+    // The whole point of FIX 4: no second settings read of any kind.
+    expect(cfgSpy).not.toHaveBeenCalled();
+    expect(findUnique).not.toHaveBeenCalled();
+    // Transport is built from the OVERRIDE config and the send still happens.
+    expect(createTransport).toHaveBeenCalledWith(
+      expect.objectContaining({ host: 'smtp.override.example', port: 2525, secure: false })
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ to: 'alice@example.com', subject: 'Hello', text: 'Body' })
+    );
+  });
+
+  it('authenticates with the override credentials when a user is set — and still never reads again', async () => {
+    mockTransport(jest.fn().mockResolvedValue({}));
+
+    await expect(
+      sendMail(
+        { to: 'alice@example.com', subject: 'Hi', text: 'Body' },
+        effCfg({ user: 'relay-user', pass: 'override-pass' })
+      )
+    ).resolves.toBe(true);
+
+    expect(cfgSpy).not.toHaveBeenCalled();
+    expect(createTransport).toHaveBeenCalledWith(
+      expect.objectContaining({ auth: { user: 'relay-user', pass: 'override-pass' } })
+    );
+  });
+
+  it('honors a DISABLED override: log-only [MAIL disabled], resolves true, no socket, no re-read', async () => {
+    await expect(
+      sendMail(
+        { to: 'alice@example.com', subject: 'Hello', text: 'Body' },
+        effCfg({ enabled: false, effectiveEnabled: false })
+      )
+    ).resolves.toBe(true);
+
+    expect(cfgSpy).not.toHaveBeenCalled();
+    expect(findUnique).not.toHaveBeenCalled();
+    expect(createTransport).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith('[MAIL disabled] to=alice@example.com subject=Hello');
+  });
+
+  it('still sanitizes the subject on the override path (header/log-injection defense preserved)', async () => {
+    const CR = String.fromCharCode(13);
+    const LF = String.fromCharCode(10);
+    const send = mockTransport(jest.fn().mockResolvedValue({}));
+
+    await expect(
+      sendMail(
+        { to: 'alice@example.com', subject: `Legit${CR}${LF}Bcc: evil@x.com`, text: 'Body' },
+        effCfg()
+      )
+    ).resolves.toBe(true);
+
+    const sentSubject = send.mock.calls[0][0].subject as string;
+    expect(sentSubject).not.toContain(CR);
+    expect(sentSubject).not.toContain(LF);
+    expect(sentSubject).toBe('Legit Bcc: evil@x.com');
+  });
+
+  it('WITHOUT an override still reads the settings itself (unchanged self-read behavior)', async () => {
+    findUnique.mockResolvedValue(doc({ enabled: true, host: 'smtp.corp.example' }));
+    mockTransport(jest.fn().mockResolvedValue({}));
+
+    await expect(
+      sendMail({ to: 'alice@example.com', subject: 'Hello', text: 'Body' })
+    ).resolves.toBe(true);
+
+    // The self-read path runs: getEffectiveMailConfig IS invoked, which reads the DB.
+    expect(cfgSpy).toHaveBeenCalledTimes(1);
+    expect(findUnique).toHaveBeenCalledTimes(1);
+    expect(createTransport).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // utils/mailer.ts — sendTestMail(): STRUCTURED diagnostic result for the ADMIN
 // "Send test email" button. Mirrors sendMail's config-read + transport-build but
 // returns { status } instead of a boolean, and maps a failure to a FIXED reason
@@ -413,19 +541,19 @@ describe('sendMail (settings read failure)', () => {
 // ---------------------------------------------------------------------------
 describe('sendTestMail (disabled / not sent)', () => {
   it('returns { status: disabled } and opens NO socket when disabled (no document)', async () => {
-    findFirst.mockResolvedValue(null);
+    findUnique.mockResolvedValue(null);
     await expect(sendTestMail('ops@corp.example')).resolves.toEqual({ status: 'disabled' });
     expect(createTransport).not.toHaveBeenCalled();
   });
 
   it('treats enabled-but-no-host as disabled (no transport, no socket)', async () => {
-    findFirst.mockResolvedValue(doc({ enabled: true, host: '' }));
+    findUnique.mockResolvedValue(doc({ enabled: true, host: '' }));
     await expect(sendTestMail('ops@corp.example')).resolves.toEqual({ status: 'disabled' });
     expect(createTransport).not.toHaveBeenCalled();
   });
 
   it('returns { status: failed, reason: config_error } when the settings read throws (no socket)', async () => {
-    findFirst.mockRejectedValue(new Error('mongo unreachable'));
+    findUnique.mockRejectedValue(new Error('mongo unreachable'));
     await expect(sendTestMail('ops@corp.example')).resolves.toEqual({
       status: 'failed',
       reason: 'config_error',
@@ -440,7 +568,7 @@ describe('sendTestMail (disabled / not sent)', () => {
 
 describe('sendTestMail (real send path)', () => {
   it('returns { status: sent } and builds the same transport shape as a real send', async () => {
-    findFirst.mockResolvedValue(doc({ enabled: true, host: 'smtp.corp.example', port: 2525 }));
+    findUnique.mockResolvedValue(doc({ enabled: true, host: 'smtp.corp.example', port: 2525 }));
     const send = mockTransport(jest.fn().mockResolvedValue({ messageId: 'x' }));
 
     await expect(sendTestMail('ops@corp.example')).resolves.toEqual({ status: 'sent' });
@@ -454,7 +582,7 @@ describe('sendTestMail (real send path)', () => {
   });
 
   it('authenticates with the decrypted password when a username is configured', async () => {
-    findFirst.mockResolvedValue(
+    findUnique.mockResolvedValue(
       doc({
         enabled: true,
         host: 'smtp.corp.example',
@@ -473,7 +601,7 @@ describe('sendTestMail (real send path)', () => {
 
 describe('sendTestMail (error -> fixed reason category)', () => {
   beforeEach(() => {
-    findFirst.mockResolvedValue(doc({ enabled: true, host: 'smtp.corp.example' }));
+    findUnique.mockResolvedValue(doc({ enabled: true, host: 'smtp.corp.example' }));
   });
 
   // Each thrown error's .code (the nodemailer "type") maps to exactly one fixed
@@ -562,7 +690,7 @@ describe('sendTestMail (SECURITY: no secret leaks into the structured result)', 
   const SENTINEL_HOST = 'sentinel-smtp-host.internal';
 
   it('an EAUTH failure returns only { status: failed, reason: auth_failed } with no config or error text', async () => {
-    findFirst.mockResolvedValue(
+    findUnique.mockResolvedValue(
       doc({
         enabled: true,
         host: SENTINEL_HOST,

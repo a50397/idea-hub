@@ -67,8 +67,10 @@ http://localhost:8025 (subject, from, to, and the rendered body).
   (`An SMTP host is required when outbound email is enabled`) — this replaces the old
   boot-time check.
 - **Best-effort test send**: point the host at a black hole (e.g. `127.0.0.1` port
-  `1`, or `192.0.2.1`) and click **Send test email** — the result is reported as a
-  failure (`ok:false`) after the send fails/times out, and no request ever crashes.
+  `1`, or `192.0.2.1`) and click **Send test email** — the result comes back as
+  `status: 'failed'` with a reason category (e.g. `connection_refused` or `timeout`)
+  after the send fails/times out, and no request ever crashes. A disabled or
+  host-less config instead reports `status: 'disabled'` (nothing is sent).
 - **Password is write-only**: the password field is never populated from the server;
   the API returns only whether a password is stored (`hasPassword`). The stored value
   is AES-256-GCM ciphertext — the plaintext never leaves the browser after Save and

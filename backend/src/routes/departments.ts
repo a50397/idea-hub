@@ -144,6 +144,15 @@ router.patch('/:id', requireRole(Role.ADMIN), async (req, res) => {
     const id = idParsed.data;
     const { name, notificationEmails } = updateDepartmentSchema.parse(req.body);
 
+    // Reject an empty update fast: both fields are optional in the schema, so an
+    // empty `{}` body (or one of only unknown keys Zod strips) parses OK yet would
+    // reach prisma.update with `data: {}`, turning a client mistake into a 500/no-op.
+    if (name === undefined && notificationEmails === undefined) {
+      return res
+        .status(400)
+        .json({ error: 'At least one field to update is required (name or notificationEmails)' });
+    }
+
     const existing = await prisma.department.findUnique({ where: { id } });
     if (!existing) {
       return res.status(404).json({ error: 'Department not found' });

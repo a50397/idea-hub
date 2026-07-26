@@ -159,7 +159,8 @@ model IdeaStep {
 }
 
 // Admin-UI-managed outbound mail configuration. A SINGLETON: the read path is
-// findFirst() ?? in-code defaults, and a save upserts the one document, so an
+// findUnique() by the unique `singleton` key ?? in-code defaults, and a save
+// upserts the one document, so an
 // absent document simply means "mail disabled with defaults" (no boot seed).
 // This is a NEW collection, so there are no legacy missing-field concerns.
 //

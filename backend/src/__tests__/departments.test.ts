@@ -367,6 +367,34 @@ describe('Departments API', () => {
       expect(response.status).toBe(400);
       expect(mockPrismaFunctions.department.findUnique).not.toHaveBeenCalled();
     });
+
+    test('an empty body returns 400 (nothing to update) and never writes', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      // Both fields are optional in the schema, so `{}` parses OK; the route must
+      // reject it fast rather than reach prisma.update with an empty `data: {}`.
+      const response = await agent.patch(`/api/departments/${VALID_ID}`).send({});
+
+      expect(response.status).toBe(400);
+      expect(response.body).toEqual({
+        error: 'At least one field to update is required (name or notificationEmails)',
+      });
+      expect(mockPrismaFunctions.department.update).not.toHaveBeenCalled();
+      // Fails fast, before the existence lookup.
+      expect(mockPrismaFunctions.department.findUnique).not.toHaveBeenCalled();
+    });
+
+    test('a body of only unknown keys returns 400 (Zod strips them to an empty update) and never writes', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      // Unknown keys are stripped by the (non-strict) schema, leaving both optional
+      // fields undefined — the same empty-update case, so it also 400s and never writes.
+      const response = await agent
+        .patch(`/api/departments/${VALID_ID}`)
+        .send({ bogus: 'x', anotherUnknown: 123 });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty('error');
+      expect(mockPrismaFunctions.department.update).not.toHaveBeenCalled();
+    });
   });
 
   describe('PATCH /api/departments/:id — notification emails', () => {

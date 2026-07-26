@@ -53,6 +53,21 @@ function loadKey(): Buffer | null {
 }
 
 /**
+ * Boot-time validity check for MAIL_SETTINGS_KEY. Returns true only when the key
+ * currently resolves to a usable 32-byte value (64-char hex, or base64 decoding to
+ * exactly 32 bytes) — i.e. exactly the values encrypt()/decrypt() can use.
+ *
+ * Reuses the private loadKey() and reads process.env AT CALL TIME (never cached),
+ * so index.ts validates the ACTUAL key the cipher will consume — not merely that
+ * the variable is set. This lets the boot guard reject a malformed key up front
+ * instead of letting it 500 on the first SMTP-password save (encrypt() throws when
+ * the key is unusable). Returns a boolean only; the key itself is NEVER logged.
+ */
+export function isMailKeyValid(): boolean {
+  return loadKey() !== null;
+}
+
+/**
  * Encrypt a UTF-8 plaintext, returning `base64(iv).base64(tag).base64(ct)`.
  *
  * A fresh random IV is generated per call, so encrypting the same plaintext twice

@@ -148,9 +148,12 @@ describe('mail settings (real DB)', () => {
       withCsrf(admin.put('/api/mail-settings')).send(body),
     ]);
 
-    // At least one save completes cleanly. The loser may fail the unique constraint
-    // (surfaced as a non-200), but it can NEVER insert a duplicate document.
-    expect([a.status, b.status]).toContain(200);
+    // BOTH saves now converge cleanly to 200: the winner creates the one document;
+    // the loser either updates it or, if it lost the unique-`singleton` race (P2002),
+    // re-reads the winner's persisted document and returns it. Neither caller receives
+    // a spurious 500 anymore, and neither can ever insert a duplicate document.
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
 
     // The invariant: exactly ONE document — via Prisma AND a raw find that bypasses
     // Prisma's projection (same mechanism rawMailSettingsDoc uses).

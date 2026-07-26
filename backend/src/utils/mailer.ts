@@ -21,7 +21,7 @@
 
 import { getSystemErrorName } from 'node:util';
 import nodemailer from 'nodemailer';
-import { getEffectiveMailConfig } from '../config/mail';
+import { getEffectiveMailConfig, type EffectiveMailConfig } from '../config/mail';
 
 // Conservative SMTP timeouts (ms). A dead/blackholed relay fails fast instead of
 // holding a socket open. Applied to connect, greeting, and idle socket.
@@ -45,19 +45,32 @@ function sanitizeSubject(subject: string): string {
   return subject.replace(/[\u0000-\u001F\u007F]+/g, ' ').trim();
 }
 
-export async function sendMail(options: SendMailOptions): Promise<boolean> {
+export async function sendMail(
+  options: SendMailOptions,
+  cfgOverride?: EffectiveMailConfig
+): Promise<boolean> {
   const toDisplay = Array.isArray(options.to) ? options.to.join(', ') : options.to;
   // Sanitize once, up front, so the folded subject is what reaches BOTH every
   // '[MAIL ...]' log line below and nodemailer's transport.sendMail.
   const subject = sanitizeSubject(options.subject);
 
-  let cfg;
-  try {
-    cfg = await getEffectiveMailConfig();
-  } catch (err) {
-    // Database unreachable (or any settings-read failure): stay best-effort.
-    console.error(`[MAIL] settings read failed to=${toDisplay} subject=${subject}:`, err);
-    return false;
+  let cfg: EffectiveMailConfig;
+  if (cfgOverride !== undefined) {
+    // The caller already read the effective config (e.g. to build the notification
+    // template) and hands that SAME in-memory object through, so we do NOT read it a
+    // second time. This is a pure pass-through of a config the caller already holds —
+    // no new trust surface, no new secret exposure. Every guarantee below is identical
+    // to the self-read path (never throws/rejects, log-only when disabled, fresh
+    // transport per send, secret never logged, subject sanitized).
+    cfg = cfgOverride;
+  } else {
+    try {
+      cfg = await getEffectiveMailConfig();
+    } catch (err) {
+      // Database unreachable (or any settings-read failure): stay best-effort.
+      console.error(`[MAIL] settings read failed to=${toDisplay} subject=${subject}:`, err);
+      return false;
+    }
   }
 
   if (!cfg.effectiveEnabled) {
@@ -104,8 +117,9 @@ export async function sendMail(options: SendMailOptions): Promise<boolean> {
 // ---------------------------------------------------------------------------
 // ADMIN diagnostic test-send (POST /api/mail-settings/test).
 //
-// sendMail() above is intentionally left BYTE-UNCHANGED: the fire-and-forget
-// notification path keeps its opaque boolean, never-throw contract. The admin
+// sendMail() above keeps its opaque boolean, never-throw contract for the
+// fire-and-forget notification path (its only addition is an OPTIONAL caller-
+// supplied config override that changes nothing about its guarantees). The admin
 // "Send test email" button, however, needs to EXPLAIN a failure, so this
 // dedicated path mirrors sendMail's config-read + transport-build (a REAL send)
 // but returns a STRUCTURED result instead of a boolean.

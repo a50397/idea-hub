@@ -7,8 +7,10 @@
 // is MAIL_SETTINGS_KEY, consumed solely by utils/secretbox.ts for password
 // encryption.
 //
-// Read path: findFirst() ?? in-code defaults, so an absent document means "mail
-// disabled with defaults" (no boot seed is required). Mail stays BEST-EFFORT and
+// Read path: findUnique on the DB-enforced unique `singleton` key ?? in-code
+// defaults, so an absent document means "mail disabled with defaults" (no boot seed
+// is required). Keying the read off the same unique discriminator the PUT upsert
+// writes gives explicit, deterministic singleton semantics. Mail stays BEST-EFFORT and
 // OFF by default: `effectiveEnabled` requires both `enabled` AND a non-empty host,
 // so a half-configured deployment (enabled with no host) degrades to disabled,
 // log-only behavior instead of opening sockets to nowhere. Save-time validation in
@@ -16,6 +18,12 @@
 
 import prisma from '../lib/prisma';
 import { decrypt } from '../utils/secretbox';
+
+// The value of the DB-enforced unique `singleton` discriminator on MailSettings
+// (see prisma/schema.prisma). SINGLE SOURCE OF TRUTH for the key: every singleton
+// read (findUnique here + in routes/mail-settings.ts) and the PUT upsert write key
+// off this exact constant, so reads and writes address the same one document.
+export const MAIL_SETTINGS_SINGLETON = 'singleton';
 
 // Notification-wording language. 'en' is the built-in default (English); 'sk'
 // selects the Slovak wording. Stored on the settings document and validated to the
@@ -84,12 +92,14 @@ export interface EffectiveMailConfig {
 }
 
 /**
- * Read the singleton MailSettings document, or the in-code defaults when none
- * exists yet. May reject if the database is unreachable — the mailer awaits this
- * inside its own try/catch and degrades to a logged failure (never throws).
+ * Read the singleton MailSettings document by its unique `singleton` key, or the
+ * in-code defaults when none exists yet. The unique index guarantees at most one
+ * document, so findUnique is deterministic (and matches the PUT upsert's key). May
+ * reject if the database is unreachable — the mailer awaits this inside its own
+ * try/catch and degrades to a logged failure (never throws).
  */
 export async function getMailSettingsRecord(): Promise<MailSettingsRecord> {
-  const doc = await prisma.mailSettings.findFirst();
+  const doc = await prisma.mailSettings.findUnique({ where: { singleton: MAIL_SETTINGS_SINGLETON } });
   if (!doc) return { ...MAIL_SETTINGS_DEFAULTS };
   return {
     enabled: doc.enabled,
