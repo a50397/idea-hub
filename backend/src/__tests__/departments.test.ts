@@ -136,6 +136,48 @@ describe('Departments API', () => {
       expect(response.status).toBe(401);
       expect(response.body).toHaveProperty('error');
     });
+
+    // notificationEmails is internal admin-only data — visible to ADMIN sessions only.
+    const withEmails = [
+      { id: 'a', name: 'Všeobecné', order: 0, notificationEmails: ['ops@corp.example'], _count: { ideas: 3 } },
+      { id: 'b', name: 'Marketing', order: 1, notificationEmails: [], _count: { ideas: 1 } },
+    ];
+
+    test('includes notificationEmails for an ADMIN session', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockPrismaFunctions.department.findMany.mockResolvedValue(withEmails);
+
+      const response = await agent.get('/api/departments');
+
+      expect(response.status).toBe(200);
+      expect(response.body[0]).toHaveProperty('notificationEmails', ['ops@corp.example']);
+      expect(response.body[1]).toHaveProperty('notificationEmails', []);
+      // Other fields still present.
+      expect(response.body[0]).toMatchObject({ name: 'Všeobecné', _count: { ideas: 3 } });
+    });
+
+    test('omits notificationEmails for a non-admin (USER) session', async () => {
+      const { agent } = await loginAsUser(app, 'USER');
+      mockPrismaFunctions.department.findMany.mockResolvedValue(withEmails);
+
+      const response = await agent.get('/api/departments');
+
+      expect(response.status).toBe(200);
+      expect(response.body[0]).not.toHaveProperty('notificationEmails');
+      expect(response.body[1]).not.toHaveProperty('notificationEmails');
+      // The rest of the shape is unchanged for non-admins.
+      expect(response.body[0]).toMatchObject({ id: 'a', name: 'Všeobecné', order: 0, _count: { ideas: 3 } });
+    });
+
+    test('omits notificationEmails for a POWER_USER session', async () => {
+      const { agent } = await loginAsUser(app, 'POWER_USER');
+      mockPrismaFunctions.department.findMany.mockResolvedValue(withEmails);
+
+      const response = await agent.get('/api/departments');
+
+      expect(response.status).toBe(200);
+      expect(response.body[0]).not.toHaveProperty('notificationEmails');
+    });
   });
 
   describe('role guards on mutations', () => {
@@ -218,14 +260,14 @@ describe('Departments API', () => {
   });
 
   describe('PATCH /api/departments/reorder', () => {
-    test('ADMIN reorders departments, applying order = array index', async () => {
+    test('ADMIN reorders departments (order = array index) and returns the serialized admin shape', async () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
       mockPrismaFunctions.department.findMany
         .mockResolvedValueOnce([{ id: 'a' }, { id: 'b' }, { id: 'c' }])
         .mockResolvedValueOnce([
-          { id: 'c', name: 'C', order: 0, _count: { ideas: 0 } },
-          { id: 'a', name: 'A', order: 1, _count: { ideas: 0 } },
-          { id: 'b', name: 'B', order: 2, _count: { ideas: 0 } },
+          { id: 'c', name: 'C', order: 0, notificationEmails: ['ops@corp.example'], _count: { ideas: 0 } },
+          { id: 'a', name: 'A', order: 1, notificationEmails: [], _count: { ideas: 0 } },
+          { id: 'b', name: 'B', order: 2, notificationEmails: [], _count: { ideas: 0 } },
         ]);
       mockPrismaFunctions.department.update.mockResolvedValue({});
 
@@ -233,7 +275,18 @@ describe('Departments API', () => {
 
       expect(response.status).toBe(200);
       expect(response.body).toHaveLength(3);
-      expect(response.body[0]).toMatchObject({ id: 'c', order: 0 });
+      // The reorder response now flows through serializeDepartment(_, admin=true) —
+      // exactly GET's admin projection — instead of returning the raw findMany. So
+      // the shape carries both _count AND notificationEmails, and no department-
+      // returning path bypasses the one projection.
+      expect(response.body[0]).toMatchObject({
+        id: 'c',
+        name: 'C',
+        order: 0,
+        notificationEmails: ['ops@corp.example'],
+        _count: { ideas: 0 },
+      });
+      expect(response.body[0]).toHaveProperty('notificationEmails');
       expect(mockPrismaFunctions.department.update).toHaveBeenCalledWith({ where: { id: 'c' }, data: { order: 0 } });
       expect(mockPrismaFunctions.department.update).toHaveBeenCalledWith({ where: { id: 'a' }, data: { order: 1 } });
       expect(mockPrismaFunctions.department.update).toHaveBeenCalledWith({ where: { id: 'b' }, data: { order: 2 } });
@@ -313,6 +366,143 @@ describe('Departments API', () => {
 
       expect(response.status).toBe(400);
       expect(mockPrismaFunctions.department.findUnique).not.toHaveBeenCalled();
+    });
+
+    test('an empty body returns 400 (nothing to update) and never writes', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      // Both fields are optional in the schema, so `{}` parses OK; the route must
+      // reject it fast rather than reach prisma.update with an empty `data: {}`.
+      const response = await agent.patch(`/api/departments/${VALID_ID}`).send({});
+
+      expect(response.status).toBe(400);
+      expect(response.body).toEqual({
+        error: 'At least one field to update is required (name or notificationEmails)',
+      });
+      expect(mockPrismaFunctions.department.update).not.toHaveBeenCalled();
+      // Fails fast, before the existence lookup.
+      expect(mockPrismaFunctions.department.findUnique).not.toHaveBeenCalled();
+    });
+
+    test('a body of only unknown keys returns 400 (Zod strips them to an empty update) and never writes', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      // Unknown keys are stripped by the (non-strict) schema, leaving both optional
+      // fields undefined — the same empty-update case, so it also 400s and never writes.
+      const response = await agent
+        .patch(`/api/departments/${VALID_ID}`)
+        .send({ bogus: 'x', anotherUnknown: 123 });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty('error');
+      expect(mockPrismaFunctions.department.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('PATCH /api/departments/:id — notification emails', () => {
+    beforeEach(() => {
+      mockPrismaFunctions.department.findUnique.mockResolvedValue({ id: VALID_ID, name: 'Old', order: 0 });
+      mockPrismaFunctions.department.update.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+        Promise.resolve({ id: VALID_ID, name: 'Old', order: 0, notificationEmails: [], ...data })
+      );
+    });
+
+    test('updates notificationEmails only, leaving name untouched', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+
+      const response = await agent
+        .patch(`/api/departments/${VALID_ID}`)
+        .send({ notificationEmails: ['ops@corp.example'] });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveProperty('notificationEmails', ['ops@corp.example']);
+      expect(mockPrismaFunctions.department.update).toHaveBeenCalledWith({
+        where: { id: VALID_ID },
+        data: { notificationEmails: ['ops@corp.example'] },
+      });
+    });
+
+    test('updates name only (no notificationEmails key in the update data)', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+
+      const response = await agent.patch(`/api/departments/${VALID_ID}`).send({ name: 'Renamed' });
+
+      expect(response.status).toBe(200);
+      expect(mockPrismaFunctions.department.update).toHaveBeenCalledWith({
+        where: { id: VALID_ID },
+        data: { name: 'Renamed' },
+      });
+    });
+
+    test('updates both name and notificationEmails together', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+
+      const response = await agent
+        .patch(`/api/departments/${VALID_ID}`)
+        .send({ name: 'Renamed', notificationEmails: ['a@corp.example', 'b@corp.example'] });
+
+      expect(response.status).toBe(200);
+      expect(mockPrismaFunctions.department.update).toHaveBeenCalledWith({
+        where: { id: VALID_ID },
+        data: { name: 'Renamed', notificationEmails: ['a@corp.example', 'b@corp.example'] },
+      });
+    });
+
+    test('trims and de-duplicates notification emails', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+
+      const response = await agent
+        .patch(`/api/departments/${VALID_ID}`)
+        .send({ notificationEmails: ['  dup@corp.example  ', 'dup@corp.example', 'other@corp.example'] });
+
+      expect(response.status).toBe(200);
+      expect(mockPrismaFunctions.department.update).toHaveBeenCalledWith({
+        where: { id: VALID_ID },
+        data: { notificationEmails: ['dup@corp.example', 'other@corp.example'] },
+      });
+    });
+
+    test('accepts an empty array (clears the list)', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+
+      const response = await agent.patch(`/api/departments/${VALID_ID}`).send({ notificationEmails: [] });
+
+      expect(response.status).toBe(200);
+      expect(mockPrismaFunctions.department.update).toHaveBeenCalledWith({
+        where: { id: VALID_ID },
+        data: { notificationEmails: [] },
+      });
+    });
+
+    test('rejects an invalid email entry with 400 and does not update', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+
+      const response = await agent
+        .patch(`/api/departments/${VALID_ID}`)
+        .send({ notificationEmails: ['ok@corp.example', 'not-an-email'] });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty('error');
+      expect(mockPrismaFunctions.department.update).not.toHaveBeenCalled();
+    });
+
+    test('rejects more than 20 notification emails with 400', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      const emails = Array.from({ length: 21 }, (_, i) => `user${i}@corp.example`);
+
+      const response = await agent.patch(`/api/departments/${VALID_ID}`).send({ notificationEmails: emails });
+
+      expect(response.status).toBe(400);
+      expect(mockPrismaFunctions.department.update).not.toHaveBeenCalled();
+    });
+
+    test('rejects a non-array notificationEmails with 400', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+
+      const response = await agent
+        .patch(`/api/departments/${VALID_ID}`)
+        .send({ notificationEmails: 'ops@corp.example' });
+
+      expect(response.status).toBe(400);
+      expect(mockPrismaFunctions.department.update).not.toHaveBeenCalled();
     });
   });
 

@@ -58,9 +58,27 @@ export interface Department {
   order: number;
   createdAt: string;
   updatedAt: string;
+  // Admin-managed notification recipients. Present ONLY in ADMIN responses; the
+  // backend omits it entirely for non-admin sessions, hence optional.
+  notificationEmails?: string[];
   _count?: {
     ideas: number;
   };
+}
+
+// Admin-managed outbound mail configuration. This is the MASKED shape returned by
+// the API: the SMTP password is NEVER included — only `hasPassword` indicates
+// whether one is stored. The password is write-only (sent on save, never read).
+export interface MailSettings {
+  enabled: boolean;
+  host: string;
+  port: number;
+  secure: boolean;
+  username: string;
+  from: string;
+  language: 'en' | 'sk';
+  subjectTemplate: string;
+  hasPassword: boolean;
 }
 
 export interface LogoutResponse {

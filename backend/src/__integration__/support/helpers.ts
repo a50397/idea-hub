@@ -54,6 +54,10 @@ export async function resetDb(): Promise<void> {
   await prisma.idea.deleteMany({});
   await prisma.department.deleteMany({});
   await prisma.user.deleteMany({});
+  // The singleton mail settings document: clear it so every suite starts with mail
+  // disabled (absent doc = defaults). Without this, a suite that enables mail could
+  // leak an enabled/misconfigured relay into another suite's idea-creation path.
+  await prisma.mailSettings.deleteMany({});
   // Recreate the default department so every test starts from a valid target
   // (mirrors the boot seed; idempotent by construction).
   await ensureDepartments();

@@ -65,11 +65,35 @@ jest.mock('@prisma/client', () => {
 
 jest.mock('bcrypt');
 
+// The mailer is fully mocked: idea creation fires a best-effort notification, and
+// these tests assert it is invoked (or not) without touching real SMTP. The mock
+// never rejects by default; individual tests override per case.
+jest.mock('../utils/mailer', () => ({
+  sendMail: jest.fn().mockResolvedValue(true),
+}));
+
+// config/mail is DB-backed now: the notification reads the effective settings
+// (language + optional subject override) before building the email. Mock it so the
+// wording language is controlled per-case WITHOUT any environment or DB.
+jest.mock('../config/mail', () => ({
+  getEffectiveMailConfig: jest.fn(),
+}));
+
 // Import routes AFTER mocks
 import bcrypt from 'bcrypt';
 import authRoutes from '../routes/auth';
 import ideasRoutes from '../routes/ideas';
+import { sendMail } from '../utils/mailer';
+import { getEffectiveMailConfig } from '../config/mail';
 import { IdeaStatus, Effort } from '@prisma/client';
+
+const mockedSendMail = jest.mocked(sendMail);
+const mockedGetConfig = jest.mocked(getEffectiveMailConfig);
+
+// The department notification is fire-and-forget: it runs in an async IIFE AFTER
+// the 201 is sent (it awaits the settings read, then the send). Flush the
+// microtask/immediate queue so those awaits settle before assertions.
+const flushAsync = () => new Promise((resolve) => setImmediate(resolve));
 
 function createTestApp() {
   const app = express();
@@ -454,6 +478,261 @@ describe('Ideas API', () => {
       expect(response.status).toBe(400);
       expect(response.body).toHaveProperty('error');
       expect(mockPrismaFunctions.idea.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /api/ideas — department notification email', () => {
+    const DEPT_WITH_EMAILS = {
+      id: DEPT_ID,
+      name: 'Marketing',
+      notificationEmails: ['ops@corp.example', 'lead@corp.example'],
+    };
+
+    const createdIdea = {
+      id: 'aaaaaaaaaaaaaaaaaaaaa001',
+      title: 'Notify the department please',
+      // 250 chars, so the ~200-char preview is exercised (and truncation proven).
+      description: 'A'.repeat(250),
+      benefits: 'Great benefits that are well described',
+      effort: 'ONE_TO_THREE_DAYS',
+      status: 'SUBMITTED',
+      tags: [],
+      submitterId: 'user123',
+      submitter: { id: 'user123', name: 'Test User', email: 'test@example.com' },
+      department: { id: DEPT_ID, name: 'Marketing' },
+      submittedAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    function validBody() {
+      return {
+        title: 'Notify the department please',
+        description: 'A'.repeat(250),
+        benefits: 'Great benefits that are well described',
+        effort: 'ONE_TO_THREE_DAYS',
+        departmentId: DEPT_ID,
+      };
+    }
+
+    beforeEach(() => {
+      mockedSendMail.mockReset();
+      mockedSendMail.mockResolvedValue(true);
+      // Default effective config: English wording, no subject override.
+      mockedGetConfig.mockReset();
+      mockedGetConfig.mockResolvedValue({ language: 'en', subjectTemplate: '' } as any);
+      mockPrismaFunctions.idea.create.mockResolvedValue(createdIdea);
+      mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
+    });
+
+    test('sends exactly one notification to the department emails with a dept+title subject', async () => {
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue(DEPT_WITH_EMAILS);
+
+      const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
+
+      expect(response.status).toBe(201);
+      expect(mockedSendMail).toHaveBeenCalledTimes(1);
+
+      const arg = mockedSendMail.mock.calls[0][0];
+      expect(arg.to).toEqual(['ops@corp.example', 'lead@corp.example']);
+      expect(arg.subject).toBe('[IdeaHub] New idea for Marketing: Notify the department please');
+      // Body carries the submitter, department, a truncated description and the link.
+      expect(arg.text).toContain('Test User');
+      expect(arg.text).toContain('Marketing');
+      expect(arg.text).toContain('/ideas/aaaaaaaaaaaaaaaaaaaaa001');
+      expect(arg.text).toContain('A'.repeat(200));
+      expect(arg.text).not.toContain('A'.repeat(201));
+    });
+
+    test('reads the effective mail config exactly ONCE and hands it to sendMail (single read per notification — FIX 4)', async () => {
+      // One identifiable config object: the notification path reads it once (to build
+      // the template) and must pass that SAME object to sendMail as its second arg, so
+      // sendMail does NOT read the settings again — exactly one read per notification.
+      const cfg = { language: 'en', subjectTemplate: '' } as any;
+      mockedGetConfig.mockReset();
+      mockedGetConfig.mockResolvedValue(cfg);
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue(DEPT_WITH_EMAILS);
+
+      const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
+
+      expect(response.status).toBe(201);
+      expect(mockedGetConfig).toHaveBeenCalledTimes(1);
+      expect(mockedSendMail).toHaveBeenCalledTimes(1);
+      expect(mockedSendMail.mock.calls[0][1]).toBe(cfg);
+    });
+
+    test('uses Slovak wording (subject + body) for the notification when the settings language is sk', async () => {
+      // utils/mail-templates.ts is real; the language now comes from the effective
+      // mail config (mocked here) instead of any environment variable.
+      mockedGetConfig.mockResolvedValue({ language: 'sk', subjectTemplate: '' } as any);
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue(DEPT_WITH_EMAILS);
+
+      const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
+
+      expect(response.status).toBe(201);
+      expect(mockedSendMail).toHaveBeenCalledTimes(1);
+
+      const arg = mockedSendMail.mock.calls[0][0];
+      expect(arg.subject).toBe('[IdeaHub] Nový nápad pre Marketing: Notify the department please');
+      // Body is Slovak too — one language per email — with no English wording.
+      expect(arg.text).toContain('Pre oddelenie Marketing bol odoslaný nový nápad.');
+      expect(arg.text).toContain('Zobraziť nápad:');
+      expect(arg.text).not.toContain('A new idea has been submitted');
+      expect(arg.text).not.toContain('View the idea:');
+    });
+
+    test('does NOT send when the department has no notification emails', async () => {
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue({
+        id: DEPT_ID,
+        name: 'Marketing',
+        notificationEmails: [],
+      });
+
+      const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
+
+      expect(response.status).toBe(201);
+      expect(mockedSendMail).not.toHaveBeenCalled();
+    });
+
+    test('returns 201 even when the mailer resolves false (best-effort failure)', async () => {
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue(DEPT_WITH_EMAILS);
+      mockedSendMail.mockResolvedValueOnce(false);
+
+      const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
+
+      expect(response.status).toBe(201);
+      expect(response.body).toHaveProperty('title', 'Notify the department please');
+      expect(mockedSendMail).toHaveBeenCalledTimes(1);
+    });
+
+    test('returns 201 even when the mailer rejects (defensive; the real mailer never rejects)', async () => {
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue(DEPT_WITH_EMAILS);
+      mockedSendMail.mockRejectedValueOnce(new Error('unexpected transport blow-up'));
+
+      const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
+
+      expect(response.status).toBe(201);
+      expect(mockedSendMail).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // The idea-creation limiter (ideaCreateLimiter) blunts mail amplification: one
+  // POST can fan out up to ~20 notification emails, so creation is capped at 30 per
+  // 15-minute window per IP. It mirrors auth.test.ts's approach of toggling NODE_ENV
+  // for the block — BUT note the difference: loginLimiter's skip is test-only, so
+  // auth.test.ts toggles to 'development' to exercise it; THIS limiter's skip ALSO
+  // includes 'development' (the required parity with the general limiter that keeps
+  // the integration tier AND local dev unthrottled), so to actually exercise it we
+  // must toggle to a NON-skipped env — 'production'. Every OTHER test runs under
+  // NODE_ENV=test (skip=true) and so never consumes this limiter's per-IP budget,
+  // keeping the store clean when this test runs (hermetic; restored in a finally).
+  describe('Rate limiting (idea creation)', () => {
+    test('returns 429 on the 31st rapid create from one IP while the first 30 pass', async () => {
+      const originalEnv = process.env.NODE_ENV;
+      try {
+        // 'production' is neither 'test' nor 'development', so skip() returns false
+        // and the limiter is actually active for this block.
+        process.env.NODE_ENV = 'production';
+
+        // Fresh app so the limiter middleware re-evaluates its skip() per request.
+        const rateLimitedApp = createTestApp();
+        const { agent } = await loginAsUser(rateLimitedApp);
+
+        // A department WITHOUT notification recipients -> the create path sends no
+        // mail, keeping each of the 30 creates a clean, self-contained 201.
+        mockPrismaFunctions.department.findUnique.mockResolvedValue({
+          id: DEPT_ID,
+          name: 'Rate Dept',
+          notificationEmails: [],
+        });
+        mockPrismaFunctions.idea.create.mockResolvedValue({
+          id: 'aaaaaaaaaaaaaaaaaaaaa001',
+          title: 'Rate limit probe idea',
+          submitter: { id: 'user123', name: 'Test User', email: 'test@example.com' },
+          department: { id: DEPT_ID, name: 'Rate Dept' },
+        });
+        mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
+
+        const body = {
+          title: 'Rate limit probe idea',
+          description: 'A sufficiently long idea description for validation.',
+          benefits: 'Clear and measurable benefits described here for the test.',
+          effort: 'ONE_TO_THREE_DAYS',
+          departmentId: DEPT_ID,
+        };
+
+        // The cap is 30: the first 30 creates from this IP succeed.
+        for (let i = 0; i < 30; i++) {
+          const ok = await agent.post('/api/ideas').send(body);
+          expect(ok.status).toBe(201);
+        }
+
+        // The 31st from the same IP is throttled with the house 429 shape.
+        const limited = await agent.post('/api/ideas').send(body);
+        expect(limited.status).toBe(429);
+        expect(limited.body).toHaveProperty(
+          'error',
+          'Too many idea submissions. Please try again later.'
+        );
+      } finally {
+        process.env.NODE_ENV = originalEnv;
+      }
+    });
+
+    test('is SKIPPED under BOTH NODE_ENV=test and development (skip parity keeps the integration/E2E tiers and local dev unthrottled)', async () => {
+      // The CRITICAL skip parity — identical to the general limiter (index.ts): under
+      // 'test' (the integration/E2E tier drives many creates from one loopback IP)
+      // AND 'development' (local dev), skip() is true so nothing is throttled. Getting
+      // this wrong would 429 the integration tier and break those gates.
+      const originalEnv = process.env.NODE_ENV;
+      try {
+        for (const env of ['test', 'development']) {
+          process.env.NODE_ENV = env;
+          const freshApp = createTestApp();
+          const { agent } = await loginAsUser(freshApp);
+
+          mockPrismaFunctions.department.findUnique.mockResolvedValue({
+            id: DEPT_ID,
+            name: 'Rate Dept',
+            notificationEmails: [],
+          });
+          mockPrismaFunctions.idea.create.mockResolvedValue({
+            id: 'aaaaaaaaaaaaaaaaaaaaa001',
+            title: 'Unthrottled idea',
+            submitter: { id: 'user123', name: 'Test User', email: 'test@example.com' },
+            department: { id: DEPT_ID, name: 'Rate Dept' },
+          });
+          mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
+
+          const body = {
+            title: 'Unthrottled idea',
+            description: 'A sufficiently long idea description for validation.',
+            benefits: 'Clear and measurable benefits described here for the test.',
+            effort: 'ONE_TO_THREE_DAYS',
+            departmentId: DEPT_ID,
+          };
+
+          // Well past the max of 30 — none throttled because skip() is true for `env`.
+          for (let i = 0; i < 35; i++) {
+            const res = await agent.post('/api/ideas').send(body);
+            expect(res.status).toBe(201);
+          }
+        }
+      } finally {
+        process.env.NODE_ENV = originalEnv;
+      }
     });
   });
 

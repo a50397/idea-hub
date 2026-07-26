@@ -241,6 +241,15 @@ router.delete('/:id', requireRole(Role.ADMIN), async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
+    // SSO-managed accounts are owned by the IdP and re-provisioned on each
+    // login, so deleting one locally is meaningless (it returns on next login)
+    // and strands its history; mirror the edit guard and refuse. Checked before
+    // the self-delete and associated-ideas guards so an SSO account is rejected
+    // regardless of who is calling or whether it owns ideas.
+    if (existingUser.authProvider === 'SSO') {
+      return res.status(400).json({ error: 'User is managed by SSO' });
+    }
+
     // Prevent admin from deleting themselves
     if (id === req.session.userId) {
       return res.status(400).json({ error: 'Cannot delete your own account' });

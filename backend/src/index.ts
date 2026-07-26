@@ -11,9 +11,11 @@ import ideasRoutes from './routes/ideas';
 import reportsRoutes from './routes/reports';
 import usersRoutes from './routes/users';
 import departmentsRoutes from './routes/departments';
+import mailSettingsRoutes from './routes/mail-settings';
 import crypto from 'crypto';
 import { ensureAdminExists } from './utils/init-admin';
 import { ensureDepartments } from './utils/init-departments';
+import { isMailKeyValid } from './utils/secretbox';
 import prisma from './lib/prisma';
 
 dotenv.config({ path: '../.env' });
@@ -26,6 +28,27 @@ if (!process.env.SESSION_SECRET) {
   // Generate a random secret for development so it's never hardcoded
   process.env.SESSION_SECRET = crypto.randomBytes(32).toString('hex');
   console.warn('WARNING: SESSION_SECRET not set. Generated a random ephemeral secret for development.');
+}
+
+// MAIL_SETTINGS_KEY encrypts the stored SMTP password (utils/secretbox.ts). Mail
+// itself is admin-managed at runtime (no boot mail guard anymore — save-time
+// validation replaces it), but the encryption key must exist AND be a usable
+// 32-byte value. isMailKeyValid() validates the key's FORMAT (not merely its
+// presence) via secretbox's own loader: a present-but-malformed key (not 64-hex,
+// not base64→32 bytes) makes encrypt() throw, which would otherwise boot fine and
+// then 500 on the first SMTP-password save. Mirror the SESSION_SECRET fail-fast
+// above EXACTLY: fatal outside development; in development generate an ephemeral
+// key and warn. A generated key means any previously saved password cannot be
+// decrypted until a stable key is restored — acceptable dev semantics (the mailer
+// treats an undecryptable password as none).
+if (!isMailKeyValid()) {
+  if (process.env.NODE_ENV !== 'development') {
+    console.error('FATAL: MAIL_SETTINGS_KEY is missing or not a valid 32-byte key (64 hex chars, or base64 decoding to 32 bytes). Exiting.');
+    process.exit(1);
+  }
+  // Generate a random valid key for development so it's never hardcoded.
+  process.env.MAIL_SETTINGS_KEY = crypto.randomBytes(32).toString('hex');
+  console.warn('WARNING: MAIL_SETTINGS_KEY is missing or invalid. Generated a random ephemeral key for development. Previously saved mail passwords cannot be decrypted until a stable key is set.');
 }
 
 const app = express();
@@ -113,6 +136,7 @@ app.use('/api/ideas', ideasRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/departments', departmentsRoutes);
+app.use('/api/mail-settings', mailSettingsRoutes);
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

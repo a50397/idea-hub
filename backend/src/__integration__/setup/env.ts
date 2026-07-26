@@ -16,6 +16,13 @@ process.env.NODE_ENV = 'test';
 process.env.DATABASE_URL = process.env.DATABASE_URL || DEFAULT_TEST_DATABASE_URL;
 process.env.SESSION_SECRET =
   process.env.SESSION_SECRET || 'integration-tier-session-secret-deterministic';
+// MAIL_SETTINGS_KEY encrypts the stored SMTP password (utils/secretbox.ts). Pin a
+// deterministic 32-byte hex key so index.ts does not generate an ephemeral one and
+// the encrypted-at-rest assertions are stable. (NODE_ENV=test would only warn if
+// this were unset, but determinism matters for the crypto round-trip tests.)
+process.env.MAIL_SETTINGS_KEY =
+  process.env.MAIL_SETTINGS_KEY ||
+  '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
 // ensureAdminExists() runs on app boot; give it credentials so it provisions a
 // boot admin instead of exiting. Suites reset the DB and account for this admin.

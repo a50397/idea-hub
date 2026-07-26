@@ -8,7 +8,7 @@ vi.mock('../api/departments', () => ({
   departmentsApi: {
     getAll: vi.fn(),
     create: vi.fn(),
-    rename: vi.fn(),
+    update: vi.fn(),
     reorder: vi.fn(),
     remove: vi.fn(),
   },
@@ -114,26 +114,37 @@ describe('departments store', () => {
     });
   });
 
-  describe('rename', () => {
-    it('calls the api with (id, name) and refetches', async () => {
-      mockedApi.rename.mockResolvedValueOnce(dept('a', 'Renamed', 0));
+  describe('update', () => {
+    it('calls the api with (id, payload) and refetches', async () => {
+      mockedApi.update.mockResolvedValueOnce(dept('a', 'Renamed', 0));
       mockedApi.getAll.mockResolvedValueOnce([dept('a', 'Renamed', 0)]);
       const store = useDepartmentsStore();
 
-      const ok = await store.rename('a', 'Renamed');
+      const ok = await store.update('a', { name: 'Renamed' });
 
       expect(ok).toBe(true);
-      expect(mockedApi.rename).toHaveBeenCalledWith('a', 'Renamed');
+      expect(mockedApi.update).toHaveBeenCalledWith('a', { name: 'Renamed' });
       expect(mockedApi.getAll).toHaveBeenCalledTimes(1);
     });
 
-    it('captures a 409 duplicate rename error', async () => {
-      mockedApi.rename.mockRejectedValueOnce({
+    it('forwards a notificationEmails-only payload', async () => {
+      mockedApi.update.mockResolvedValueOnce(dept('a', 'A', 0));
+      mockedApi.getAll.mockResolvedValueOnce([dept('a', 'A', 0)]);
+      const store = useDepartmentsStore();
+
+      const ok = await store.update('a', { notificationEmails: ['ops@corp.example'] });
+
+      expect(ok).toBe(true);
+      expect(mockedApi.update).toHaveBeenCalledWith('a', { notificationEmails: ['ops@corp.example'] });
+    });
+
+    it('captures a 409 duplicate name error', async () => {
+      mockedApi.update.mockRejectedValueOnce({
         response: { data: { error: 'A department with this name already exists' } },
       });
       const store = useDepartmentsStore();
 
-      const ok = await store.rename('a', 'Dup');
+      const ok = await store.update('a', { name: 'Dup' });
 
       expect(ok).toBe(false);
       expect(store.error).toBe('A department with this name already exists');

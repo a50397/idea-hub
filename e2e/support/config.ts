@@ -64,6 +64,9 @@ export const BACKEND_ENV: Record<string, string> = {
   DATABASE_URL: E2E_DATABASE_URL,
   NODE_ENV: 'test',
   SESSION_SECRET: 'e2e-session-secret-not-a-real-secret',
+  // AES-256-GCM key for the stored SMTP password (utils/secretbox.ts). A fixed
+  // 32-byte hex value keeps the E2E backend deterministic across restarts.
+  MAIL_SETTINGS_KEY: '00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff',
   COOKIE_SECURE: 'false',
   BACKEND_PORT: String(PORTS.backend),
   FRONTEND_URL,

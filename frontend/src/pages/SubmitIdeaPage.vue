@@ -59,6 +59,7 @@
 
               <v-combobox
                 v-model="formData.tags"
+                @keydown.enter.prevent
                 :label="$t('ideas.tags')"
                 variant="outlined"
                 multiple

@@ -9,6 +9,7 @@ import {
   ideasQuerySchema,
   filteredReportQuerySchema,
   departmentNameSchema,
+  updateDepartmentSchema,
   reorderDepartmentsSchema,
 } from '../utils/validation';
 
@@ -283,6 +284,60 @@ describe('Validation Schemas', () => {
     test('should reject a missing ids field', () => {
       const result = reorderDepartmentsSchema.safeParse({});
       expect(result.success).toBe(false);
+    });
+  });
+
+  describe('updateDepartmentSchema — notificationEmails case-insensitive dedupe', () => {
+    test('removes an exact-duplicate email, preserving order', () => {
+      const result = updateDepartmentSchema.safeParse({
+        notificationEmails: ['a@corp.example', 'b@corp.example', 'a@corp.example'],
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.notificationEmails).toEqual(['a@corp.example', 'b@corp.example']);
+      }
+    });
+
+    test('removes a CASE-VARIANT duplicate, keeping the FIRST occurrence as-typed', () => {
+      const result = updateDepartmentSchema.safeParse({
+        notificationEmails: ['User@X.com', 'user@x.com', 'other@corp.example'],
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        // The stored value keeps the first occurrence's original casing (email
+        // local-parts are technically case-sensitive); only the later case-variant
+        // is dropped — we never lowercase what gets stored.
+        expect(result.data.notificationEmails).toEqual(['User@X.com', 'other@corp.example']);
+      }
+    });
+
+    test('trims each entry then de-duplicates case-insensitively, preserving order', () => {
+      const result = updateDepartmentSchema.safeParse({
+        notificationEmails: ['  ops@corp.example  ', 'OPS@corp.example', 'lead@corp.example'],
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.notificationEmails).toEqual(['ops@corp.example', 'lead@corp.example']);
+      }
+    });
+
+    test('leaves distinct emails (and an empty array) untouched', () => {
+      const distinct = updateDepartmentSchema.safeParse({
+        notificationEmails: ['a@corp.example', 'b@corp.example', 'c@corp.example'],
+      });
+      expect(distinct.success).toBe(true);
+      if (distinct.success) {
+        expect(distinct.data.notificationEmails).toEqual([
+          'a@corp.example',
+          'b@corp.example',
+          'c@corp.example',
+        ]);
+      }
+      const empty = updateDepartmentSchema.safeParse({ notificationEmails: [] });
+      expect(empty.success).toBe(true);
+      if (empty.success) {
+        expect(empty.data.notificationEmails).toEqual([]);
+      }
     });
   });
 

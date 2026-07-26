@@ -10,7 +10,7 @@ vi.mock('../api/departments', () => ({
   departmentsApi: {
     getAll: vi.fn(),
     create: vi.fn(),
-    rename: vi.fn(),
+    update: vi.fn(),
     reorder: vi.fn(),
     remove: vi.fn(),
   },
@@ -19,13 +19,14 @@ vi.mock('../api/departments', () => ({
 import { departmentsApi } from '../api/departments';
 const mockedApi = vi.mocked(departmentsApi);
 
-function dept(id: string, name: string, order: number, ideas = 0): Department {
+function dept(id: string, name: string, order: number, ideas = 0, notificationEmails?: string[]): Department {
   return {
     id,
     name,
     order,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
+    ...(notificationEmails ? { notificationEmails } : {}),
     _count: { ideas },
   };
 }
@@ -53,11 +54,60 @@ function dialogButton(wrapper: VueWrapper, label: string) {
   return wrapper.findAllComponents({ name: 'VBtn' }).find((b) => b.text().trim() === label);
 }
 
-// The dialog's name field is the LAST VTextField in tree order — the data-table
-// footer's items-per-page control is itself a VTextField and comes first.
+// The create dialog's name field is the LAST VTextField in tree order — the
+// data-table footer's items-per-page control is itself a VTextField and comes first.
 function setDialogName(wrapper: VueWrapper, value: string) {
   const fields = wrapper.findAllComponents({ name: 'VTextField' });
   fields[fields.length - 1].vm.$emit('update:modelValue', value);
+}
+
+// In the EDIT dialog the notification-emails VCombobox also renders an internal
+// VTextField, so "last VTextField" is ambiguous — target the name field by its
+// label instead ("Name *"; the combobox's label never contains "Name").
+function setEditName(wrapper: VueWrapper, value: string) {
+  const field = wrapper
+    .findAllComponents({ name: 'VTextField' })
+    .find((f) => String(f.props('label') ?? '').includes('Name'));
+  field!.vm.$emit('update:modelValue', value);
+}
+
+function editCombobox(wrapper: VueWrapper) {
+  return wrapper.findComponent({ name: 'VCombobox' });
+}
+
+function setEditEmails(wrapper: VueWrapper, value: string[]) {
+  editCombobox(wrapper).vm.$emit('update:modelValue', value);
+}
+
+// The combobox's real <input>. A native keydown is used (below) so the event can
+// carry key/composition flags and expose defaultPrevented — neither of which
+// @vue/test-utils' trigger() surfaces.
+function comboboxInput(wrapper: VueWrapper): HTMLInputElement {
+  return editCombobox(wrapper).find('input').element as HTMLInputElement;
+}
+
+// Simulate typing a not-yet-committed address into the combobox's search field so
+// Vuetify has pending text to turn into a chip on Enter.
+function typeInEmails(wrapper: VueWrapper, text: string): HTMLInputElement {
+  const input = comboboxInput(wrapper);
+  input.value = text;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  return input;
+}
+
+// Dispatch a native Enter keydown on the field and return the event so the caller
+// can read defaultPrevented. `isComposing` reproduces the fast-typing IME state in
+// which Vuetify's own combobox handler bails out and skips its own preventDefault.
+function pressEnter(input: HTMLInputElement, isComposing = false): KeyboardEvent {
+  const ev = new window.KeyboardEvent('keydown', {
+    key: 'Enter',
+    code: 'Enter',
+    bubbles: true,
+    cancelable: true,
+    isComposing,
+  });
+  input.dispatchEvent(ev);
+  return ev;
 }
 
 describe('DepartmentsPage', () => {
@@ -114,8 +164,8 @@ describe('DepartmentsPage', () => {
     expect(document.body.textContent).toContain('Department name is required');
   });
 
-  it('renames a department through the edit dialog', async () => {
-    mockedApi.rename.mockResolvedValueOnce(dept('alpha', 'Renamed', 0));
+  it('updates a department name and notification emails through the edit dialog', async () => {
+    mockedApi.update.mockResolvedValueOnce(dept('alpha', 'Renamed', 0));
     const wrapper = mountPage();
     await flushPromises();
 
@@ -123,13 +173,156 @@ describe('DepartmentsPage', () => {
     await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
     await flushPromises();
 
-    setDialogName(wrapper, 'Renamed');
+    setEditName(wrapper, 'Renamed');
+    setEditEmails(wrapper, ['ops@corp.example', 'lead@corp.example']);
     await flushPromises();
 
     await dialogButton(wrapper, 'Update')!.trigger('click');
     await flushPromises();
 
-    expect(mockedApi.rename).toHaveBeenCalledWith('alpha', 'Renamed');
+    expect(mockedApi.update).toHaveBeenCalledWith('alpha', {
+      name: 'Renamed',
+      notificationEmails: ['ops@corp.example', 'lead@corp.example'],
+    });
+  });
+
+  it('pre-fills the edit dialog with existing notification emails and can remove one', async () => {
+    mockedApi.getAll.mockResolvedValue([
+      dept('alpha', 'Alpha', 0, 0, ['keep@corp.example', 'drop@corp.example']),
+    ]);
+    mockedApi.update.mockResolvedValueOnce(dept('alpha', 'Alpha', 0));
+    const wrapper = mountPage();
+    await flushPromises();
+
+    await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+    await flushPromises();
+
+    // The combobox is pre-populated from the department's stored addresses.
+    expect(editCombobox(wrapper).props('modelValue')).toEqual([
+      'keep@corp.example',
+      'drop@corp.example',
+    ]);
+
+    // Remove one address, then save.
+    setEditEmails(wrapper, ['keep@corp.example']);
+    await flushPromises();
+    await dialogButton(wrapper, 'Update')!.trigger('click');
+    await flushPromises();
+
+    expect(mockedApi.update).toHaveBeenCalledWith('alpha', {
+      name: 'Alpha',
+      notificationEmails: ['keep@corp.example'],
+    });
+  });
+
+  it('blocks the save and shows a validation message when a notification email is invalid', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+    await flushPromises();
+
+    setEditEmails(wrapper, ['not-an-email']);
+    await flushPromises();
+
+    await dialogButton(wrapper, 'Update')!.trigger('click');
+    await flushPromises();
+
+    expect(mockedApi.update).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain('One or more email addresses are invalid');
+  });
+
+  it('blocks the save and shows a validation message when more than 20 notification emails are entered', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+    await flushPromises();
+
+    // 21 otherwise-valid addresses exceed the backend cap of 20.
+    const many = Array.from({ length: 21 }, (_, i) => `user${i}@corp.example`);
+    setEditEmails(wrapper, many);
+    await flushPromises();
+
+    await dialogButton(wrapper, 'Update')!.trigger('click');
+    await flushPromises();
+
+    expect(mockedApi.update).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain('At most 20 notification emails are allowed');
+  });
+
+  it('splits a comma/whitespace-separated paste into individual email chips', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+    await flushPromises();
+
+    // A pasted list arrives as ONE combobox entry; it must fan out into chips.
+    setEditEmails(wrapper, ['a@x.com, b@y.com']);
+    await flushPromises();
+
+    expect(editCombobox(wrapper).props('modelValue')).toEqual(['a@x.com', 'b@y.com']);
+  });
+
+  it('drops whitespace-only fragments when splitting a pasted email list', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+    await flushPromises();
+
+    // Double separators and trailing spaces produce empty fragments that are dropped.
+    setEditEmails(wrapper, ['a@x.com , , b@y.com,  ']);
+    await flushPromises();
+
+    expect(editCombobox(wrapper).props('modelValue')).toEqual(['a@x.com', 'b@y.com']);
+  });
+
+  it('commits a chip on Enter in the emails combobox without saving or closing the dialog', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+    await flushPromises();
+
+    // Type an address but do NOT press Update; Enter should only turn it into a chip.
+    const input = typeInEmails(wrapper, 'ops@corp.example');
+    await flushPromises();
+
+    const ev = pressEnter(input);
+    await flushPromises();
+
+    // Vuetify's own Enter handling still commits the typed text as a chip...
+    expect(editCombobox(wrapper).props('modelValue')).toEqual(['ops@corp.example']);
+    // ...while the browser's implicit form submission (Enter's default action) is
+    // prevented, so the edit form never submits: update is not called and the
+    // dialog (its Update button) stays open. This is the root-cause UX bug.
+    expect(ev.defaultPrevented).toBe(true);
+    expect(mockedApi.update).not.toHaveBeenCalled();
+    expect(dialogButton(wrapper, 'Update')).toBeTruthy();
+  });
+
+  it('blocks Enter from submitting the edit form even when the keydown is mid-composition', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+    await flushPromises();
+
+    const input = typeInEmails(wrapper, 'lead@corp.example');
+    await flushPromises();
+
+    // Reproduces the e2e flake: after real per-key typing, the Enter keydown can
+    // still report isComposing=true. Vuetify's combobox handler then returns early
+    // and skips ITS preventDefault, so without the field's own @keydown.enter.prevent
+    // the browser would implicitly submit the form and save-and-close the dialog.
+    const ev = pressEnter(input, true);
+    await flushPromises();
+
+    expect(ev.defaultPrevented).toBe(true);
+    expect(mockedApi.update).not.toHaveBeenCalled();
+    expect(dialogButton(wrapper, 'Update')).toBeTruthy();
   });
 
   it('surfaces a backend 409 when a delete is blocked', async () => {

@@ -79,6 +79,12 @@ const router = createRouter({
           component: () => import('../pages/DepartmentsPage.vue'),
           meta: { requiresAdmin: true },
         },
+        {
+          path: 'mail-settings',
+          name: 'MailSettings',
+          component: () => import('../pages/MailSettingsPage.vue'),
+          meta: { requiresAdmin: true },
+        },
       ],
     },
   ],

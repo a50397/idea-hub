@@ -136,6 +136,12 @@ This is the easiest way to get started. Docker will handle all dependencies and 
    # URL is composed from MONGO_ROOT_USER/MONGO_ROOT_PASSWORD automatically.
    DATABASE_URL="mongodb://root:example-dev-password@localhost:27017/ideahub?replicaSet=rs0&authSource=admin&directConnection=true"
    SESSION_SECRET="your-super-secret-session-key-change-in-production"
+   # Required because NODE_ENV=production below: AES-256-GCM key that encrypts the
+   # admin-set SMTP password. The backend fails fast at boot without it, and
+   # `docker compose up` stops immediately if it's unset. Generate with the command
+   # in the security note below. (Host-run dev with NODE_ENV=development instead
+   # generates an ephemeral key.)
+   MAIL_SETTINGS_KEY="your-64-hex-char-key-change-in-production"
    NODE_ENV="production"
    BACKEND_PORT=3001
    VITE_API_URL="http://localhost:3001"
@@ -146,6 +152,11 @@ This is the easiest way to get started. Docker will handle all dependencies and 
    >   ```bash
    >   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
    >   ```
+   > - **Generate a `MAIL_SETTINGS_KEY`** the same way (64 hex chars). It is
+   >   **required outside development** — the backend refuses to boot without it and
+   >   both compose files fail-fast if it's unset. It encrypts the SMTP password an
+   >   admin later sets on the **Email settings** page; keep it stable, or previously
+   >   saved passwords become undecryptable.
    > - **Set `ADMIN_EMAIL` / `ADMIN_PASSWORD` to unique, non-default values.** The
    >   bootstrap admin is created on first run from these; use a long, random
    >   password (12+ characters — the app enforces a 12-char minimum for
@@ -439,6 +450,7 @@ npm test -- --watch
    ```env
    NODE_ENV=production
    SESSION_SECRET=<your-secure-random-secret>
+   MAIL_SETTINGS_KEY=<your-secure-random-key>   # 64 hex chars; required outside dev — both compose files fail fast if unset
    ADMIN_EMAIL=admin@yourdomain.com
    ADMIN_PASSWORD=<strong-admin-password>
    COOKIE_SECURE=true   # Set to true when behind HTTPS
@@ -472,8 +484,9 @@ npm test -- --watch
 | `ADMIN_NAME` | Default admin display name | `Admin` |
 | `FRONTEND_URL` | Frontend origin; used for CORS and the SSO post-login redirect | `http://localhost:5173` |
 | `VITE_API_URL` | Frontend API base URL (build-time) | `/api` (Docker), `http://localhost:3001` (dev) |
+| `MAIL_SETTINGS_KEY` | AES-256-GCM key that encrypts the stored SMTP password. 32 bytes: 64 hex chars (preferred) or base64 decoding to 32 bytes. Required outside development — the backend fails fast at boot if missing (like `SESSION_SECRET`). Everything else about mail (SMTP server, from address, notification language, subject template, password) is admin-managed at runtime on the **Email settings** page and stored in the database | Required in production |
 
-See [Single Sign-On (SSO)](#single-sign-on-sso) for the `SSO_*` and `BREAK_GLASS_EMAILS` variables.
+See [Single Sign-On (SSO)](#single-sign-on-sso) for the `SSO_*` and `BREAK_GLASS_EMAILS` variables, and [dev/MAIL-TESTING.md](dev/MAIL-TESTING.md) for the mail dev/testing story.
 
 ### Manual Deployment
 

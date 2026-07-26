@@ -505,6 +505,25 @@ describe('Users API', () => {
       expect(mockPrismaFunctions.user.delete).not.toHaveBeenCalled();
     });
 
+    test('should not delete an SSO-managed user', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+
+      const ssoUser = {
+        id: 'bbbbbbbbbbbbbbbbbbbbb001',
+        name: 'SSO User',
+        email: 'sso@example.com',
+        authProvider: 'SSO',
+      };
+
+      mockPrismaFunctions.user.findUnique.mockResolvedValue(ssoUser);
+
+      const response = await agent.delete('/api/users/bbbbbbbbbbbbbbbbbbbbb001');
+
+      expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty('error', 'User is managed by SSO');
+      expect(mockPrismaFunctions.user.delete).not.toHaveBeenCalled();
+    });
+
     test('should return 404 for non-existent user', async () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
 
