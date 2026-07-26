@@ -157,3 +157,31 @@ model IdeaStep {
 
   @@map("idea_steps")
 }
+
+// Admin-UI-managed outbound mail configuration. A SINGLETON: the read path is
+// findFirst() ?? in-code defaults, and a save upserts the one document, so an
+// absent document simply means "mail disabled with defaults" (no boot seed).
+// This is a NEW collection, so there are no legacy missing-field concerns.
+//
+// SECURITY: `passwordEnc` holds the SMTP password encrypted with AES-256-GCM
+// (utils/secretbox.ts, keyed by MAIL_SETTINGS_KEY) — never a plaintext secret.
+// It is projected out of every API response (routes/mail-settings.ts exposes
+// only a `hasPassword` boolean), so the ciphertext never leaves the server.
+model MailSettings {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  enabled         Boolean  @default(false)
+  host            String   @default("")
+  port            Int      @default(587)
+  secure          Boolean  @default(false)
+  username        String   @default("")
+  // AES-256-GCM ciphertext of the SMTP password (base64(iv).base64(tag).base64(ct)).
+  // Empty string == no password stored. NEVER returned by the API.
+  passwordEnc     String   @default("")
+  from            String   @default("IdeaHub <no-reply@ideahub.local>")
+  language        String   @default("en")
+  subjectTemplate String   @default("")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("mail_settings")
+}

@@ -72,14 +72,28 @@ jest.mock('../utils/mailer', () => ({
   sendMail: jest.fn().mockResolvedValue(true),
 }));
 
+// config/mail is DB-backed now: the notification reads the effective settings
+// (language + optional subject override) before building the email. Mock it so the
+// wording language is controlled per-case WITHOUT any environment or DB.
+jest.mock('../config/mail', () => ({
+  getEffectiveMailConfig: jest.fn(),
+}));
+
 // Import routes AFTER mocks
 import bcrypt from 'bcrypt';
 import authRoutes from '../routes/auth';
 import ideasRoutes from '../routes/ideas';
 import { sendMail } from '../utils/mailer';
+import { getEffectiveMailConfig } from '../config/mail';
 import { IdeaStatus, Effort } from '@prisma/client';
 
 const mockedSendMail = jest.mocked(sendMail);
+const mockedGetConfig = jest.mocked(getEffectiveMailConfig);
+
+// The department notification is fire-and-forget: it runs in an async IIFE AFTER
+// the 201 is sent (it awaits the settings read, then the send). Flush the
+// microtask/immediate queue so those awaits settle before assertions.
+const flushAsync = () => new Promise((resolve) => setImmediate(resolve));
 
 function createTestApp() {
   const app = express();
@@ -504,6 +518,9 @@ describe('Ideas API', () => {
     beforeEach(() => {
       mockedSendMail.mockReset();
       mockedSendMail.mockResolvedValue(true);
+      // Default effective config: English wording, no subject override.
+      mockedGetConfig.mockReset();
+      mockedGetConfig.mockResolvedValue({ language: 'en', subjectTemplate: '' } as any);
       mockPrismaFunctions.idea.create.mockResolvedValue(createdIdea);
       mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
     });
@@ -513,6 +530,7 @@ describe('Ideas API', () => {
       mockPrismaFunctions.department.findUnique.mockResolvedValue(DEPT_WITH_EMAILS);
 
       const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
 
       expect(response.status).toBe(201);
       expect(mockedSendMail).toHaveBeenCalledTimes(1);
@@ -528,6 +546,28 @@ describe('Ideas API', () => {
       expect(arg.text).not.toContain('A'.repeat(201));
     });
 
+    test('uses Slovak wording (subject + body) for the notification when the settings language is sk', async () => {
+      // utils/mail-templates.ts is real; the language now comes from the effective
+      // mail config (mocked here) instead of any environment variable.
+      mockedGetConfig.mockResolvedValue({ language: 'sk', subjectTemplate: '' } as any);
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue(DEPT_WITH_EMAILS);
+
+      const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
+
+      expect(response.status).toBe(201);
+      expect(mockedSendMail).toHaveBeenCalledTimes(1);
+
+      const arg = mockedSendMail.mock.calls[0][0];
+      expect(arg.subject).toBe('[IdeaHub] Nový nápad pre Marketing: Notify the department please');
+      // Body is Slovak too — one language per email — with no English wording.
+      expect(arg.text).toContain('Pre oddelenie Marketing bol odoslaný nový nápad.');
+      expect(arg.text).toContain('Zobraziť nápad:');
+      expect(arg.text).not.toContain('A new idea has been submitted');
+      expect(arg.text).not.toContain('View the idea:');
+    });
+
     test('does NOT send when the department has no notification emails', async () => {
       const { agent } = await loginAsUser(app);
       mockPrismaFunctions.department.findUnique.mockResolvedValue({
@@ -537,6 +577,7 @@ describe('Ideas API', () => {
       });
 
       const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
 
       expect(response.status).toBe(201);
       expect(mockedSendMail).not.toHaveBeenCalled();
@@ -548,6 +589,7 @@ describe('Ideas API', () => {
       mockedSendMail.mockResolvedValueOnce(false);
 
       const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
 
       expect(response.status).toBe(201);
       expect(response.body).toHaveProperty('title', 'Notify the department please');
@@ -560,6 +602,7 @@ describe('Ideas API', () => {
       mockedSendMail.mockRejectedValueOnce(new Error('unexpected transport blow-up'));
 
       const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
 
       expect(response.status).toBe(201);
       expect(mockedSendMail).toHaveBeenCalledTimes(1);

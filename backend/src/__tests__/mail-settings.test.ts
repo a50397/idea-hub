@@ -1,0 +1,421 @@
+import request from 'supertest';
+import express from 'express';
+import session from 'express-session';
+import cors from 'cors';
+
+// Define mock Prisma BEFORE importing routes.
+const mockPrismaFunctions: Record<string, any> = {
+  user: {
+    findUnique: jest.fn(),
+  },
+  mailSettings: {
+    findFirst: jest.fn(),
+    create: jest.fn(),
+    update: jest.fn(),
+  },
+};
+
+jest.mock('@prisma/client', () => {
+  return {
+    PrismaClient: jest.fn().mockImplementation(() => mockPrismaFunctions),
+    Role: {
+      USER: 'USER',
+      POWER_USER: 'POWER_USER',
+      ADMIN: 'ADMIN',
+    },
+  };
+});
+
+jest.mock('bcrypt');
+
+// The mailer is fully mocked: POST /test must call it and map its boolean without
+// touching real SMTP (or the DB-backed config).
+jest.mock('../utils/mailer', () => ({
+  sendMail: jest.fn(),
+}));
+
+// Import routes AFTER mocks. secretbox is REAL so the "set password" path proves
+// genuine encryption (and the test can decrypt the stored ciphertext back).
+import bcrypt from 'bcrypt';
+import authRoutes from '../routes/auth';
+import mailSettingsRoutes from '../routes/mail-settings';
+import { sendMail } from '../utils/mailer';
+import { decrypt } from '../utils/secretbox';
+
+const mockedSendMail = jest.mocked(sendMail);
+
+// 64 hex chars == 32 bytes.
+const TEST_KEY = '00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff';
+let savedKey: string | undefined;
+
+function createTestApp() {
+  const app = express();
+  app.use(cors());
+  app.use(express.json());
+  app.use(
+    session({
+      secret: 'test-secret',
+      resave: false,
+      saveUninitialized: false,
+      cookie: { secure: false },
+    })
+  );
+  app.use('/api/auth', authRoutes);
+  app.use('/api/mail-settings', mailSettingsRoutes);
+  return app;
+}
+
+async function loginAsUser(app: express.Application, role: string = 'ADMIN') {
+  const agent = request.agent(app);
+  const user = {
+    id: 'user123',
+    name: 'Test Admin',
+    email: 'admin@example.com',
+    passwordHash: 'hash',
+    role,
+  };
+  mockPrismaFunctions.user.findUnique.mockResolvedValue(user);
+  (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+  await agent.post('/api/auth/login').send({ email: 'admin@example.com', password: 'password123' });
+  return { agent, user };
+}
+
+// A body satisfying updateMailSettingsSchema (every field except password required).
+function validBody(overrides: Record<string, unknown> = {}) {
+  return {
+    enabled: false,
+    host: 'smtp.corp.example',
+    port: 2525,
+    secure: false,
+    username: '',
+    from: 'IdeaHub <no-reply@ideahub.local>',
+    language: 'en',
+    subjectTemplate: '',
+    ...overrides,
+  };
+}
+
+// Build a stored document. update is wired to echo the saved `data` back so the
+// masked response reflects what was persisted.
+function settingsDoc(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'settings1',
+    enabled: false,
+    host: '',
+    port: 587,
+    secure: false,
+    username: '',
+    passwordEnc: '',
+    from: 'IdeaHub <no-reply@ideahub.local>',
+    language: 'en',
+    subjectTemplate: '',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...overrides,
+  };
+}
+
+beforeAll(() => {
+  savedKey = process.env.MAIL_SETTINGS_KEY;
+  process.env.MAIL_SETTINGS_KEY = TEST_KEY;
+});
+
+afterAll(() => {
+  if (savedKey === undefined) delete process.env.MAIL_SETTINGS_KEY;
+  else process.env.MAIL_SETTINGS_KEY = savedKey;
+});
+
+describe('Mail settings API', () => {
+  let app: express.Application;
+
+  beforeEach(() => {
+    app = createTestApp();
+    jest.clearAllMocks();
+    // Default: echo saved data back so serialize reflects persistence.
+    mockPrismaFunctions.mailSettings.update.mockImplementation(
+      ({ data }: { data: Record<string, unknown> }) => Promise.resolve({ ...settingsDoc(), ...data })
+    );
+    mockPrismaFunctions.mailSettings.create.mockImplementation(
+      ({ data }: { data: Record<string, unknown> }) => Promise.resolve({ ...settingsDoc(), ...data })
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // Authz: 401 unauthenticated, 403 for non-admins, on every endpoint.
+  // -------------------------------------------------------------------------
+  describe('authorization', () => {
+    const endpoints: Array<[string, string, Record<string, unknown> | undefined]> = [
+      ['get', '/api/mail-settings', undefined],
+      ['put', '/api/mail-settings', validBody()],
+      ['post', '/api/mail-settings/test', { to: 'x@example.com' }],
+    ];
+
+    for (const [method, path, body] of endpoints) {
+      test(`returns 401 when unauthenticated on ${method.toUpperCase()} ${path}`, async () => {
+        let req = (request(app) as any)[method](path);
+        if (body) req = req.send(body);
+        const response = await req;
+        expect(response.status).toBe(401);
+        expect(response.body).toHaveProperty('error');
+      });
+    }
+
+    for (const role of ['USER', 'POWER_USER']) {
+      for (const [method, path, body] of endpoints) {
+        test(`${role} gets 403 on ${method.toUpperCase()} ${path}`, async () => {
+          const { agent } = await loginAsUser(app, role);
+          let req = (agent as any)[method](path);
+          if (body) req = req.send(body);
+          const response = await req;
+          expect(response.status).toBe(403);
+          expect(response.body).toHaveProperty('error');
+          // A non-admin must never trigger a write or a send.
+          expect(mockPrismaFunctions.mailSettings.update).not.toHaveBeenCalled();
+          expect(mockPrismaFunctions.mailSettings.create).not.toHaveBeenCalled();
+          expect(mockedSendMail).not.toHaveBeenCalled();
+        });
+      }
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // GET: masking + hasPassword in both states + defaults when absent.
+  // -------------------------------------------------------------------------
+  describe('GET /api/mail-settings', () => {
+    test('never exposes the password and reports hasPassword=true when one is stored', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(
+        settingsDoc({ enabled: true, host: 'smtp.corp.example', username: 'relay-user', passwordEnc: 'stored-ciphertext-value' })
+      );
+
+      const response = await agent.get('/api/mail-settings');
+
+      expect(response.status).toBe(200);
+      expect(response.body).not.toHaveProperty('passwordEnc');
+      expect(response.body).not.toHaveProperty('password');
+      expect(response.body.hasPassword).toBe(true);
+      expect(JSON.stringify(response.body)).not.toContain('stored-ciphertext-value');
+      expect(response.body).toMatchObject({
+        enabled: true,
+        host: 'smtp.corp.example',
+        username: 'relay-user',
+      });
+    });
+
+    test('reports hasPassword=false when no password is stored', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(settingsDoc({ passwordEnc: '' }));
+
+      const response = await agent.get('/api/mail-settings');
+
+      expect(response.status).toBe(200);
+      expect(response.body.hasPassword).toBe(false);
+      expect(response.body).not.toHaveProperty('passwordEnc');
+    });
+
+    test('returns disabled defaults (hasPassword=false) when no document exists yet', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(null);
+
+      const response = await agent.get('/api/mail-settings');
+
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({
+        enabled: false,
+        host: '',
+        port: 587,
+        secure: false,
+        username: '',
+        language: 'en',
+        subjectTemplate: '',
+        hasPassword: false,
+      });
+      expect(response.body).not.toHaveProperty('passwordEnc');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // PUT: save-time validation + password keep/set/wipe + masking on the way out.
+  // -------------------------------------------------------------------------
+  describe('PUT /api/mail-settings', () => {
+    test('creates the first document and returns a masked shape', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(null);
+
+      const response = await agent.put('/api/mail-settings').send(validBody({ host: 'smtp.corp.example' }));
+
+      expect(response.status).toBe(200);
+      expect(mockPrismaFunctions.mailSettings.create).toHaveBeenCalledTimes(1);
+      const created = mockPrismaFunctions.mailSettings.create.mock.calls[0][0].data;
+      expect(created.passwordEnc).toBe(''); // username empty -> no password
+      expect(response.body).not.toHaveProperty('passwordEnc');
+      expect(response.body.hasPassword).toBe(false);
+    });
+
+    test('rejects enabled=true with an empty host (400) and never writes', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(null);
+
+      const response = await agent.put('/api/mail-settings').send(validBody({ enabled: true, host: '' }));
+
+      expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty('error');
+      expect(mockPrismaFunctions.mailSettings.create).not.toHaveBeenCalled();
+      expect(mockPrismaFunctions.mailSettings.update).not.toHaveBeenCalled();
+    });
+
+    test('encrypts and stores a NEW password (set path); ciphertext != plaintext', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(settingsDoc({ id: 's1', passwordEnc: '' }));
+
+      const response = await agent
+        .put('/api/mail-settings')
+        .send(validBody({ username: 'relay-user', password: 'new-secret-pass' }));
+
+      expect(response.status).toBe(200);
+      expect(mockPrismaFunctions.mailSettings.update).toHaveBeenCalledTimes(1);
+      const savedData = mockPrismaFunctions.mailSettings.update.mock.calls[0][0].data;
+      expect(savedData.passwordEnc).not.toBe('new-secret-pass');
+      expect(savedData.passwordEnc.length).toBeGreaterThan(0);
+      // Prove it is a real, reversible encryption of the submitted secret.
+      expect(decrypt(savedData.passwordEnc)).toBe('new-secret-pass');
+      // The response never echoes the password back.
+      expect(response.body).not.toHaveProperty('password');
+      expect(response.body).not.toHaveProperty('passwordEnc');
+      expect(response.body.hasPassword).toBe(true);
+    });
+
+    test('KEEPS the existing password when none is provided (keep path)', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(
+        settingsDoc({ id: 's1', username: 'relay-user', passwordEnc: 'EXISTING_ENC' })
+      );
+
+      const response = await agent
+        .put('/api/mail-settings')
+        .send(validBody({ username: 'relay-user' })); // no password key
+
+      expect(response.status).toBe(200);
+      const savedData = mockPrismaFunctions.mailSettings.update.mock.calls[0][0].data;
+      expect(savedData.passwordEnc).toBe('EXISTING_ENC');
+    });
+
+    test('treats an empty-string password as "keep" (not a wipe)', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(
+        settingsDoc({ id: 's1', username: 'relay-user', passwordEnc: 'EXISTING_ENC' })
+      );
+
+      const response = await agent
+        .put('/api/mail-settings')
+        .send(validBody({ username: 'relay-user', password: '' }));
+
+      expect(response.status).toBe(200);
+      const savedData = mockPrismaFunctions.mailSettings.update.mock.calls[0][0].data;
+      expect(savedData.passwordEnc).toBe('EXISTING_ENC');
+    });
+
+    test('WIPES the stored password when the username is saved empty (wipe path)', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(
+        settingsDoc({ id: 's1', username: 'relay-user', passwordEnc: 'EXISTING_ENC' })
+      );
+
+      const response = await agent.put('/api/mail-settings').send(validBody({ username: '' }));
+
+      expect(response.status).toBe(200);
+      const savedData = mockPrismaFunctions.mailSettings.update.mock.calls[0][0].data;
+      expect(savedData.passwordEnc).toBe('');
+    });
+
+    test('an empty username wins over a provided password (wipe precedence)', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(
+        settingsDoc({ id: 's1', username: 'relay-user', passwordEnc: 'EXISTING_ENC' })
+      );
+
+      const response = await agent
+        .put('/api/mail-settings')
+        .send(validBody({ username: '', password: 'ignored-because-no-username' }));
+
+      expect(response.status).toBe(200);
+      const savedData = mockPrismaFunctions.mailSettings.update.mock.calls[0][0].data;
+      expect(savedData.passwordEnc).toBe('');
+    });
+
+    test('trims host/username/from/subjectTemplate before saving', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(settingsDoc({ id: 's1' }));
+
+      await agent.put('/api/mail-settings').send(
+        validBody({
+          host: '  smtp.corp.example  ',
+          username: '  relay-user  ',
+          from: '  IdeaHub <no-reply@ideahub.local>  ',
+          subjectTemplate: '  Hi {title}  ',
+        })
+      );
+
+      const savedData = mockPrismaFunctions.mailSettings.update.mock.calls[0][0].data;
+      expect(savedData.host).toBe('smtp.corp.example');
+      expect(savedData.username).toBe('relay-user');
+      expect(savedData.from).toBe('IdeaHub <no-reply@ideahub.local>');
+      expect(savedData.subjectTemplate).toBe('Hi {title}');
+    });
+
+    test.each([
+      ['a non-integer port', { port: 25.5 }],
+      ['a port below 1', { port: 0 }],
+      ['a port above 65535', { port: 70000 }],
+      ['an over-long host', { host: 'a'.repeat(254) }],
+      ['an unsupported language', { language: 'de' }],
+      ['an empty from', { from: '   ' }],
+    ])('rejects %s with 400 and does not write', async (_label, override) => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockPrismaFunctions.mailSettings.findFirst.mockResolvedValue(null);
+
+      const response = await agent.put('/api/mail-settings').send(validBody(override));
+
+      expect(response.status).toBe(400);
+      expect(mockPrismaFunctions.mailSettings.create).not.toHaveBeenCalled();
+      expect(mockPrismaFunctions.mailSettings.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // POST /test: calls the mailer with the saved settings and maps its boolean.
+  // -------------------------------------------------------------------------
+  describe('POST /api/mail-settings/test', () => {
+    test('sends via the mailer and maps ok=true', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockedSendMail.mockResolvedValue(true);
+
+      const response = await agent.post('/api/mail-settings/test').send({ to: 'admin@example.com' });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ ok: true });
+      expect(mockedSendMail).toHaveBeenCalledTimes(1);
+      expect(mockedSendMail.mock.calls[0][0]).toMatchObject({ to: 'admin@example.com' });
+    });
+
+    test('maps a best-effort failure to 200 { ok: false }', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockedSendMail.mockResolvedValue(false);
+
+      const response = await agent.post('/api/mail-settings/test').send({ to: 'admin@example.com' });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ ok: false });
+    });
+
+    test('rejects an invalid recipient with 400 and never sends', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+
+      const response = await agent.post('/api/mail-settings/test').send({ to: 'not-an-email' });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty('error');
+      expect(mockedSendMail).not.toHaveBeenCalled();
+    });
+  });
+});

@@ -1,29 +1,74 @@
-// Mail (outbound SMTP) configuration.
+// Mail (outbound SMTP) configuration — now ADMIN-UI-managed and DB-backed.
 //
-// Mirrors config/sso.ts: every value is read lazily from process.env at call
-// time (never cached at module load) so that tests can set MAIL_* / SMTP_*
-// variables before a send, and so the deployment can be reconfigured without
-// code changes.
+// The single MailSettings document (see prisma/schema.prisma) is the source of
+// truth: an admin edits it via /api/mail-settings (routes/mail-settings.ts). This
+// module reads it and derives the effective config the mailer keys off. There are
+// NO MAIL_* / SMTP_* environment reads anymore — the only env this feature touches
+// is MAIL_SETTINGS_KEY, consumed solely by utils/secretbox.ts for password
+// encryption.
 //
-// Mail is BEST-EFFORT and OFF by default. `enabled` reflects the raw
-// MAIL_ENABLED flag; `effectiveEnabled` additionally requires SMTP_HOST, so a
-// half-configured deployment (flag on, no host) degrades to the disabled,
-// log-only behavior instead of opening sockets to nowhere. The boot guard in
-// index.ts turns that same half-configured state into a hard failure in
-// production. validateMailConfig() is a pure status function (no process.exit)
-// so it stays unit-testable and the caller decides fail-fast vs. warn.
+// Read path: findFirst() ?? in-code defaults, so an absent document means "mail
+// disabled with defaults" (no boot seed is required). Mail stays BEST-EFFORT and
+// OFF by default: `effectiveEnabled` requires both `enabled` AND a non-empty host,
+// so a half-configured deployment (enabled with no host) degrades to disabled,
+// log-only behavior instead of opening sockets to nowhere. Save-time validation in
+// the PUT route rejects the enabled-but-hostless combination up front.
 
-const DEFAULT_SMTP_PORT = 587;
+import prisma from '../lib/prisma';
+import { decrypt } from '../utils/secretbox';
+
+// Notification-wording language. 'en' is the built-in default (English); 'sk'
+// selects the Slovak wording. Stored on the settings document and validated to the
+// en|sk enum by the PUT route; normalized defensively here on read.
+export type MailLang = 'en' | 'sk';
+const SUPPORTED_MAIL_LANGS: readonly MailLang[] = ['en', 'sk'];
+const DEFAULT_MAIL_LANG: MailLang = 'en';
+
 const DEFAULT_MAIL_FROM = 'IdeaHub <no-reply@ideahub.local>';
+const DEFAULT_SMTP_PORT = 587;
 
-export function isMailEnabled(): boolean {
-  return process.env.MAIL_ENABLED === 'true';
+function normalizeLang(value: string | null | undefined): MailLang {
+  const raw = (value ?? '').trim();
+  return (SUPPORTED_MAIL_LANGS as readonly string[]).includes(raw)
+    ? (raw as MailLang)
+    : DEFAULT_MAIL_LANG;
 }
 
-export interface MailConfig {
-  /** Raw MAIL_ENABLED === 'true'. */
+// The in-code defaults used when no MailSettings document exists yet. Kept in one
+// place so the GET route (masked view of an absent doc) and the effective-config
+// derivation agree. NOTE: `passwordEnc` is intentionally part of the raw defaults
+// but is NEVER surfaced by the API.
+export interface MailSettingsRecord {
   enabled: boolean;
-  /** enabled AND an SMTP_HOST is set — what the mailer actually keys off. */
+  host: string;
+  port: number;
+  secure: boolean;
+  username: string;
+  passwordEnc: string;
+  from: string;
+  language: string;
+  subjectTemplate: string;
+}
+
+export const MAIL_SETTINGS_DEFAULTS: MailSettingsRecord = {
+  enabled: false,
+  host: '',
+  port: DEFAULT_SMTP_PORT,
+  secure: false,
+  username: '',
+  passwordEnc: '',
+  from: DEFAULT_MAIL_FROM,
+  language: DEFAULT_MAIL_LANG,
+  subjectTemplate: '',
+};
+
+// The effective config the mailer + templates consume. `pass` is the DECRYPTED
+// password ('' when none or undecryptable). `hasPassword` reflects whether a
+// ciphertext is stored at all; `passwordDecryptable` is false when a stored
+// ciphertext failed to decrypt (wrong/rotated MAIL_SETTINGS_KEY) — the mailer uses
+// that to warn without ever logging the secret.
+export interface EffectiveMailConfig {
+  enabled: boolean;
   effectiveEnabled: boolean;
   host: string;
   port: number;
@@ -31,66 +76,70 @@ export interface MailConfig {
   user: string;
   pass: string;
   from: string;
-}
-
-export function getMailConfig(): MailConfig {
-  const enabled = isMailEnabled();
-  const host = process.env.SMTP_HOST || '';
-  const parsedPort = Number.parseInt(process.env.SMTP_PORT ?? '', 10);
-  return {
-    enabled,
-    effectiveEnabled: enabled && host.length > 0,
-    host,
-    port: Number.isNaN(parsedPort) ? DEFAULT_SMTP_PORT : parsedPort,
-    // Implicit TLS (SMTPS, usually :465). false => STARTTLS on the plain port.
-    secure: process.env.SMTP_SECURE === 'true',
-    // Auth is optional: company relays are frequently IP-allowlisted. The mailer
-    // only attaches an auth object when a user is present (see utils/mailer.ts).
-    user: process.env.SMTP_USER || '',
-    pass: process.env.SMTP_PASS || '',
-    from: process.env.MAIL_FROM || DEFAULT_MAIL_FROM,
-  };
-}
-
-export interface MailConfigStatus {
-  /** true when the configuration is coherent (which includes mail being off). */
-  ok: boolean;
-  /** Set only for a fatal misconfiguration: enabled but no SMTP_HOST. */
-  fatal?: string;
-  /** Non-fatal advisories worth logging on boot. */
-  warnings: string[];
+  language: MailLang;
+  /** Empty string means "use the built-in subject wording". */
+  subjectTemplate: string;
+  hasPassword: boolean;
+  passwordDecryptable: boolean;
 }
 
 /**
- * Pure boot-time validation (no side effects, no process.exit) so it can be
- * unit-tested and so the caller decides fail-fast vs. warn per environment.
- *
- * - Disabled                -> always ok (nothing to validate; the default).
- * - Enabled, no SMTP_HOST   -> fatal-shaped: index.ts exits outside development
- *                              and warns + degrades to disabled in development.
- * - Enabled, host present   -> ok, plus soft advisories (e.g. user without pass).
+ * Read the singleton MailSettings document, or the in-code defaults when none
+ * exists yet. May reject if the database is unreachable — the mailer awaits this
+ * inside its own try/catch and degrades to a logged failure (never throws).
  */
-export function validateMailConfig(): MailConfigStatus {
-  const cfg = getMailConfig();
-  const warnings: string[] = [];
+export async function getMailSettingsRecord(): Promise<MailSettingsRecord> {
+  const doc = await prisma.mailSettings.findFirst();
+  if (!doc) return { ...MAIL_SETTINGS_DEFAULTS };
+  return {
+    enabled: doc.enabled,
+    host: doc.host,
+    port: doc.port,
+    secure: doc.secure,
+    username: doc.username,
+    passwordEnc: doc.passwordEnc,
+    from: doc.from,
+    language: doc.language,
+    subjectTemplate: doc.subjectTemplate,
+  };
+}
 
-  if (!cfg.enabled) {
-    return { ok: true, warnings };
+/**
+ * Derive the effective mail configuration from the stored settings, decrypting the
+ * password (null-tolerant). `effectiveEnabled` is `enabled && host` so a
+ * half-configured record stays log-only.
+ */
+export async function getEffectiveMailConfig(): Promise<EffectiveMailConfig> {
+  const s = await getMailSettingsRecord();
+
+  const host = (s.host ?? '').trim();
+  const hasPassword = (s.passwordEnc ?? '').length > 0;
+
+  let pass = '';
+  let passwordDecryptable = false;
+  if (hasPassword) {
+    const decrypted = decrypt(s.passwordEnc);
+    if (decrypted !== null) {
+      pass = decrypted;
+      passwordDecryptable = true;
+    }
+    // decrypted === null -> undecryptable; treated as no password (mailer warns).
   }
 
-  if (!cfg.host) {
-    return {
-      ok: false,
-      fatal: 'MAIL_ENABLED=true but SMTP_HOST is not set.',
-      warnings,
-    };
-  }
+  const subjectTemplate = (s.subjectTemplate ?? '').trim().length > 0 ? s.subjectTemplate : '';
 
-  if (cfg.user && !cfg.pass) {
-    warnings.push(
-      'SMTP_USER is set but SMTP_PASS is empty; the relay may reject authentication.'
-    );
-  }
-
-  return { ok: true, warnings };
+  return {
+    enabled: s.enabled,
+    effectiveEnabled: s.enabled && host.length > 0,
+    host,
+    port: s.port,
+    secure: s.secure,
+    user: s.username ?? '',
+    pass,
+    from: s.from && s.from.length > 0 ? s.from : DEFAULT_MAIL_FROM,
+    language: normalizeLang(s.language),
+    subjectTemplate,
+    hasPassword,
+    passwordDecryptable,
+  };
 }

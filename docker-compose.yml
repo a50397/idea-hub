@@ -70,17 +70,14 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
       ADMIN_NAME: ${ADMIN_NAME:-Admin}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
-      # Mail (best-effort outbound email, disabled by default). No :? fail-fast
-      # guards — mail is optional-by-design; the backend boot guard owns the
-      # enabled-but-misconfigured case. For local capture, start the mailpit
-      # profile and set MAIL_ENABLED=true / SMTP_HOST=mailpit / SMTP_PORT=1025.
-      MAIL_ENABLED: ${MAIL_ENABLED:-false}
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_SECURE: ${SMTP_SECURE:-false}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASS: ${SMTP_PASS:-}
-      MAIL_FROM: "${MAIL_FROM:-IdeaHub <no-reply@ideahub.local>}"
+      # Mail is ADMIN-MANAGED at runtime (the Email settings page) and stored in the
+      # database — there are no SMTP_* / MAIL_* env vars anymore. The ONLY mail env
+      # is MAIL_SETTINGS_KEY, which encrypts the stored SMTP password (AES-256-GCM).
+      # Optional in dev: if unset the backend generates an ephemeral key and warns
+      # (any previously saved password stays undecryptable until a stable key is
+      # provided), so set it in .env for stable local dev. Generate one with:
+      #   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+      MAIL_SETTINGS_KEY: ${MAIL_SETTINGS_KEY:-}
     expose:
       - '3001'
     depends_on:
@@ -93,10 +90,10 @@ services:
   # Mailpit: local SMTP sink + web UI for exercising the mail path in dev.
   # Opt-in only via the "mail" profile so it never starts for a normal `up`:
   #   docker compose --profile mail up -d mailpit
-  # Then point the backend at it (MAIL_ENABLED=true, SMTP_HOST=mailpit for an
-  # in-compose backend or localhost for a host-run one, SMTP_PORT=1025) and read
-  # captured mail at http://localhost:8025. See dev/MAIL-TESTING.md. Dev-only;
-  # not present in docker-compose.prod.yml.
+  # Then configure the backend via the admin Email settings page (SMTP host
+  # `mailpit` for an in-compose backend or `localhost` for a host-run one, port
+  # 1025, no auth, enabled on) and read captured mail at http://localhost:8025.
+  # See dev/MAIL-TESTING.md. Dev-only; not present in docker-compose.prod.yml.
   mailpit:
     image: axllent/mailpit:v1.30.5
     container_name: ideahub-mailpit

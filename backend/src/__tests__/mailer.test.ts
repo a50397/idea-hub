@@ -1,10 +1,19 @@
-// Unit coverage for the best-effort mail infrastructure:
-//   - utils/mailer.ts   (sendMail: never throws, log-only when disabled)
-//   - config/mail.ts    (lazy getters + pure validateMailConfig)
+// Unit coverage for the best-effort mail infrastructure after the DB-backed
+// rework:
+//   - config/mail.ts   (async getEffectiveMailConfig over the singleton settings)
+//   - utils/mailer.ts  (sendMail: never throws; log-only when disabled; async)
 //
-// nodemailer is fully mocked (an explicit factory keeps the esModuleInterop
-// default-import happy across ts-jest). Config is read lazily from process.env,
-// so each test sets env then calls — mirroring the SSO suite's env save/restore.
+// Prisma is mocked at the @prisma/client boundary (so lib/prisma resolves to the
+// mock) to control the single MailSettings document. nodemailer is mocked. The
+// REAL secretbox is used with a fixed test key so decryption is genuine.
+
+const mockPrisma: { mailSettings: { findFirst: jest.Mock } } = {
+  mailSettings: { findFirst: jest.fn() },
+};
+
+jest.mock('@prisma/client', () => ({
+  PrismaClient: jest.fn().mockImplementation(() => mockPrisma),
+}));
 
 jest.mock('nodemailer', () => ({
   createTransport: jest.fn(),
@@ -12,27 +21,39 @@ jest.mock('nodemailer', () => ({
 
 import nodemailer from 'nodemailer';
 import { sendMail } from '../utils/mailer';
-import { getMailConfig, validateMailConfig, isMailEnabled } from '../config/mail';
+import { getEffectiveMailConfig } from '../config/mail';
+import { encrypt } from '../utils/secretbox';
 
 const createTransport = nodemailer.createTransport as jest.Mock;
+const findFirst = mockPrisma.mailSettings.findFirst;
 
 const DEFAULT_FROM = 'IdeaHub <no-reply@ideahub.local>';
+// 64 hex chars == 32 bytes (the documented hex key form).
+const TEST_KEY = '00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff';
 
-// Every env var the mail module reads. Saved once, restored after the suite so
-// this file never leaks config into sibling suites in the same worker.
-const MAIL_ENV_KEYS = [
-  'MAIL_ENABLED',
-  'SMTP_HOST',
-  'SMTP_PORT',
-  'SMTP_SECURE',
-  'SMTP_USER',
-  'SMTP_PASS',
-  'MAIL_FROM',
-];
-const savedEnv: Record<string, string | undefined> = {};
-
+let savedKey: string | undefined;
 let logSpy: jest.SpyInstance;
 let errorSpy: jest.SpyInstance;
+let warnSpy: jest.SpyInstance;
+
+/** Build a MailSettings-shaped document with disabled defaults + overrides. */
+function doc(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'settings1',
+    enabled: false,
+    host: '',
+    port: 587,
+    secure: false,
+    username: '',
+    passwordEnc: '',
+    from: DEFAULT_FROM,
+    language: 'en',
+    subjectTemplate: '',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...overrides,
+  };
+}
 
 /** Wire createTransport to a fresh sendMail mock and return it. */
 function mockTransport(sendImpl: jest.Mock): jest.Mock {
@@ -41,35 +62,36 @@ function mockTransport(sendImpl: jest.Mock): jest.Mock {
 }
 
 beforeAll(() => {
-  for (const k of MAIL_ENV_KEYS) savedEnv[k] = process.env[k];
+  savedKey = process.env.MAIL_SETTINGS_KEY;
+  process.env.MAIL_SETTINGS_KEY = TEST_KEY;
 });
 
 afterAll(() => {
-  for (const k of MAIL_ENV_KEYS) {
-    if (savedEnv[k] === undefined) delete process.env[k];
-    else process.env[k] = savedEnv[k];
-  }
+  if (savedKey === undefined) delete process.env.MAIL_SETTINGS_KEY;
+  else process.env.MAIL_SETTINGS_KEY = savedKey;
 });
 
 beforeEach(() => {
-  // Clean slate: every mail var unset -> disabled defaults.
-  for (const k of MAIL_ENV_KEYS) delete process.env[k];
+  findFirst.mockReset();
   createTransport.mockReset();
   logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
   errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+  warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
 });
 
 afterEach(() => {
   logSpy.mockRestore();
   errorSpy.mockRestore();
+  warnSpy.mockRestore();
 });
 
 // ---------------------------------------------------------------------------
-// config/mail.ts — getMailConfig()
+// config/mail.ts — getEffectiveMailConfig()
 // ---------------------------------------------------------------------------
-describe('getMailConfig', () => {
-  it('returns disabled defaults when nothing is set', () => {
-    const cfg = getMailConfig();
+describe('getEffectiveMailConfig', () => {
+  it('returns disabled defaults when no settings document exists', async () => {
+    findFirst.mockResolvedValue(null);
+    const cfg = await getEffectiveMailConfig();
     expect(cfg.enabled).toBe(false);
     expect(cfg.effectiveEnabled).toBe(false);
     expect(cfg.host).toBe('');
@@ -78,104 +100,70 @@ describe('getMailConfig', () => {
     expect(cfg.user).toBe('');
     expect(cfg.pass).toBe('');
     expect(cfg.from).toBe(DEFAULT_FROM);
+    expect(cfg.language).toBe('en');
+    expect(cfg.subjectTemplate).toBe('');
+    expect(cfg.hasPassword).toBe(false);
+    expect(cfg.passwordDecryptable).toBe(false);
   });
 
-  it('reads host/port/secure/user/pass/from from the environment', () => {
-    process.env.MAIL_ENABLED = 'true';
-    process.env.SMTP_HOST = 'smtp.corp.example';
-    process.env.SMTP_PORT = '465';
-    process.env.SMTP_SECURE = 'true';
-    process.env.SMTP_USER = 'relay-user';
-    process.env.SMTP_PASS = 'relay-pass';
-    process.env.MAIL_FROM = 'Ideas <ideas@corp.example>';
-
-    const cfg = getMailConfig();
+  it('reads host/port/secure/username/from and is effectiveEnabled when enabled with a host', async () => {
+    findFirst.mockResolvedValue(
+      doc({
+        enabled: true,
+        host: 'smtp.corp.example',
+        port: 465,
+        secure: true,
+        username: 'relay-user',
+        from: 'Ideas <ideas@corp.example>',
+      })
+    );
+    const cfg = await getEffectiveMailConfig();
     expect(cfg.enabled).toBe(true);
     expect(cfg.effectiveEnabled).toBe(true);
     expect(cfg.host).toBe('smtp.corp.example');
     expect(cfg.port).toBe(465);
     expect(cfg.secure).toBe(true);
     expect(cfg.user).toBe('relay-user');
-    expect(cfg.pass).toBe('relay-pass');
     expect(cfg.from).toBe('Ideas <ideas@corp.example>');
   });
 
-  it('falls back to port 587 when SMTP_PORT is non-numeric', () => {
-    process.env.SMTP_PORT = 'not-a-port';
-    expect(getMailConfig().port).toBe(587);
-  });
-
-  it('is effectiveEnabled only when enabled AND a host is present', () => {
-    process.env.MAIL_ENABLED = 'true';
-    process.env.SMTP_HOST = 'smtp.corp.example';
-    expect(getMailConfig().effectiveEnabled).toBe(true);
-  });
-
-  it('is NOT effectiveEnabled when enabled but SMTP_HOST is missing', () => {
-    process.env.MAIL_ENABLED = 'true';
-    const cfg = getMailConfig();
+  it('is enabled but NOT effectiveEnabled when the host is empty', async () => {
+    findFirst.mockResolvedValue(doc({ enabled: true, host: '' }));
+    const cfg = await getEffectiveMailConfig();
     expect(cfg.enabled).toBe(true);
     expect(cfg.effectiveEnabled).toBe(false);
   });
-});
 
-// ---------------------------------------------------------------------------
-// config/mail.ts — isMailEnabled()
-// ---------------------------------------------------------------------------
-describe('isMailEnabled', () => {
-  it('only the exact string "true" enables mail', () => {
-    process.env.MAIL_ENABLED = 'true';
-    expect(isMailEnabled()).toBe(true);
-
-    for (const v of ['TRUE', 'True', '1', 'yes', 'on', '']) {
-      process.env.MAIL_ENABLED = v;
-      expect(isMailEnabled()).toBe(false);
-    }
-    delete process.env.MAIL_ENABLED;
-    expect(isMailEnabled()).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// config/mail.ts — validateMailConfig()
-// ---------------------------------------------------------------------------
-describe('validateMailConfig', () => {
-  it('is ok when disabled, regardless of other vars', () => {
-    // Deliberately set a broken-looking combo — disabled short-circuits it.
-    process.env.SMTP_HOST = '';
-    process.env.SMTP_USER = 'u';
-    const status = validateMailConfig();
-    expect(status.ok).toBe(true);
-    expect(status.fatal).toBeUndefined();
-    expect(status.warnings).toEqual([]);
+  it('decrypts a stored password (roundtrip via the real secretbox)', async () => {
+    findFirst.mockResolvedValue(
+      doc({ enabled: true, host: 'h', username: 'u', passwordEnc: encrypt('relay-pass') })
+    );
+    const cfg = await getEffectiveMailConfig();
+    expect(cfg.pass).toBe('relay-pass');
+    expect(cfg.hasPassword).toBe(true);
+    expect(cfg.passwordDecryptable).toBe(true);
   });
 
-  it('returns a fatal-shaped result when enabled but SMTP_HOST is missing', () => {
-    process.env.MAIL_ENABLED = 'true';
-    const status = validateMailConfig();
-    expect(status.ok).toBe(false);
-    expect(status.fatal).toContain('SMTP_HOST');
-    expect(status.warnings).toEqual([]);
+  it('tolerates an undecryptable stored password (null-safe, no throw)', async () => {
+    findFirst.mockResolvedValue(
+      doc({ enabled: true, host: 'h', username: 'u', passwordEnc: 'not-valid-ciphertext' })
+    );
+    const cfg = await getEffectiveMailConfig();
+    expect(cfg.pass).toBe('');
+    expect(cfg.hasPassword).toBe(true);
+    expect(cfg.passwordDecryptable).toBe(false);
   });
 
-  it('is ok when enabled with a host present', () => {
-    process.env.MAIL_ENABLED = 'true';
-    process.env.SMTP_HOST = 'smtp.corp.example';
-    const status = validateMailConfig();
-    expect(status.ok).toBe(true);
-    expect(status.fatal).toBeUndefined();
-    expect(status.warnings).toEqual([]);
+  it('normalizes the language (sk kept; unknown falls back to en)', async () => {
+    findFirst.mockResolvedValue(doc({ language: 'sk' }));
+    expect((await getEffectiveMailConfig()).language).toBe('sk');
+    findFirst.mockResolvedValue(doc({ language: 'de' }));
+    expect((await getEffectiveMailConfig()).language).toBe('en');
   });
 
-  it('warns when SMTP_USER is set but SMTP_PASS is empty', () => {
-    process.env.MAIL_ENABLED = 'true';
-    process.env.SMTP_HOST = 'smtp.corp.example';
-    process.env.SMTP_USER = 'relay-user';
-    const status = validateMailConfig();
-    expect(status.ok).toBe(true);
-    expect(status.fatal).toBeUndefined();
-    expect(status.warnings).toHaveLength(1);
-    expect(status.warnings[0]).toContain('SMTP_PASS');
+  it('treats a whitespace-only subjectTemplate as empty (built-in subject)', async () => {
+    findFirst.mockResolvedValue(doc({ subjectTemplate: '   ' }));
+    expect((await getEffectiveMailConfig()).subjectTemplate).toBe('');
   });
 });
 
@@ -183,38 +171,30 @@ describe('validateMailConfig', () => {
 // utils/mailer.ts — sendMail() disabled / effective-disabled (log-only)
 // ---------------------------------------------------------------------------
 describe('sendMail (disabled / log-only)', () => {
-  it('resolves true and never builds a transport when mail is disabled (default)', async () => {
+  it('resolves true and never builds a transport when disabled (no document)', async () => {
+    findFirst.mockResolvedValue(null);
     await expect(
       sendMail({ to: 'alice@example.com', subject: 'Hello', text: 'Body' })
     ).resolves.toBe(true);
-
     expect(createTransport).not.toHaveBeenCalled();
-    expect(logSpy).toHaveBeenCalledWith(
-      '[MAIL disabled] to=alice@example.com subject=Hello'
-    );
+    expect(logSpy).toHaveBeenCalledWith('[MAIL disabled] to=alice@example.com subject=Hello');
   });
 
-  it('treats enabled-but-no-host as disabled (effective-disabled, no transport)', async () => {
-    process.env.MAIL_ENABLED = 'true'; // enabled flag on, but SMTP_HOST missing
-
+  it('treats enabled-but-no-host as disabled (no transport)', async () => {
+    findFirst.mockResolvedValue(doc({ enabled: true, host: '' }));
     await expect(
       sendMail({ to: 'alice@example.com', subject: 'Hello', text: 'Body' })
     ).resolves.toBe(true);
-
     expect(createTransport).not.toHaveBeenCalled();
-    expect(logSpy).toHaveBeenCalledWith(
-      '[MAIL disabled] to=alice@example.com subject=Hello'
-    );
+    expect(logSpy).toHaveBeenCalledWith('[MAIL disabled] to=alice@example.com subject=Hello');
   });
 
   it('joins an array of recipients for the disabled log line', async () => {
+    findFirst.mockResolvedValue(null);
     await expect(
       sendMail({ to: ['a@x.com', 'b@y.com'], subject: 'Hi', text: 'Body' })
     ).resolves.toBe(true);
-
-    expect(logSpy).toHaveBeenCalledWith(
-      '[MAIL disabled] to=a@x.com, b@y.com subject=Hi'
-    );
+    expect(logSpy).toHaveBeenCalledWith('[MAIL disabled] to=a@x.com, b@y.com subject=Hi');
   });
 });
 
@@ -222,13 +202,8 @@ describe('sendMail (disabled / log-only)', () => {
 // utils/mailer.ts — sendMail() enabled (real transport path)
 // ---------------------------------------------------------------------------
 describe('sendMail (enabled)', () => {
-  beforeEach(() => {
-    process.env.MAIL_ENABLED = 'true';
-    process.env.SMTP_HOST = 'smtp.corp.example';
-    process.env.SMTP_PORT = '2525';
-  });
-
-  it('creates a transport with host/port/secure and NO auth when SMTP_USER is unset', async () => {
+  it('creates a transport with host/port/secure and NO auth when the username is unset', async () => {
+    findFirst.mockResolvedValue(doc({ enabled: true, host: 'smtp.corp.example', port: 2525 }));
     const send = mockTransport(jest.fn().mockResolvedValue({ messageId: 'x' }));
 
     await expect(
@@ -239,9 +214,7 @@ describe('sendMail (enabled)', () => {
     expect(createTransport).toHaveBeenCalledWith(
       expect.objectContaining({ host: 'smtp.corp.example', port: 2525, secure: false })
     );
-    // Auth must be absent for an IP-allowlisted relay.
     expect(createTransport.mock.calls[0][0]).not.toHaveProperty('auth');
-
     expect(send).toHaveBeenCalledWith(
       expect.objectContaining({
         from: DEFAULT_FROM,
@@ -252,9 +225,15 @@ describe('sendMail (enabled)', () => {
     );
   });
 
-  it('includes an auth object only when SMTP_USER is set', async () => {
-    process.env.SMTP_USER = 'relay-user';
-    process.env.SMTP_PASS = 'relay-pass';
+  it('includes an auth object (with the decrypted password) only when a username is set', async () => {
+    findFirst.mockResolvedValue(
+      doc({
+        enabled: true,
+        host: 'smtp.corp.example',
+        username: 'relay-user',
+        passwordEnc: encrypt('relay-pass'),
+      })
+    );
     mockTransport(jest.fn().mockResolvedValue({}));
 
     await sendMail({ to: 'alice@example.com', subject: 'Hello', text: 'Body' });
@@ -264,50 +243,65 @@ describe('sendMail (enabled)', () => {
     );
   });
 
-  it('passes SMTP_SECURE=true through as implicit TLS', async () => {
-    process.env.SMTP_SECURE = 'true';
+  it('passes secure=true through as implicit TLS', async () => {
+    findFirst.mockResolvedValue(doc({ enabled: true, host: 'smtp.corp.example', secure: true }));
     mockTransport(jest.fn().mockResolvedValue({}));
 
     await sendMail({ to: 'alice@example.com', subject: 'Hello', text: 'Body' });
 
-    expect(createTransport).toHaveBeenCalledWith(
-      expect.objectContaining({ secure: true })
-    );
+    expect(createTransport).toHaveBeenCalledWith(expect.objectContaining({ secure: true }));
   });
 
   it('forwards an array of recipients unchanged to sendMail', async () => {
+    findFirst.mockResolvedValue(doc({ enabled: true, host: 'smtp.corp.example' }));
     const send = mockTransport(jest.fn().mockResolvedValue({}));
 
     await sendMail({ to: ['a@x.com', 'b@y.com'], subject: 'Hi', text: 'Body' });
 
-    expect(send).toHaveBeenCalledWith(
-      expect.objectContaining({ to: ['a@x.com', 'b@y.com'] })
-    );
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ to: ['a@x.com', 'b@y.com'] }));
   });
 
   it('includes html only when provided', async () => {
+    findFirst.mockResolvedValue(doc({ enabled: true, host: 'smtp.corp.example' }));
     const send = mockTransport(jest.fn().mockResolvedValue({}));
 
-    await sendMail({
-      to: 'alice@example.com',
-      subject: 'Hello',
-      text: 'Body',
-      html: '<p>Body</p>',
-    });
+    await sendMail({ to: 'alice@example.com', subject: 'Hello', text: 'Body', html: '<p>Body</p>' });
 
-    expect(send).toHaveBeenCalledWith(
-      expect.objectContaining({ html: '<p>Body</p>' })
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ html: '<p>Body</p>' }));
+  });
+
+  it('warns (without logging the secret) on an undecryptable stored password and sends without it', async () => {
+    findFirst.mockResolvedValue(
+      doc({
+        enabled: true,
+        host: 'smtp.corp.example',
+        username: 'relay-user',
+        passwordEnc: 'garbage-that-will-not-decrypt',
+      })
+    );
+    mockTransport(jest.fn().mockResolvedValue({}));
+
+    await expect(
+      sendMail({ to: 'alice@example.com', subject: 'Hello', text: 'Body' })
+    ).resolves.toBe(true);
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const warnMsg = String(warnSpy.mock.calls[0][0]);
+    expect(warnMsg).toContain('MAIL_SETTINGS_KEY');
+    expect(warnMsg).not.toContain('garbage-that-will-not-decrypt');
+    // Auth still attempted for the configured user, but with an empty password.
+    expect(createTransport).toHaveBeenCalledWith(
+      expect.objectContaining({ auth: { user: 'relay-user', pass: '' } })
     );
   });
 });
 
 // ---------------------------------------------------------------------------
-// utils/mailer.ts — sendMail() failure paths (best-effort: never throws)
+// utils/mailer.ts — failure paths (best-effort: never throws)
 // ---------------------------------------------------------------------------
 describe('sendMail (failure is swallowed)', () => {
   beforeEach(() => {
-    process.env.MAIL_ENABLED = 'true';
-    process.env.SMTP_HOST = 'smtp.corp.example';
+    findFirst.mockResolvedValue(doc({ enabled: true, host: 'smtp.corp.example' }));
   });
 
   it('resolves false and logs when transport.sendMail rejects', async () => {
@@ -335,6 +329,25 @@ describe('sendMail (failure is swallowed)', () => {
 
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining('[MAIL] send failed'),
+      expect.anything()
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// utils/mailer.ts — settings read failure (DB down): best-effort false
+// ---------------------------------------------------------------------------
+describe('sendMail (settings read failure)', () => {
+  it('resolves false and logs, never building a transport, when the settings read rejects', async () => {
+    findFirst.mockRejectedValue(new Error('mongo unreachable'));
+
+    await expect(
+      sendMail({ to: 'alice@example.com', subject: 'Hello', text: 'Body' })
+    ).resolves.toBe(false);
+
+    expect(createTransport).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[MAIL] settings read failed'),
       expect.anything()
     );
   });

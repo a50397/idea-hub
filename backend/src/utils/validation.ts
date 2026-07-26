@@ -58,6 +58,41 @@ export const reorderDepartmentsSchema = z.object({
   ids: z.array(z.string()).min(1, 'ids must be a non-empty array'),
 });
 
+// PUT /api/mail-settings — full save of the singleton admin-managed mail config.
+// `password` is the ONLY optional field: when present and non-empty it is
+// encrypted and stored; when absent or empty the existing stored password is kept
+// (or wiped when `username` is saved empty). The enabled-requires-host rule is
+// enforced in the route handler so it can return a house-style message. `host` is
+// bounded to the max DNS name length (253); `from`/`username`/`subjectTemplate`
+// are trimmed and bounded; `language` is the en|sk enum.
+export const updateMailSettingsSchema = z.object({
+  enabled: z.boolean(),
+  host: z.string().trim().max(253, 'Host must be at most 253 characters'),
+  port: z
+    .number({ invalid_type_error: 'Port must be a number' })
+    .int('Port must be an integer')
+    .min(1, 'Port must be at least 1')
+    .max(65535, 'Port must be at most 65535'),
+  secure: z.boolean(),
+  username: z.string().trim().max(128, 'Username must be at most 128 characters'),
+  password: z.string().max(256, 'Password must be at most 256 characters').optional(),
+  from: z
+    .string()
+    .trim()
+    .min(1, 'From address is required')
+    .max(128, 'From address must be at most 128 characters'),
+  language: z.enum(['en', 'sk'], { errorMap: () => ({ message: 'Language must be en or sk' }) }),
+  subjectTemplate: z
+    .string()
+    .trim()
+    .max(200, 'Subject template must be at most 200 characters'),
+});
+
+// POST /api/mail-settings/test — send a short test mail to a single address.
+export const mailTestSendSchema = z.object({
+  to: z.string().trim().email('Invalid email address'),
+});
+
 export const reviewIdeaSchema = z.object({
   note: z.string().max(1000).optional(),
 });

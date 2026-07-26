@@ -1,12 +1,30 @@
 # Testing outbound mail locally
 
-Outbound mail is **best-effort infrastructure** and **off by default**. `sendMail()`
-never throws and never fails a request: when mail is disabled it just logs the
-would-send line and resolves `true`. Two ways to exercise it locally.
+Outbound mail is **best-effort infrastructure** and **off by default**. It is now
+**admin-managed at runtime**: an admin configures the SMTP server on the **Email
+settings** page (admin nav → *Email Settings*), and the config — with the SMTP
+password encrypted — is stored in the database. There are no `SMTP_*` / `MAIL_*`
+environment variables anymore; the only mail-related env is `MAIL_SETTINGS_KEY`
+(see below). `sendMail()` never throws and never fails a request: when mail is
+disabled it just logs the would-send line and resolves `true`.
+
+## Prerequisite: `MAIL_SETTINGS_KEY`
+
+`MAIL_SETTINGS_KEY` encrypts the stored SMTP password (AES-256-GCM). Outside
+development the backend **fails fast** at boot if it is missing (exactly like
+`SESSION_SECRET`). In development an ephemeral key is generated with a warning —
+fine for a quick test, but a saved password will not survive a restart until you
+set a stable key. Generate one and add it to `.env`:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+# MAIL_SETTINGS_KEY=<the 64-char hex value>
+```
 
 ## 1. Default: log-only (nothing to configure)
 
-With `MAIL_ENABLED` unset (or not exactly `true`), every send is a no-op that logs:
+With mail left disabled on the Email settings page (the default when no settings
+have been saved), every send is a no-op that logs:
 
 ```
 [MAIL disabled] to=alice@example.com subject=Your idea was approved
@@ -26,39 +44,35 @@ docker compose --profile mail up -d mailpit
 # SMTP on 127.0.0.1:1025, web UI on http://localhost:8025 (localhost-only, like Mongo/Keycloak)
 ```
 
-Point the backend at it. For a **host-run backend** (VS Code "Backend (tsx)" debug),
-add to your shell env or `.env`:
+Then configure it through the **UI** (no env vars): sign in as an admin, open
+**Email Settings**, and enter:
 
-```bash
-MAIL_ENABLED=true
-SMTP_HOST=localhost
-SMTP_PORT=1025
-# SMTP_SECURE stays false (mailpit speaks plain SMTP / STARTTLS)
-# No SMTP_USER/SMTP_PASS — mailpit accepts unauthenticated mail
-```
+- **Enable outbound email**: on
+- **SMTP host**: `localhost` (host-run backend) or `mailpit` (backend inside compose)
+- **SMTP port**: `1025`
+- **Use implicit TLS**: off (mailpit speaks plain SMTP / STARTTLS)
+- **Username / Password**: leave blank (mailpit accepts unauthenticated mail)
 
-For a **backend running inside compose**, use the service name instead:
-
-```bash
-SMTP_HOST=mailpit
-SMTP_PORT=1025
-```
-
-Then trigger any code path that sends mail and watch it land in the UI at
+Click **Save settings**, then use the **Send test email** block (it prefills your
+own address) to fire a message, and watch it land in the UI at
 http://localhost:8025 (subject, from, to, and the rendered body).
 
 ## What to verify
 
-- **Disabled is a true no-op**: with `MAIL_ENABLED` unset, sends only log
-  `[MAIL disabled] …` and never open a socket.
+- **Disabled is a true no-op**: with mail disabled, sends only log `[MAIL disabled] …`
+  and never open a socket.
 - **Enabled + mailpit**: messages appear in http://localhost:8025 with the
-  configured `MAIL_FROM` (default `IdeaHub <no-reply@ideahub.local>`).
-- **Enabled but no `SMTP_HOST`**: the backend boot **fails fast** outside
-  development (`FATAL: MAIL_ENABLED=true but SMTP_HOST is not set. Exiting.`); in
-  development it logs a `WARNING` and the mailer stays in log-only mode.
-- **Dead relay never breaks a request**: point `SMTP_HOST` at a black hole (e.g.
-  `192.0.2.1`) with `MAIL_ENABLED=true` — the send logs `[MAIL] send failed …`
-  after the ~10s timeout and resolves `false`; the triggering request still succeeds.
+  configured **From address** (default `IdeaHub <no-reply@ideahub.local>`).
+- **Save-time guard**: enabling mail with an empty **SMTP host** is rejected on save
+  (`An SMTP host is required when outbound email is enabled`) — this replaces the old
+  boot-time check.
+- **Best-effort test send**: point the host at a black hole (e.g. `127.0.0.1` port
+  `1`, or `192.0.2.1`) and click **Send test email** — the result is reported as a
+  failure (`ok:false`) after the send fails/times out, and no request ever crashes.
+- **Password is write-only**: the password field is never populated from the server;
+  the API returns only whether a password is stored (`hasPassword`). The stored value
+  is AES-256-GCM ciphertext — the plaintext never leaves the browser after Save and
+  never appears in any API response or log line.
 
 ## Cleanup / notes
 
@@ -67,7 +81,7 @@ docker compose --profile mail down   # stop mailpit (add -v to wipe, though it k
 ```
 
 - mailpit binds to `127.0.0.1` only; dev-only, never reuse outside localhost.
-- The **corporate relay's real host / port / auth are TBD with the infra team.**
-  Once known, set `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` and (only if the relay
-  is not IP-allowlisted) `SMTP_USER` / `SMTP_PASS`. See the `Mail` section of
-  `.env.example` and the configuration table in `README.md`.
+- The **corporate relay's real host / port / auth are entered by the admin on the
+  Email settings page when known** — nothing to redeploy. Only `MAIL_SETTINGS_KEY`
+  must be present in the environment (see the `Mail` section of `.env.example` and
+  the configuration table in `README.md`).

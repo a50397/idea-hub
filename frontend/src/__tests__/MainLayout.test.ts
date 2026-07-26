@@ -38,6 +38,7 @@ function makeRouter(): Router {
       { path: '/change-password', name: 'ChangePassword', component: Dummy },
       { path: '/users', name: 'Users', component: Dummy },
       { path: '/departments', name: 'Departments', component: Dummy },
+      { path: '/mail-settings', name: 'MailSettings', component: Dummy },
     ],
   });
 }
@@ -94,18 +95,19 @@ describe('MainLayout', () => {
   });
 
   const roleCases = [
-    { role: Role.USER, reviewQueue: false, users: false, departments: false },
-    { role: Role.POWER_USER, reviewQueue: true, users: false, departments: false },
-    { role: Role.ADMIN, reviewQueue: true, users: true, departments: true },
+    { role: Role.USER, reviewQueue: false, users: false, departments: false, mailSettings: false },
+    { role: Role.POWER_USER, reviewQueue: true, users: false, departments: false, mailSettings: false },
+    { role: Role.ADMIN, reviewQueue: true, users: true, departments: true, mailSettings: true },
   ] as const;
 
-  describe.each(roleCases)('role-based nav for $role', ({ role, reviewQueue, users, departments }) => {
-    it(`${reviewQueue ? 'shows' : 'hides'} Review Queue, ${users ? 'shows' : 'hides'} Users, ${departments ? 'shows' : 'hides'} Departments`, async () => {
+  describe.each(roleCases)('role-based nav for $role', ({ role, reviewQueue, users, departments, mailSettings }) => {
+    it(`${reviewQueue ? 'shows' : 'hides'} Review Queue, ${users ? 'shows' : 'hides'} Users, ${departments ? 'shows' : 'hides'} Departments, ${mailSettings ? 'shows' : 'hides'} Email Settings`, async () => {
       const { wrapper } = await mountLayout(role);
       const titles = navTitles(wrapper);
       expect(titles.includes('Review Queue')).toBe(reviewQueue);
       expect(titles.includes('Users')).toBe(users);
       expect(titles.includes('Departments')).toBe(departments);
+      expect(titles.includes('Email Settings')).toBe(mailSettings);
     });
   });
 

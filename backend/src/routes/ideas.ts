@@ -4,6 +4,8 @@ import prisma from '../lib/prisma';
 import { requireAuth, requireRole } from '../middleware/auth';
 import { createIdeaSchema, reviewIdeaSchema, updateIdeaSchema, ideasQuerySchema, createStepSchema, objectIdParamSchema } from '../utils/validation';
 import { sendMail } from '../utils/mailer';
+import { newIdeaEmail } from '../utils/mail-templates';
+import { getEffectiveMailConfig } from '../config/mail';
 
 const router = Router();
 
@@ -177,27 +179,33 @@ router.post('/', requireAuth, async (req, res) => {
 
     // Fire-and-forget department notification (creation only). This runs AFTER the
     // response so it can never gate, delay, or alter the 201 — the 201 is identical
-    // whether mail is disabled, succeeds, or fails. sendMail() is best-effort and
-    // never rejects by contract; the trailing catch is defense-in-depth so that even
-    // a contract-violating rejection cannot surface as an unhandledRejection. An
-    // empty recipient list sends nothing. The notification body/subject are
-    // intentionally backend-side English (not localized).
+    // whether mail is disabled, succeeds, or fails. The whole block is wrapped in an
+    // async IIFE with its own try/catch: reading the DB-backed mail settings is now
+    // async, and neither that read nor the best-effort send may ever surface as an
+    // unhandledRejection on the already-sent response. An empty recipient list sends
+    // nothing. The wording (language + optional subject override) comes from the
+    // admin-managed mail settings (config/mail.ts) and flows through the template
+    // module (utils/mail-templates.ts) transparently.
     const recipients = department.notificationEmails ?? [];
     if (recipients.length > 0) {
-      const link = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/ideas/${idea.id}`;
-      void sendMail({
-        to: recipients,
-        subject: `[IdeaHub] New idea for ${department.name}: ${idea.title}`,
-        text:
-          `A new idea has been submitted for the ${department.name} department.\n\n` +
-          `Title: ${idea.title}\n` +
-          `Submitted by: ${idea.submitter.name}\n` +
-          `Department: ${department.name}\n\n` +
-          `Description:\n${idea.description.slice(0, 200)}\n\n` +
-          `View the idea: ${link}`,
-      }).catch(() => {
-        /* best-effort: the mailer already logs its own failures */
-      });
+      void (async () => {
+        try {
+          const mailCfg = await getEffectiveMailConfig();
+          const link = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/ideas/${idea.id}`;
+          const { subject, text } = newIdeaEmail({
+            departmentName: department.name,
+            title: idea.title,
+            submitterName: idea.submitter.name,
+            description: idea.description,
+            link,
+            language: mailCfg.language,
+            subjectTemplate: mailCfg.subjectTemplate,
+          });
+          await sendMail({ to: recipients, subject, text });
+        } catch {
+          /* best-effort: never affects the already-sent 201 (mailer logs its own failures) */
+        }
+      })();
     }
   } catch (error) {
     if (error instanceof Error) {

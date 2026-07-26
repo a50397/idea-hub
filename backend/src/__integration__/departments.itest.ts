@@ -270,9 +270,10 @@ describe('department notification emails (real DB)', () => {
   });
 
   test('POST /api/ideas succeeds (201) with a populated notification list and mail disabled', async () => {
-    // Test env leaves MAIL_ENABLED unset -> the mailer is log-only and resolves true.
-    // Creating an idea against a department WITH recipients must still return a clean
-    // 201 and never crash: the send is fire-and-forget and best-effort.
+    // No MailSettings document exists (resetDb clears it) -> mail is disabled, so
+    // the mailer is log-only and resolves true. Creating an idea against a department
+    // WITH recipients must still return a clean 201 and never crash: the send is
+    // fire-and-forget and best-effort.
     const admin = await loggedInAdmin();
     const defaultId = await getDefaultDepartmentId();
     await withCsrf(admin.patch(`/api/departments/${defaultId}`)).send({

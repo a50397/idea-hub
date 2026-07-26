@@ -11,10 +11,10 @@ import ideasRoutes from './routes/ideas';
 import reportsRoutes from './routes/reports';
 import usersRoutes from './routes/users';
 import departmentsRoutes from './routes/departments';
+import mailSettingsRoutes from './routes/mail-settings';
 import crypto from 'crypto';
 import { ensureAdminExists } from './utils/init-admin';
 import { ensureDepartments } from './utils/init-departments';
-import { validateMailConfig } from './config/mail';
 import prisma from './lib/prisma';
 
 dotenv.config({ path: '../.env' });
@@ -29,21 +29,21 @@ if (!process.env.SESSION_SECRET) {
   console.warn('WARNING: SESSION_SECRET not set. Generated a random ephemeral secret for development.');
 }
 
-// Mail is best-effort infrastructure (see config/mail.ts, utils/mailer.ts) and
-// disabled by default. Mirror the SESSION_SECRET fail-fast above: if enabled but
-// misconfigured (MAIL_ENABLED=true with no SMTP_HOST) fail fast outside
-// development; in development warn and let the mailer degrade to disabled
-// (effectiveEnabled is false without a host, so sendMail stays log-only).
-const mailStatus = validateMailConfig();
-if (mailStatus.fatal) {
+// MAIL_SETTINGS_KEY encrypts the stored SMTP password (utils/secretbox.ts). Mail
+// itself is admin-managed at runtime (no boot mail guard anymore — save-time
+// validation replaces it), but the encryption key must exist. Mirror the
+// SESSION_SECRET fail-fast above EXACTLY: fatal outside development; in
+// development generate an ephemeral key and warn. A generated key means any
+// previously saved password cannot be decrypted until a stable key is restored —
+// acceptable dev semantics (the mailer treats an undecryptable password as none).
+if (!process.env.MAIL_SETTINGS_KEY) {
   if (process.env.NODE_ENV !== 'development') {
-    console.error(`FATAL: ${mailStatus.fatal} Exiting.`);
+    console.error('FATAL: MAIL_SETTINGS_KEY environment variable is required outside of development. Exiting.');
     process.exit(1);
   }
-  console.warn(`WARNING: ${mailStatus.fatal} Mail will be treated as disabled.`);
-}
-for (const warning of mailStatus.warnings) {
-  console.warn(`WARNING: ${warning}`);
+  // Generate a random key for development so it's never hardcoded.
+  process.env.MAIL_SETTINGS_KEY = crypto.randomBytes(32).toString('hex');
+  console.warn('WARNING: MAIL_SETTINGS_KEY not set. Generated a random ephemeral key for development. Previously saved mail passwords cannot be decrypted until a stable key is set.');
 }
 
 const app = express();
@@ -131,6 +131,7 @@ app.use('/api/ideas', ideasRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/departments', departmentsRoutes);
+app.use('/api/mail-settings', mailSettingsRoutes);
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
