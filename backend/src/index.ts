@@ -15,6 +15,7 @@ import mailSettingsRoutes from './routes/mail-settings';
 import crypto from 'crypto';
 import { ensureAdminExists } from './utils/init-admin';
 import { ensureDepartments } from './utils/init-departments';
+import { pruneOrphanSsoUsers } from './utils/prune-sso-users';
 import { isMailKeyValid } from './utils/secretbox';
 import prisma from './lib/prisma';
 
@@ -158,6 +159,43 @@ const server = app.listen(PORT, async () => {
   console.log(`🔗 API available at: http://localhost:${PORT}`);
   await ensureAdminExists();
   await ensureDepartments();
+
+  // Automatic pruning of orphaned SSO users. Skipped ENTIRELY under NODE_ENV=test:
+  // the integration tier boots this app, and a boot-time (or interval) prune would
+  // delete other suites' fixtures. Those suites call pruneOrphanSsoUsers() directly.
+  if (process.env.NODE_ENV !== 'test') {
+    // Best-effort at boot. The server is already listening at this point, so a
+    // failure here must only be logged — never crash or block the process.
+    try {
+      await pruneOrphanSsoUsers();
+    } catch (error) {
+      console.error('Initial orphaned-SSO-user prune failed:', error);
+    }
+
+    // Periodic prune. Interval hours from SSO_PRUNE_INTERVAL_HOURS; NaN, zero and
+    // negative values all fall back to the 24h default. The millisecond delay is
+    // clamped to Node's max timer delay (2^31-1 ms ≈ 24.8 days): beyond that Node
+    // fires the timer almost immediately, which would turn an oversized value into
+    // a hot loop. .unref() so this timer can never keep the process alive on its own.
+    const parsedHours = Number(process.env.SSO_PRUNE_INTERVAL_HOURS);
+    const intervalHours = Number.isFinite(parsedHours) && parsedHours > 0 ? parsedHours : 24;
+    const intervalMs = Math.min(intervalHours * 60 * 60 * 1000, 2_147_483_647);
+    let pruneRunning = false;
+    setInterval(async () => {
+      // Each tick is independently best-effort; a rejection must not surface as an
+      // unhandled rejection. The latch keeps a long run from overlapping the next
+      // tick (only plausible with a tiny configured interval, but the guard is free).
+      if (pruneRunning) return;
+      pruneRunning = true;
+      try {
+        await pruneOrphanSsoUsers();
+      } catch (error) {
+        console.error('Scheduled orphaned-SSO-user prune failed:', error);
+      } finally {
+        pruneRunning = false;
+      }
+    }, intervalMs).unref();
+  }
 });
 
 function gracefulShutdown(signal: string) {
