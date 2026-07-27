@@ -173,17 +173,28 @@ const server = app.listen(PORT, async () => {
     }
 
     // Periodic prune. Interval hours from SSO_PRUNE_INTERVAL_HOURS; NaN, zero and
-    // negative values all fall back to the 24h default. .unref() so this timer can
-    // never keep the process alive on its own.
+    // negative values all fall back to the 24h default. The millisecond delay is
+    // clamped to Node's max timer delay (2^31-1 ms ≈ 24.8 days): beyond that Node
+    // fires the timer almost immediately, which would turn an oversized value into
+    // a hot loop. .unref() so this timer can never keep the process alive on its own.
     const parsedHours = Number(process.env.SSO_PRUNE_INTERVAL_HOURS);
     const intervalHours = Number.isFinite(parsedHours) && parsedHours > 0 ? parsedHours : 24;
-    setInterval(() => {
+    const intervalMs = Math.min(intervalHours * 60 * 60 * 1000, 2_147_483_647);
+    let pruneRunning = false;
+    setInterval(async () => {
       // Each tick is independently best-effort; a rejection must not surface as an
-      // unhandled rejection.
-      pruneOrphanSsoUsers().catch((error) => {
+      // unhandled rejection. The latch keeps a long run from overlapping the next
+      // tick (only plausible with a tiny configured interval, but the guard is free).
+      if (pruneRunning) return;
+      pruneRunning = true;
+      try {
+        await pruneOrphanSsoUsers();
+      } catch (error) {
         console.error('Scheduled orphaned-SSO-user prune failed:', error);
-      });
-    }, intervalHours * 60 * 60 * 1000).unref();
+      } finally {
+        pruneRunning = false;
+      }
+    }, intervalMs).unref();
   }
 });
 
