@@ -185,7 +185,7 @@ describe('UsersPage', () => {
     });
   });
 
-  it("lists LOCAL users above SSO users by default, preserving each group's relative order and dropping none", async () => {
+  it('lists LOCAL users above SSO users by default, preserving each group\'s relative order and dropping none', async () => {
     const makeUser = (
       id: string,
       name: string,
@@ -200,16 +200,20 @@ describe('UsersPage', () => {
     });
 
     // Shuffled mix of SSO and LOCAL (covering null / undefined / explicit 'LOCAL').
+    // The WITHIN-group input order is deliberately non-alphabetical (locals:
+    // Bravo, Alpha, Charlie — neither ascending nor descending; SSO: Yankee,
+    // Xray), so the stable-order assertions below can only pass if the UI
+    // preserves insertion order — a default name sort would fail them.
     const ssoXray = makeUser('s1', 'Sso Xray', 'SSO');
     const localAlpha = makeUser('l1', 'Local Alpha', null);
     const ssoYankee = makeUser('s2', 'Sso Yankee', 'SSO');
     const localBravo = makeUser('l2', 'Local Bravo', 'LOCAL');
     const localCharlie = makeUser('l3', 'Local Charlie', undefined);
     mockedUsers.getAll.mockResolvedValue([
-      ssoXray,
-      localAlpha,
       ssoYankee,
       localBravo,
+      ssoXray,
+      localAlpha,
       localCharlie,
     ]);
 
@@ -243,10 +247,11 @@ describe('UsersPage', () => {
     const firstSso = Math.min(rowIndex('Sso Xray'), rowIndex('Sso Yankee'));
     expect(lastLocal).toBeLessThan(firstSso);
 
-    // Relative order within each group is preserved (stable partition).
-    expect(rowIndex('Local Alpha')).toBeLessThan(rowIndex('Local Bravo'));
-    expect(rowIndex('Local Bravo')).toBeLessThan(rowIndex('Local Charlie'));
-    expect(rowIndex('Sso Xray')).toBeLessThan(rowIndex('Sso Yankee'));
+    // Relative order within each group is preserved (stable partition), pinned
+    // to the non-alphabetical INPUT order: Bravo → Alpha → Charlie / Yankee → Xray.
+    expect(rowIndex('Local Bravo')).toBeLessThan(rowIndex('Local Alpha'));
+    expect(rowIndex('Local Alpha')).toBeLessThan(rowIndex('Local Charlie'));
+    expect(rowIndex('Sso Yankee')).toBeLessThan(rowIndex('Sso Xray'));
   });
 
   it('opens the create dialog from the Create User button', async () => {

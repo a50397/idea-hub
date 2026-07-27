@@ -246,8 +246,11 @@ const headers = computed(() => [
 // within each group is preserved and no user is dropped. Column-header sorting
 // (name/email/role) still overrides this default when the admin clicks a header.
 const orderedUsers = computed<UserWithCounts[]>(() => {
-  const locals = users.value.filter((user) => !isSso(user));
-  const sso = users.value.filter((user) => isSso(user));
+  const locals: UserWithCounts[] = [];
+  const sso: UserWithCounts[] = [];
+  for (const user of users.value) {
+    (isSso(user) ? sso : locals).push(user);
+  }
   return [...locals, ...sso];
 });
 
