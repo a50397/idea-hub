@@ -185,6 +185,75 @@ describe('UsersPage', () => {
     });
   });
 
+  it('lists LOCAL users above SSO users by default, preserving each group\'s relative order and dropping none', async () => {
+    const makeUser = (
+      id: string,
+      name: string,
+      authProvider: 'LOCAL' | 'SSO' | null | undefined
+    ): UserWithCounts => ({
+      id,
+      name,
+      email: `${id}@x.com`,
+      role: Role.USER,
+      authProvider,
+      _count: { submittedIdeas: 0, approvedIdeas: 0, assignedIdeas: 0 },
+    });
+
+    // Shuffled mix of SSO and LOCAL (covering null / undefined / explicit 'LOCAL').
+    // The WITHIN-group input order is deliberately non-alphabetical (locals:
+    // Bravo, Alpha, Charlie — neither ascending nor descending; SSO: Yankee,
+    // Xray), so the stable-order assertions below can only pass if the UI
+    // preserves insertion order — a default name sort would fail them.
+    const ssoXray = makeUser('s1', 'Sso Xray', 'SSO');
+    const localAlpha = makeUser('l1', 'Local Alpha', null);
+    const ssoYankee = makeUser('s2', 'Sso Yankee', 'SSO');
+    const localBravo = makeUser('l2', 'Local Bravo', 'LOCAL');
+    const localCharlie = makeUser('l3', 'Local Charlie', undefined);
+    mockedUsers.getAll.mockResolvedValue([
+      ssoYankee,
+      localBravo,
+      ssoXray,
+      localAlpha,
+      localCharlie,
+    ]);
+
+    const wrapper = mountPage();
+    await flushPromises();
+
+    const rows = wrapper.findAll('tbody tr');
+    // No user dropped and none added: exactly one row per input user.
+    expect(rows).toHaveLength(5);
+
+    const order = rows.map((row) => row.text());
+    const rowIndex = (name: string) => order.findIndex((text) => text.includes(name));
+
+    // Every user is still rendered.
+    for (const name of [
+      'Local Alpha',
+      'Local Bravo',
+      'Local Charlie',
+      'Sso Xray',
+      'Sso Yankee',
+    ]) {
+      expect(rowIndex(name)).toBeGreaterThanOrEqual(0);
+    }
+
+    // All LOCAL users appear above all SSO users.
+    const lastLocal = Math.max(
+      rowIndex('Local Alpha'),
+      rowIndex('Local Bravo'),
+      rowIndex('Local Charlie')
+    );
+    const firstSso = Math.min(rowIndex('Sso Xray'), rowIndex('Sso Yankee'));
+    expect(lastLocal).toBeLessThan(firstSso);
+
+    // Relative order within each group is preserved (stable partition), pinned
+    // to the non-alphabetical INPUT order: Bravo → Alpha → Charlie / Yankee → Xray.
+    expect(rowIndex('Local Bravo')).toBeLessThan(rowIndex('Local Alpha'));
+    expect(rowIndex('Local Alpha')).toBeLessThan(rowIndex('Local Charlie'));
+    expect(rowIndex('Sso Yankee')).toBeLessThan(rowIndex('Sso Xray'));
+  });
+
   it('opens the create dialog from the Create User button', async () => {
     const wrapper = mountPage();
     await flushPromises();
