@@ -12,7 +12,7 @@
       <v-card-text>
         <v-data-table
           :headers="headers"
-          :items="users"
+          :items="orderedUsers"
           :loading="loading"
           item-value="id"
         >
@@ -240,6 +240,16 @@ const headers = computed(() => [
   { title: t('users.stats'), key: 'stats', sortable: false },
   { title: t('common.actions'), key: 'actions', sortable: false },
 ]);
+
+// Default table ordering: LOCAL users (authProvider null/undefined or 'LOCAL')
+// are listed above SSO users. This is a stable partition — the relative order
+// within each group is preserved and no user is dropped. Column-header sorting
+// (name/email/role) still overrides this default when the admin clicks a header.
+const orderedUsers = computed<UserWithCounts[]>(() => {
+  const locals = users.value.filter((user) => !isSso(user));
+  const sso = users.value.filter((user) => isSso(user));
+  return [...locals, ...sso];
+});
 
 async function loadUsers() {
   loading.value = true;
