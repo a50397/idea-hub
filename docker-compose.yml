@@ -53,7 +53,7 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    image: fokips/ideahub-backend:1.1.0
+    image: fokips/ideahub-backend:1.2.2
     container_name: ideahub-backend
     restart: unless-stopped
     logging:
@@ -125,7 +125,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    image: fokips/ideahub-frontend:1.1.0
+    image: fokips/ideahub-frontend:1.2.2
     container_name: ideahub-frontend
     restart: unless-stopped
     ports:
