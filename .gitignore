@@ -42,6 +42,10 @@ prisma/migrations/*
 # Docker
 docker-data/
 
+# TLS certificates for the nginx reverse proxy — never commit key material
+nginx/certs/*
+!nginx/certs/.gitkeep
+
 # TypeScript compiled output in frontend
 frontend/src/**/*.js
 frontend/src/**/*.js.map
