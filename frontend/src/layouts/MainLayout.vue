@@ -29,8 +29,10 @@
       </v-list>
 
       <template v-slot:append>
-        <!-- SSO sessions are owned by the IAM; the app offers no logout for them. -->
-        <div v-if="!isSsoUser" class="pa-2">
+        <!-- SSO sessions are IAM-owned: no logout for SSO users unless the
+             deployment re-exposes it (SSO_SHOW_LOGOUT); the button then also
+             RP-logs-out at the IdP via the logout redirect. -->
+        <div v-if="!isSsoUser || ssoLogoutVisible" class="pa-2">
           <v-btn block @click="handleLogout" prepend-icon="mdi-logout" variant="outlined">
             {{ $t('common.logout') }}
           </v-btn>
@@ -55,10 +57,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '../stores/auth';
+import { authApi } from '../api/auth';
 
 const drawer = ref(true);
 const router = useRouter();
@@ -66,6 +69,17 @@ const authStore = useAuthStore();
 const { locale } = useI18n();
 
 const isSsoUser = computed(() => authStore.user?.authProvider === 'SSO');
+
+// Whether this deployment re-exposes the logout button for SSO users
+// (SSO_SHOW_LOGOUT). A failed config fetch keeps the fail-safe default: hidden.
+const ssoLogoutVisible = ref(false);
+onMounted(async () => {
+  try {
+    ssoLogoutVisible.value = (await authApi.getConfig()).ssoShowLogout ?? false;
+  } catch {
+    ssoLogoutVisible.value = false;
+  }
+});
 
 const currentLocale = ref(locale.value);
 

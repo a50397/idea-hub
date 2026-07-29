@@ -73,6 +73,9 @@ describe('MainLayout', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedAuth.logout.mockResolvedValue({ message: 'Logged out successfully' });
+    // MainLayout fetches /auth/config on mount for the SSO logout visibility
+    // flag; default: flag absent → logout stays hidden for SSO users.
+    mockedAuth.getConfig.mockResolvedValue({ ssoEnabled: true });
   });
 
   it('always shows the core nav items and the current user info', async () => {
@@ -163,5 +166,12 @@ describe('MainLayout', () => {
         expect(navTitles(wrapper).includes('Change Password')).toBe(shown);
       }
     );
+
+    it('SSO user with ssoShowLogout: logout button returns, Change Password stays hidden', async () => {
+      mockedAuth.getConfig.mockResolvedValue({ ssoEnabled: true, ssoShowLogout: true });
+      const { wrapper } = await mountLayout(Role.USER, 'en', 'SSO');
+      expect(Boolean(findByText(wrapper, '.v-btn', 'Logout'))).toBe(true);
+      expect(navTitles(wrapper).includes('Change Password')).toBe(false);
+    });
   });
 });

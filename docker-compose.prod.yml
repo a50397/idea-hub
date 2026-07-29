@@ -49,7 +49,7 @@ services:
       start_period: 40s
 
   backend:
-    image: fokips/ideahub-backend:1.2.2
+    image: fokips/ideahub-backend:1.2.3
     container_name: ideahub-backend
     restart: unless-stopped
     logging:
@@ -78,6 +78,24 @@ services:
       # previously saved password undecryptable (the admin re-enters it). Generate:
       #   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
       MAIL_SETTINGS_KEY: ${MAIL_SETTINGS_KEY:?MAIL_SETTINGS_KEY must be set}
+      # SSO / OIDC — compose only injects variables listed here, so every SSO_*
+      # var must be passed through explicitly or the backend never sees it.
+      # All optional: SSO_ENABLED absent/false keeps password-only login, and
+      # empty strings fall back to the in-app defaults.
+      SSO_ENABLED: ${SSO_ENABLED:-false}
+      SSO_ISSUER_URL: ${SSO_ISSUER_URL:-}
+      SSO_CLIENT_ID: ${SSO_CLIENT_ID:-}
+      SSO_CLIENT_SECRET: ${SSO_CLIENT_SECRET:-}
+      SSO_REDIRECT_URI: ${SSO_REDIRECT_URI:-}
+      SSO_POST_LOGOUT_REDIRECT_URI: ${SSO_POST_LOGOUT_REDIRECT_URI:-}
+      SSO_SCOPE: ${SSO_SCOPE:-}
+      SSO_ROLES_CLAIM: ${SSO_ROLES_CLAIM:-}
+      SSO_ORG_CLAIM: ${SSO_ORG_CLAIM:-}
+      SSO_EMAIL_CLAIM: ${SSO_EMAIL_CLAIM:-}
+      SSO_NAME_CLAIM: ${SSO_NAME_CLAIM:-}
+      SSO_ROLE_MAP: ${SSO_ROLE_MAP:-}
+      SSO_SHOW_LOGOUT: ${SSO_SHOW_LOGOUT:-false}
+      BREAK_GLASS_EMAILS: ${BREAK_GLASS_EMAILS:-}
     expose:
       - "3001"
     depends_on:
@@ -98,7 +116,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    image: fokips/ideahub-frontend:1.2.2
+    image: fokips/ideahub-frontend:1.2.3
     container_name: ideahub-frontend
     restart: unless-stopped
     expose:

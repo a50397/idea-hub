@@ -563,7 +563,8 @@ orthogonal to SSO.
   truth).
 - SSO users have **no logout button and no "Change Password"** navigation in the
   app — those sessions are **IAM-owned** (logout is RP-initiated at the IdP;
-  passwords live in the IAM).
+  passwords live in the IAM). Set `SSO_SHOW_LOGOUT=true` to re-expose the
+  logout button for SSO users; it then performs RP-initiated logout at the IdP.
 - Admins **cannot edit SSO-managed users** (name / email / role / password) via
   the user API.
 - **Break-glass** local accounts (`BREAK_GLASS_EMAILS`, default `[ADMIN_EMAIL]`)
@@ -590,8 +591,13 @@ orthogonal to SSO.
    `SameSite=Strict` and is not sent on the cross-site redirect back from the
    IAM. The cookie is signed with `SESSION_SECRET` and expires after 10 minutes.
 4. `GET /api/auth/sso/callback` verifies the transaction cookie, exchanges the
-   code (validating `state`, `nonce`, and PKCE), reads the ID-token claims, then
-   **just-in-time provisions** or updates the user and starts a fresh session.
+   code (validating `state`, `nonce`, and PKCE), then reads the user's claims:
+   the ID-token claims are **merged with the userinfo response** when the
+   issuer advertises a userinfo endpoint (ID-token values win on conflict —
+   they are signature-verified; a userinfo failure fails the login rather than
+   proceeding with partial claims). This supports IdPs whose ID tokens carry
+   only `sub` and release profile/role claims solely via userinfo. The user is
+   then **just-in-time provisioned** or updated and a fresh session starts.
    Any failure redirects to `${FRONTEND_URL}/login?error=sso_failed` with no
    detail leaked to the browser. The session additionally retains the ID token
    (server-side only) for use as `id_token_hint` at logout.
@@ -632,11 +638,12 @@ break-glass admin with a strong local password.
 | `SSO_CLIENT_SECRET` | Client secret issued by the IAM | — |
 | `SSO_REDIRECT_URI` | Callback URI — `{BASE_URL}/api/auth/sso/callback` | — |
 | `SSO_POST_LOGOUT_REDIRECT_URI` | Where the IAM returns the browser after RP-initiated logout (must be registered with the IAM) | `${FRONTEND_URL}/login` |
+| `SSO_SHOW_LOGOUT` | Show the in-app logout button for SSO users (triggers RP-initiated logout) | `false` |
 | `SSO_SCOPE` | Requested scopes | `openid profile email` |
-| `SSO_ROLES_CLAIM` | ID-token claim holding IAM roles | `roles` |
-| `SSO_ORG_CLAIM` | ID-token claim holding org/department | `org` |
-| `SSO_EMAIL_CLAIM` | ID-token claim holding email | `email` |
-| `SSO_NAME_CLAIM` | ID-token claim holding display name | `name` |
+| `SSO_ROLES_CLAIM` | Claim holding IAM roles (ID token or userinfo; e.g. `diam:roles`) | `roles` |
+| `SSO_ORG_CLAIM` | Claim holding org/department (ID token or userinfo) | `org` |
+| `SSO_EMAIL_CLAIM` | Claim holding email (ID token or userinfo) | `email` |
+| `SSO_NAME_CLAIM` | Claim holding display name (ID token or userinfo) | `name` |
 | `SSO_ROLE_MAP` | `iam-role:APP_ROLE,...` mapping (app role ∈ `USER`/`POWER_USER`/`ADMIN`) | — |
 | `BREAK_GLASS_EMAILS` | Emails forbidden from SSO (csv, lowercased) | `[ADMIN_EMAIL]` |
 
@@ -656,8 +663,9 @@ Provide the following to your IAM / identity team when requesting an OIDC client
 - **Redirect URI**: `{BASE_URL}/api/auth/sso/callback`
   (e.g. `https://ideahub.example.com/api/auth/sso/callback`)
 - **Scopes**: `openid profile email`
-- **Required ID-token claims**:
-  - `sub` — stable unique subject identifier (used as the SSO key)
+- **Required claims** (in the ID token or the userinfo response):
+  - `sub` — stable unique subject identifier (used as the SSO key; must be in
+    the ID token)
   - `email` — user email
   - `name` — display name
   - `roles` — group/role names to map to app roles (e.g. `idea-hub-admins`,

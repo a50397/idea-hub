@@ -268,8 +268,24 @@ router.get('/callback', async (req: Request, res: Response) => {
       code_verifier: txn.cv,
     });
 
-    // (4) Extract and normalise claims.
-    const claims = tokenSet.claims();
+    // (4) Merge userinfo over the id_token claims, then extract and normalise.
+    // Some IdPs mint a minimal id_token (only `sub`) and release email/name/
+    // roles only from the userinfo endpoint, so without this the email check
+    // below fails and every login dies. Passing the whole TokenSet makes
+    // openid-client enforce that the userinfo `sub` matches the id_token `sub`.
+    // id_token claims win: they are signature-verified, so userinfo only
+    // supplements what the id_token omits. A userinfo error is fail-closed — a
+    // partial claim set would re-sync an existing user's role down to USER (a
+    // privilege-integrity bug). No userinfo_endpoint keeps legacy id-token-only.
+    let userinfoClaims: Record<string, unknown> = {};
+    if (client.issuer.metadata.userinfo_endpoint && tokenSet.access_token) {
+      try {
+        userinfoClaims = await client.userinfo(tokenSet);
+      } catch (err) {
+        return fail(`userinfo request failed: ${(err as Error)?.message ?? 'unknown error'}`);
+      }
+    }
+    const claims = { ...userinfoClaims, ...tokenSet.claims() };
     const email = String(claims[cfg.emailClaim] ?? '')
       .toLowerCase()
       .trim();
