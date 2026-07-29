@@ -50,6 +50,9 @@ export interface UserWithCounts extends User {
 
 export interface AuthConfig {
   ssoEnabled: boolean;
+  // Show the in-app logout button for SSO users (SSO_SHOW_LOGOUT). Optional so
+  // a config-fetch miss or older backend safely falls back to hidden.
+  ssoShowLogout?: boolean;
 }
 
 export interface Department {

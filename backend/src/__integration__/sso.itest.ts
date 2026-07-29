@@ -73,6 +73,14 @@ beforeAll(async () => {
   mockServer.service.on(Events.BeforeTokenSigning, (token: any) => {
     Object.assign(token.payload, injectedClaims);
   });
+  // The callback now also reads the userinfo endpoint, and openid-client requires
+  // its `sub` to match the id_token `sub`; the mock's default body
+  // ({ sub: 'johndoe' }) would mismatch. Mirror the injected claims into userinfo
+  // (Keycloak-like: same claims in both) so these id-token-sourced tests are
+  // unaffected — the merge stays a no-op.
+  mockServer.service.on(Events.BeforeUserinfo, (userInfoResponse: any) => {
+    userInfoResponse.body = { ...injectedClaims };
+  });
 
   process.env.SSO_ENABLED = 'true';
   process.env.SSO_ISSUER_URL = issuerUrl;

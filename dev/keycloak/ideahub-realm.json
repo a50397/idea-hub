@@ -2,6 +2,8 @@
   "realm": "ideahub",
   "enabled": true,
   "registrationAllowed": false,
+  "accessTokenLifespan": 300,
+  "ssoSessionMaxLifespan": 28800,
   "components": {
     "org.keycloak.userprofile.UserProfileProvider": [
       {
@@ -33,8 +35,11 @@
       ],
       "webOrigins": ["+"],
       "attributes": {
-        "post.logout.redirect.uris": "+"
+        "post.logout.redirect.uris": "http://localhost:5173/login",
+        "pkce.code.challenge.method": "S256"
       },
+      "defaultClientScopes": ["basic"],
+      "optionalClientScopes": [],
       "protocolMappers": [
         {
           "name": "ideahub-client-roles",
@@ -43,11 +48,11 @@
           "consentRequired": false,
           "config": {
             "usermodel.clientRoleMapping.clientId": "ideahub-local",
-            "claim.name": "roles",
+            "claim.name": "diam:roles",
             "multivalued": "true",
             "jsonType.label": "String",
-            "id.token.claim": "true",
-            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "access.token.claim": "false",
             "userinfo.token.claim": "true"
           }
         },
@@ -60,8 +65,33 @@
             "user.attribute": "org",
             "claim.name": "org",
             "jsonType.label": "String",
-            "id.token.claim": "true",
-            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "access.token.claim": "false",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "email-userinfo",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "email",
+            "claim.name": "email",
+            "jsonType.label": "String",
+            "id.token.claim": "false",
+            "access.token.claim": "false",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "name-userinfo",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-full-name-mapper",
+          "consentRequired": false,
+          "config": {
+            "id.token.claim": "false",
+            "access.token.claim": "false",
             "userinfo.token.claim": "true"
           }
         }

@@ -4,7 +4,7 @@ import { rateLimit } from 'express-rate-limit';
 import prisma from '../lib/prisma';
 import { loginSchema, changePasswordSchema } from '../utils/validation';
 import { requireAuth } from '../middleware/auth';
-import { isSsoEnabled, getSsoConfig } from '../config/sso';
+import { isSsoEnabled, isSsoLogoutVisible, getSsoConfig } from '../config/sso';
 import { buildEndSessionUrl } from './sso';
 
 const router = Router();
@@ -20,7 +20,7 @@ const DUMMY_PASSWORD_HASH = bcrypt.hashSync('idea-hub-timing-equalizer', BCRYPT_
 // Public: lets the frontend decide whether to show the SSO button.
 // No auth guard and no rate limiter by design.
 router.get('/config', (_req, res) => {
-  res.json({ ssoEnabled: isSsoEnabled() });
+  res.json({ ssoEnabled: isSsoEnabled(), ssoShowLogout: isSsoLogoutVisible() });
 });
 
 const loginLimiter = rateLimit({

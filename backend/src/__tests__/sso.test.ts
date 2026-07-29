@@ -52,6 +52,17 @@ let app: express.Application;
 // Reset per test; individual tests override to steer role/org/email/sub.
 let injectedClaims: Record<string, unknown> = {};
 
+// Userinfo endpoint controls. `injectedUserinfo === null` mirrors the id_token
+// claims (Keycloak-like: same claims in both), so legacy tests see a no-op
+// merge; a test sets it to diverge the userinfo body from the id_token. openid-
+// client requires the userinfo `sub` to equal the id_token `sub`, so bodies must
+// carry the same sub the test injects into the tokens. `failUserinfo` makes the
+// endpoint return 500 so client.userinfo() rejects. `userinfoCallCount` lets a
+// test assert the endpoint was (or was not) invoked.
+let injectedUserinfo: Record<string, unknown> | null = null;
+let failUserinfo = false;
+let userinfoCallCount = 0;
+
 const SESSION_SECRET = 'sso-test-session-secret-deterministic';
 const CLIENT_ID = 'idea-hub-test-client';
 const REDIRECT_URI = 'http://localhost:3001/api/auth/sso/callback';
@@ -166,6 +177,20 @@ beforeAll(async () => {
     Object.assign(token.payload, injectedClaims);
   });
 
+  // The userinfo endpoint defaults to { sub: 'johndoe' }, which would fail
+  // openid-client's sub-match check against our injected id_token sub. Mirror
+  // the id_token claims by default (so the merge is a no-op for legacy tests);
+  // a test can diverge the body (injectedUserinfo) or force a 500 (failUserinfo).
+  mockServer.service.on(Events.BeforeUserinfo, (userInfoResponse: any) => {
+    userinfoCallCount++;
+    if (failUserinfo) {
+      userInfoResponse.statusCode = 500;
+      userInfoResponse.body = { error: 'server_error', error_description: 'userinfo down' };
+      return;
+    }
+    userInfoResponse.body = injectedUserinfo ?? { ...injectedClaims };
+  });
+
   process.env.SSO_ISSUER_URL = issuerUrl;
   process.env.SSO_CLIENT_ID = CLIENT_ID;
   process.env.SSO_CLIENT_SECRET = 'test-client-secret';
@@ -182,6 +207,7 @@ beforeAll(async () => {
   process.env.SSO_ROLE_MAP = DEFAULT_ROLE_MAP;
   delete process.env.BREAK_GLASS_EMAILS;
   delete process.env.ADMIN_EMAIL;
+  delete process.env.SSO_SHOW_LOGOUT;
 
   app = buildApp();
 }, 30000);
@@ -201,12 +227,16 @@ beforeEach(() => {
   process.env.SSO_ROLE_MAP = DEFAULT_ROLE_MAP;
   delete process.env.BREAK_GLASS_EMAILS;
   delete process.env.ADMIN_EMAIL;
+  delete process.env.SSO_SHOW_LOGOUT;
   // Baseline valid claim set.
   injectedClaims = {
     sub: 'sub-default',
     email: 'user@corp.example',
     name: 'Default User',
   };
+  injectedUserinfo = null;
+  failUserinfo = false;
+  userinfoCallCount = 0;
 });
 
 // ===========================================================================
@@ -217,14 +247,22 @@ describe('SSO enablement', () => {
     process.env.SSO_ENABLED = 'false';
     const res = await request(app).get('/api/auth/config');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ssoEnabled: false });
+    expect(res.body).toEqual({ ssoEnabled: false, ssoShowLogout: false });
   });
 
   test('GET /api/auth/config reports ssoEnabled:true when enabled', async () => {
     process.env.SSO_ENABLED = 'true';
     const res = await request(app).get('/api/auth/config');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ssoEnabled: true });
+    expect(res.body).toEqual({ ssoEnabled: true, ssoShowLogout: false });
+  });
+
+  test('GET /api/auth/config reports ssoShowLogout:true only when SSO_SHOW_LOGOUT=true', async () => {
+    process.env.SSO_ENABLED = 'true';
+    process.env.SSO_SHOW_LOGOUT = 'true';
+    const res = await request(app).get('/api/auth/config');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ssoEnabled: true, ssoShowLogout: true });
   });
 
   test('GET /api/auth/sso/login returns 404 when disabled', async () => {
@@ -718,5 +756,205 @@ describe('POST /api/auth/logout — RP-initiated (SSO) logout', () => {
     // The local session is actually destroyed.
     const meAfter = await agent.get('/api/auth/me');
     expect(meAfter.status).toBe(401);
+  });
+});
+
+// ===========================================================================
+// 15. Userinfo endpoint claim sourcing (minimal id_token IdPs, e.g. corp IAM)
+// ===========================================================================
+describe('GET /api/auth/sso/callback — userinfo claim sourcing', () => {
+  test('provisions from userinfo when the id_token carries only sub', async () => {
+    // id_token carries only `sub` (a minimal-token IdP); email/name/roles/org
+    // arrive solely from userinfo. The userinfo sub must match the id_token sub.
+    injectedClaims = { sub: 'sub-uinfo' };
+    injectedUserinfo = {
+      sub: 'sub-uinfo',
+      email: 'uinfo@corp.example',
+      name: 'Userinfo Only',
+      roles: ['iam-power'],
+      org: 'FromUserinfo',
+    };
+    const created = {
+      id: 'uinfo-1',
+      name: 'Userinfo Only',
+      email: 'uinfo@corp.example',
+      role: 'POWER_USER',
+      authProvider: 'SSO',
+      department: 'FromUserinfo',
+      createdAt: new Date(),
+    };
+    mockPrisma.user.findFirst.mockResolvedValue(null);
+    mockPrisma.user.findUnique.mockImplementation((args: any) =>
+      args?.where?.email !== undefined ? Promise.resolve(null) : Promise.resolve(created)
+    );
+    mockPrisma.user.create.mockResolvedValue(created);
+
+    const agent = request.agent(app);
+    const { code, state } = await authorize(agent);
+    const cbRes = await agent.get(`/api/auth/sso/callback?code=${code}&state=${state}`);
+
+    expect(cbRes.status).toBe(302);
+    expect(cbRes.headers.location).not.toContain('error=sso_failed');
+    expect(mockPrisma.user.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          email: 'uinfo@corp.example',
+          name: 'Userinfo Only',
+          ssoSub: 'sub-uinfo',
+          role: 'POWER_USER',
+          department: 'FromUserinfo',
+        }),
+      })
+    );
+
+    const me = await agent.get('/api/auth/me');
+    expect(me.status).toBe(200);
+    expect(me.body).toHaveProperty('email', 'uinfo@corp.example');
+  });
+
+  test('id_token claims win over userinfo on conflict', async () => {
+    // The signature-verified id_token must beat userinfo when they disagree.
+    injectedClaims = {
+      sub: 'sub-conflict',
+      email: 'conflict@corp.example',
+      name: 'IdToken Name',
+      roles: ['iam-admins'],
+    };
+    injectedUserinfo = {
+      sub: 'sub-conflict',
+      email: 'conflict@corp.example',
+      name: 'Userinfo Name',
+      roles: ['iam-users'],
+    };
+    const created = {
+      id: 'conflict-1',
+      name: 'IdToken Name',
+      email: 'conflict@corp.example',
+      role: 'ADMIN',
+      authProvider: 'SSO',
+      department: null,
+      createdAt: new Date(),
+    };
+    mockPrisma.user.findFirst.mockResolvedValue(null);
+    mockPrisma.user.findUnique.mockImplementation((args: any) =>
+      args?.where?.email !== undefined ? Promise.resolve(null) : Promise.resolve(created)
+    );
+    mockPrisma.user.create.mockResolvedValue(created);
+
+    const agent = request.agent(app);
+    const { code, state } = await authorize(agent);
+    const cbRes = await agent.get(`/api/auth/sso/callback?code=${code}&state=${state}`);
+
+    expect(cbRes.status).toBe(302);
+    const data = mockPrisma.user.create.mock.calls[0][0].data;
+    expect(data.name).toBe('IdToken Name'); // id_token wins the name conflict
+    expect(data.role).toBe('ADMIN'); // ...and the roles conflict
+  });
+
+  test('userinfo rejecting fails the login closed (no user created/updated)', async () => {
+    injectedClaims = { sub: 'sub-uifail', email: 'uifail@corp.example', name: 'UI Fail', roles: ['iam-admins'] };
+    failUserinfo = true; // userinfo endpoint returns 500 -> client.userinfo() throws
+    mockPrisma.user.findFirst.mockResolvedValue(null);
+    mockPrisma.user.findUnique.mockResolvedValue(null);
+
+    const agent = request.agent(app);
+    const { code, state } = await authorize(agent);
+    const cbRes = await agent.get(`/api/auth/sso/callback?code=${code}&state=${state}`);
+
+    expect(cbRes.status).toBe(302);
+    expect(cbRes.headers.location).toContain('error=sso_failed');
+    expect(mockPrisma.user.create).not.toHaveBeenCalled();
+    expect(mockPrisma.user.update).not.toHaveBeenCalled();
+
+    const me = await agent.get('/api/auth/me');
+    expect(me.status).toBe(401);
+  });
+
+  test('no userinfo_endpoint keeps legacy id-token-only behaviour (userinfo never called)', async () => {
+    // Build an app whose discovered Issuer advertises NO userinfo_endpoint, by
+    // wrapping Issuer.discover to strip it. jest.isolateModules gives routes/sso
+    // a fresh module (fresh discovery cache) that picks up the wrapped discover
+    // and restores the global registry afterwards, so the shared `app` (and all
+    // other tests) stay untouched.
+    let legacyApp!: express.Application;
+    let discoverSpy!: jest.SpyInstance;
+    jest.isolateModules(() => {
+      const oidc = require('openid-client');
+      const origDiscover = oidc.Issuer.discover.bind(oidc.Issuer);
+      discoverSpy = jest
+        .spyOn(oidc.Issuer, 'discover')
+        .mockImplementation(async (url: any) => {
+          const iss = await origDiscover(url);
+          const meta = { ...iss.metadata };
+          delete meta.userinfo_endpoint;
+          return new oidc.Issuer(meta);
+        });
+      const expressLib = require('express');
+      const sessionLib = require('express-session');
+      const ssoRoutes = require('../routes/sso').default;
+      const a = expressLib();
+      a.use(expressLib.json());
+      a.use(expressLib.urlencoded({ extended: true }));
+      a.use(
+        sessionLib({
+          secret: 'test-session-mw-secret',
+          resave: false,
+          saveUninitialized: false,
+          cookie: { secure: false },
+        })
+      );
+      a.use('/api/auth/sso', ssoRoutes);
+      legacyApp = a;
+    });
+
+    try {
+      injectedClaims = {
+        sub: 'sub-legacy',
+        email: 'legacy@corp.example',
+        name: 'Legacy User',
+        roles: ['iam-admins'],
+      };
+      // Shadow userinfo body: it must never be consulted on the legacy path.
+      injectedUserinfo = {
+        sub: 'sub-legacy',
+        email: 'shadow@corp.example',
+        name: 'Shadow Name',
+        roles: ['iam-users'],
+      };
+      const created = {
+        id: 'legacy-1',
+        name: 'Legacy User',
+        email: 'legacy@corp.example',
+        role: 'ADMIN',
+        authProvider: 'SSO',
+        department: null,
+        createdAt: new Date(),
+      };
+      mockPrisma.user.findFirst.mockResolvedValue(null);
+      mockPrisma.user.findUnique.mockImplementation((args: any) =>
+        args?.where?.email !== undefined ? Promise.resolve(null) : Promise.resolve(created)
+      );
+      mockPrisma.user.create.mockResolvedValue(created);
+
+      const agent = request.agent(legacyApp);
+      const { code, state } = await authorize(agent);
+      const cbRes = await agent.get(`/api/auth/sso/callback?code=${code}&state=${state}`);
+
+      expect(cbRes.status).toBe(302);
+      expect(cbRes.headers.location).not.toContain('error=sso_failed');
+      expect(userinfoCallCount).toBe(0); // userinfo endpoint never invoked
+      // Claims came from the id_token, not the shadow userinfo body.
+      expect(mockPrisma.user.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            email: 'legacy@corp.example',
+            name: 'Legacy User',
+            role: 'ADMIN',
+          }),
+        })
+      );
+    } finally {
+      discoverSpy.mockRestore();
+    }
   });
 });

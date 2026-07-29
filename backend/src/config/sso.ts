@@ -26,6 +26,15 @@ export function isSsoEnabled(): boolean {
   return process.env.SSO_ENABLED === 'true';
 }
 
+/**
+ * SSO sessions are IAM-owned, so the in-app logout button is hidden for SSO
+ * users by default. SSO_SHOW_LOGOUT=true re-exposes it; the existing logout
+ * flow then performs RP-initiated logout at the IdP.
+ */
+export function isSsoLogoutVisible(): boolean {
+  return process.env.SSO_SHOW_LOGOUT === 'true';
+}
+
 export interface SsoConfig {
   enabled: boolean;
   issuerUrl: string;
