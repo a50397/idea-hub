@@ -15,7 +15,10 @@ build/
 .env.local
 .env.development.local
 .env.test.local
+# Holds REAL production secrets (filled 2026-07-29) — must never be committed.
+.env.production
 .env.production.local
+deploy/
 
 # Logs
 npm-debug.log*
