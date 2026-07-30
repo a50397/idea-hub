@@ -13,6 +13,7 @@ záložné lokálne konto pre výpadok IAM.
 | `nginx/proxy.conf` | reverzný proxy — HTTPS server blok už aktívny |
 | `nginx/certs/ideahub.crt` | certifikát (full chain: leaf + intermediates) |
 | `nginx/certs/ideahub.key` | privátny kľúč (PKCS#8, nešifrovaný) |
+| `ca/corp-ca.pem` | firemná CA — backend ňou overuje TLS certifikát IdP (Node nepoužíva systémové úložisko dôvery); detaily v `ca/README.md` |
 | `docs/DEPLOY.md` | tento dokument |
 
 ## 2. Predpoklady hosta
@@ -21,7 +22,8 @@ záložné lokálne konto pre výpadok IAM.
 - DNS: `ideahub` (aj `ideahub.intra`) smeruje na tento host.
 - Otvorené porty **80** a **443** pre používateľov.
 - Odchádzajúce HTTPS na `https://idp.iam-intranet` (OIDC discovery, JWKS,
-  token a userinfo endpoint) — inak SSO nefunguje.
+  token a userinfo endpoint) — inak SSO nefunguje. Certifikát IdP je vydaný
+  firemnou CA — jej PEM musí byť v balíku ako `ca/corp-ca.pem`.
 - Synchronizovaný čas (NTP) — validácia tokenov toleruje len 60 s odchýlky.
 - Privátny kľúč čitateľný pre kontajner: nginx beží ako uid 101 —
   `chown 101 nginx/certs/ideahub.key && chmod 600 nginx/certs/ideahub.key`
@@ -33,12 +35,23 @@ záložné lokálne konto pre výpadok IAM.
 /opt/ideahub/
 ├── docker-compose.prod.yml
 ├── .env
+├── ca/
+│   └── corp-ca.pem
 └── nginx/
     ├── proxy.conf
     └── certs/
         ├── ideahub.crt
         └── ideahub.key
 ```
+
+> **Prečo dva priečinky s certifikátmi (nezlučovať):** `nginx/certs/` nesie
+> identitu servera vrátane **privátneho kľúča** a mountuje sa iba do nginx;
+> `ca/` nesie verejný dôveryhodný koreň (nie je tajomstvo) a mountuje sa iba
+> do backendu — každý kontajner vidí len to, čo potrebuje. Súbory majú aj
+> rôzny životný cyklus (serverový certifikát sa obnovuje ~ročne, firemná CA
+> výnimočne). Ak by ste `corp-ca.pem` predsa presúvali, jediný pevný kontrakt
+> je cesta V KONTAJNERI: ľavá strana volume mountu v compose musí ukazovať na
+> skutočné umiestnenie súboru a pravá sa musí zhodovať s `NODE_EXTRA_CA_CERTS`.
 
 ## 4. Obrazy
 
@@ -98,6 +111,8 @@ predvolené oddelenie. Počkajte, kým `ps` ukáže všetky služby healthy/runn
 | `/login?error=sso_failed` | Dôvod je len v logu: `docker logs ideahub-backend --tail 50` (riadok „SSO callback failed: …") |
 | dôvod `idp error: invalid_scope` | IAM odmietol scope — over hodnotu `SSO_SCOPE` v `.env.production` voči scopes registrovaným pre klienta (TODO poznámka v súbore); po zmene `up -d` znova |
 | dôvod `redirect_uri` / mismatch | registrovaná redirect URI v IAM sa musí PRESNE zhodovať s `https://ideahub/api/auth/sso/callback` |
+| chybová stránka IAM „Neznámy typ autentifikácie" | autentifikačný typ klienta nie je na IAM podporovaný/nastavený — IAM tím upraví `diam_authn`/`diam_authn_default` v registrácii klienta (na tomto nasadení funguje `L`); nahláste s Correlation ID z chybovej stránky. Na strane aplikácie sa nemení nič |
+| dôvod `unable to verify the first certificate` / `unable to get local issuer certificate` | backend neverí TLS certifikátu IdP — chýba alebo je zlý `ca/corp-ca.pem` (postup v `ca/README.md`); ak pri prvom `up` súbor chýbal, Docker vytvoril rovnomenný ADRESÁR — zmazať, nahradiť súborom, potom `up -d` |
 | certifikátové varovanie v prehliadači | skontrolujte, že `ideahub.crt` je full chain a klient dôveruje firemnej CA |
 | mongo unhealthy | prvý štart trvá ~40 s; inak `docker logs ideahub-mongodb` |
 | prihlásenie „nedrží" (cookie) | `COOKIE_SECURE=true` vyžaduje funkčné HTTPS; port 80 v balíku automaticky presmerúva na HTTPS |
