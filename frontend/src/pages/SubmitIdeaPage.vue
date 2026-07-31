@@ -74,6 +74,19 @@
                 persistent-hint
               ></v-combobox>
 
+              <!-- Opt-in to lifecycle notification emails. Only shown when an
+                   admin has enabled outbound mail; defaults OFF (strict opt-in). -->
+              <v-switch
+                v-if="mailEnabled"
+                :model-value="formData.notifyOnChange"
+                @update:model-value="formData.notifyOnChange = $event === true"
+                color="primary"
+                :label="$t('ideas.notifyToggle')"
+                :hint="$t('ideas.notifyToggleHint')"
+                persistent-hint
+                class="mt-4"
+              ></v-switch>
+
               <v-alert v-if="submitError" type="error" class="mt-4">
                 {{ submitError }}
               </v-alert>
@@ -153,10 +166,13 @@ import { ref, reactive, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { ideasApi } from '../api/ideas';
 import { useDepartmentsStore } from '../stores/departments';
+import { useOptionsStore } from '../stores/options';
 import { Effort } from '../types';
+import type { CreateIdeaInput } from '../types';
 
 const { t } = useI18n();
 const departmentsStore = useDepartmentsStore();
+const optionsStore = useOptionsStore();
 
 const effortOptions = computed(() => [
   { title: t('effort.lessThanOneDay'), value: Effort.LESS_THAN_ONE_DAY },
@@ -171,7 +187,15 @@ const formData = reactive({
   effort: null as Effort | null,
   departmentId: null as string | null,
   tags: [] as string[],
+  notifyOnChange: false,
 });
+
+// Whether outbound mail is enabled admin-side; drives the notify toggle's
+// visibility and whether the opt-in is carried in the create payload. Tracks the
+// options store reactively (like MainLayout), so a runtime mail toggle updates it.
+// An options-fetch failure is treated as disabled (the store resets the flag to
+// false; no error surfaced).
+const mailEnabled = computed(() => optionsStore.mailEnabled);
 
 const errors = reactive({
   title: [] as string[],
@@ -240,14 +264,20 @@ async function handleSubmit() {
 
   submitting.value = true;
   try {
-    await ideasApi.create({
+    const payload: CreateIdeaInput = {
       title: formData.title,
       description: formData.description,
       benefits: formData.benefits,
       effort: formData.effort!,
       departmentId: formData.departmentId!,
       tags: formData.tags,
-    });
+    };
+    // Only carry the opt-in when the toggle is actually shown (mail enabled);
+    // otherwise the field is omitted entirely and the backend defaults it to false.
+    if (mailEnabled.value) {
+      payload.notifyOnChange = formData.notifyOnChange;
+    }
+    await ideasApi.create(payload);
     submitSuccess.value = true;
     resetForm();
     setTimeout(() => {
@@ -266,6 +296,7 @@ function resetForm() {
   formData.benefits = '';
   formData.effort = null;
   formData.tags = [];
+  formData.notifyOnChange = false;
   errors.title = [];
   errors.description = [];
   errors.benefits = [];
@@ -283,5 +314,10 @@ function preselectDefaultDepartment() {
 onMounted(async () => {
   await departmentsStore.fetchAll();
   preselectDefaultDepartment();
+  // The mail-enabled flag is runtime-mutable, so refetch on mount. `mailEnabled` is
+  // a computed over the store, so it tracks this fetch reactively. The store swallows
+  // failures and leaves the flag false, so a failed read simply keeps the notify
+  // toggle hidden (same best-effort semantics as before).
+  await optionsStore.fetch();
 });
 </script>

@@ -93,6 +93,8 @@ export default {
     ideaNotFound: 'Nápad nebol nájdený',
     activityTimeline: 'Časová os aktivít',
     details: 'Detaily',
+    notifyToggle: 'Upozorňovať ma na zmeny tohto nápadu',
+    notifyToggleHint: 'Dostanete upozornenie, keď bude tento nápad schválený, zamietnutý, prevzatý, dokončený alebo keď v ňom pribudne nový postup.',
   },
   effort: {
     lessThanOneDay: '< 1 deň',

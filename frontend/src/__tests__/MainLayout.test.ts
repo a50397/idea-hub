@@ -17,8 +17,18 @@ vi.mock('../api/auth', () => ({
   },
 }));
 
+// MainLayout reads the SSO logout-button visibility flag from the authenticated
+// /api/options (via the options store) on mount.
+vi.mock('../api/options', () => ({
+  optionsApi: {
+    get: vi.fn(),
+  },
+}));
+
 import { authApi } from '../api/auth';
+import { optionsApi } from '../api/options';
 const mockedAuth = vi.mocked(authApi);
+const mockedOptions = vi.mocked(optionsApi);
 
 const Dummy = { template: '<div />' };
 
@@ -73,9 +83,9 @@ describe('MainLayout', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedAuth.logout.mockResolvedValue({ message: 'Logged out successfully' });
-    // MainLayout fetches /auth/config on mount for the SSO logout visibility
-    // flag; default: flag absent → logout stays hidden for SSO users.
-    mockedAuth.getConfig.mockResolvedValue({ ssoEnabled: true });
+    // MainLayout fetches /api/options on mount for the SSO logout-visibility flag;
+    // default: flag false → logout stays hidden for SSO users.
+    mockedOptions.get.mockResolvedValue({ mailEnabled: false, ssoShowLogout: false });
   });
 
   it('always shows the core nav items and the current user info', async () => {
@@ -168,7 +178,7 @@ describe('MainLayout', () => {
     );
 
     it('SSO user with ssoShowLogout: logout button returns, Change Password stays hidden', async () => {
-      mockedAuth.getConfig.mockResolvedValue({ ssoEnabled: true, ssoShowLogout: true });
+      mockedOptions.get.mockResolvedValue({ mailEnabled: false, ssoShowLogout: true });
       const { wrapper } = await mountLayout(Role.USER, 'en', 'SSO');
       expect(Boolean(findByText(wrapper, '.v-btn', 'Logout'))).toBe(true);
       expect(navTitles(wrapper).includes('Change Password')).toBe(false);

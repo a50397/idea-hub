@@ -26,10 +26,21 @@ vi.mock('../api/departments', () => ({
   },
 }));
 
+// The page fetches runtime options on mount (via the options store) to decide
+// whether to show the notify toggle; without this mock that onMounted call would
+// hit real axios.
+vi.mock('../api/options', () => ({
+  optionsApi: {
+    get: vi.fn(),
+  },
+}));
+
 import { ideasApi } from '../api/ideas';
 import { departmentsApi } from '../api/departments';
+import { optionsApi } from '../api/options';
 const mockedIdeas = vi.mocked(ideasApi);
 const mockedDepartments = vi.mocked(departmentsApi);
+const mockedOptions = vi.mocked(optionsApi);
 
 // Sorted by order: General (0) is the default preselection, Marketing (1) second.
 const departments: Department[] = [
@@ -112,6 +123,9 @@ describe('SubmitIdeaPage', () => {
     vi.clearAllMocks();
     mockedIdeas.create.mockResolvedValue({} as any);
     mockedDepartments.getAll.mockResolvedValue(departments);
+    // Mail disabled by default: the pre-existing tests (incl. the exact-6-key
+    // payload assertion) must see NO notify toggle and NO notifyOnChange field.
+    mockedOptions.get.mockResolvedValue({ mailEnabled: false, ssoShowLogout: false });
   });
 
   it('renders the submission form and guidelines', () => {
@@ -285,5 +299,41 @@ describe('SubmitIdeaPage', () => {
     expect(ev.defaultPrevented).toBe(true);
     expect(mockedIdeas.create).not.toHaveBeenCalled();
     expect(wrapper.text()).not.toContain('Idea submitted successfully!');
+  });
+
+  describe('lifecycle-notification toggle', () => {
+    it('is absent when mail is disabled', async () => {
+      mockedOptions.get.mockResolvedValue({ mailEnabled: false, ssoShowLogout: false });
+      const wrapper = mountPage();
+      await flushPromises();
+
+      expect(wrapper.findComponent({ name: 'VSwitch' }).exists()).toBe(false);
+    });
+
+    it('is present and off by default when mail is enabled', async () => {
+      mockedOptions.get.mockResolvedValue({ mailEnabled: true, ssoShowLogout: false });
+      const wrapper = mountPage();
+      await flushPromises();
+
+      const toggle = wrapper.findComponent({ name: 'VSwitch' });
+      expect(toggle.exists()).toBe(true);
+      expect(toggle.props('modelValue')).toBe(false);
+    });
+
+    it('carries notifyOnChange: true in the create payload after the toggle is switched on', async () => {
+      mockedOptions.get.mockResolvedValue({ mailEnabled: true, ssoShowLogout: false });
+      const wrapper = mountPage();
+      await flushPromises();
+
+      await fillForm(wrapper, validForm);
+      wrapper.findComponent({ name: 'VSwitch' }).vm.$emit('update:modelValue', true);
+      await flushPromises();
+      await submit(wrapper);
+
+      expect(mockedIdeas.create).toHaveBeenCalledTimes(1);
+      expect(mockedIdeas.create).toHaveBeenCalledWith(
+        expect.objectContaining({ notifyOnChange: true })
+      );
+    });
   });
 });

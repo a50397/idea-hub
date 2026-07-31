@@ -133,6 +133,30 @@
                   <v-list-item-title>{{ $t('ideas.completedDate') }}</v-list-item-title>
                   <v-list-item-subtitle>{{ formatDate(idea.completedAt) }}</v-list-item-subtitle>
                 </v-list-item>
+
+                <!-- Submitter-only opt-in to lifecycle notifications, shown only when
+                     mail is enabled admin-side. Settings-style row at the bottom of the
+                     card: label on the left, switch in the append slot on the right.
+                     Optimistic flip with revert on failure (see onNotifyToggle). -->
+                <template v-if="canToggleNotify">
+                  <v-divider class="my-2"></v-divider>
+                  <v-list-item>
+                    <v-list-item-title>{{ $t('ideas.notifyToggle') }}</v-list-item-title>
+                    <template v-slot:append>
+                      <v-switch
+                        :model-value="notifyOn"
+                        @update:model-value="onNotifyToggle"
+                        color="primary"
+                        :aria-label="$t('ideas.notifyToggle')"
+                        :loading="notifyUpdating"
+                        :disabled="notifyUpdating"
+                        density="compact"
+                        hide-details
+                        inset
+                      ></v-switch>
+                    </template>
+                  </v-list-item>
+                </template>
               </v-list>
               <v-btn
                 v-if="canManageSteps"
@@ -187,6 +211,7 @@ import { ref, computed, onMounted } from 'vue';
 import { useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '../stores/auth';
+import { useOptionsStore } from '../stores/options';
 import { ideasApi } from '../api/ideas';
 import { IdeaStatus, Effort, statusColors } from '../types';
 import type { Idea, IdeaStep, IdeaEvent } from '../types';
@@ -202,6 +227,7 @@ interface TimelineItem {
 const { locale, t } = useI18n();
 const route = useRoute();
 const authStore = useAuthStore();
+const optionsStore = useOptionsStore();
 const loading = ref(true);
 const idea = ref<Idea | null>(null);
 
@@ -217,9 +243,23 @@ const snackbar = ref(false);
 const snackbarText = ref('');
 const snackbarColor = ref('success');
 
+// Notification opt-in state. `notifyOn` mirrors idea.notifyOnChange but is driven
+// independently so a flip can be applied optimistically and reverted on failure.
+// `mailEnabled` tracks the options store reactively (like MainLayout) so a runtime
+// mail toggle flips the notify switch's visibility without a manual re-snapshot.
+const mailEnabled = computed(() => optionsStore.mailEnabled);
+const notifyOn = ref(false);
+const notifyUpdating = ref(false);
+
 const canManageSteps = computed(() => {
   return idea.value?.status === IdeaStatus.IN_PROGRESS &&
     idea.value?.assigneeId === authStore.user?.id;
+});
+
+// The switch is shown only to the submitter, and only when mail is enabled
+// (same comparison style as canManageSteps).
+const canToggleNotify = computed(() => {
+  return mailEnabled.value && idea.value?.submitterId === authStore.user?.id;
 });
 
 const timelineItems = computed<TimelineItem[]>(() => {
@@ -257,10 +297,39 @@ async function loadIdea() {
   try {
     const id = route.params.id as string;
     idea.value = await ideasApi.getOne(id);
+    notifyOn.value = idea.value.notifyOnChange ?? false;
   } catch (error) {
     console.error('Error loading idea:', error);
   } finally {
     loading.value = false;
+  }
+}
+
+// Flip the submitter's notification opt-in. Applied optimistically; on failure the
+// switch reverts and the error surfaces through the page's snackbar. Only the
+// notifyOnChange field is updated locally so the loaded timeline (events/steps,
+// which the notify endpoint's response omits) is preserved.
+async function onNotifyToggle(value: boolean | null) {
+  if (!idea.value) return;
+  // Race guard: ignore a toggle while a setNotify is still in flight. Overlapping
+  // requests can settle out of order — the last RESPONSE wins locally but the last
+  // REQUEST wins in the DB — so a fast double-flip could leave the two disagreeing.
+  // The switch is also :disabled while updating; this is the belt-and-braces JS half.
+  if (notifyUpdating.value) return;
+  const enabled = value === true;
+  const previous = notifyOn.value;
+  notifyOn.value = enabled;
+  notifyUpdating.value = true;
+  try {
+    await ideasApi.setNotify(idea.value.id, enabled);
+    idea.value.notifyOnChange = enabled;
+  } catch (error: any) {
+    notifyOn.value = previous;
+    snackbarText.value = error.response?.data?.error || 'Failed to update notifications';
+    snackbarColor.value = 'error';
+    snackbar.value = true;
+  } finally {
+    notifyUpdating.value = false;
   }
 }
 
@@ -320,7 +389,12 @@ async function addStep() {
   }
 }
 
-onMounted(() => {
-  loadIdea();
+onMounted(async () => {
+  await loadIdea();
+  // The mail-enabled flag is runtime-mutable, so refetch on mount. `mailEnabled` is
+  // a computed over the store, so it tracks this fetch (and any later change)
+  // reactively. The store swallows failures and leaves the flag false, so a failed
+  // read simply keeps the notify toggle hidden (same best-effort semantics as before).
+  await optionsStore.fetch();
 });
 </script>
