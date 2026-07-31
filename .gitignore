@@ -49,6 +49,10 @@ docker-data/
 nginx/certs/*
 !nginx/certs/.gitkeep
 
+# Corporate CA for the backend — environment-specific, added to the deploy
+# bundle by the handover engineer (see ca/README.md)
+ca/*.pem
+
 # TypeScript compiled output in frontend
 frontend/src/**/*.js
 frontend/src/**/*.js.map
@@ -65,3 +69,6 @@ frontend/vite.config.d.ts.map
 graphify-out/cache/
 graphify-out/manifest.json
 graphify-out/cost.json
+graphify-out/.graphify_root
+graphify-out/.graphify_python
+

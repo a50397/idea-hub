@@ -1,8 +1,10 @@
 # IdeaHub — nasadenie do produkcie (runbook pre administrátora)
 
-Cieľový stav: aplikácia beží na `https://ideahub` (cert pokrýva aj
-`ideahub.intra`), prihlásenie cez podnikový IAM (`https://idp.iam-intranet`),
-záložné lokálne konto pre výpadok IAM.
+Cieľový stav: aplikácia beží na `https://<app-host>` (cert pokrýva aj prípadný
+alias `<app-host-alias>`), prihlásenie cez podnikový IAM (`https://<idp-host>`),
+záložné lokálne konto pre výpadok IAM. Skutočné hostname hodnoty tohto
+nasadenia nesie `.env` (`FRONTEND_URL`, `SSO_ISSUER_URL`) — v tomto dokumente
+sa zámerne neuvádzajú.
 
 ## 1. Obsah balíka
 
@@ -19,11 +21,16 @@ záložné lokálne konto pre výpadok IAM.
 ## 2. Predpoklady hosta
 
 - Docker + Docker Compose v2.
-- DNS: `ideahub` (aj `ideahub.intra`) smeruje na tento host.
+- DNS: `<app-host>` (aj `<app-host-alias>`) smeruje na tento host.
 - Otvorené porty **80** a **443** pre používateľov.
-- Odchádzajúce HTTPS na `https://idp.iam-intranet` (OIDC discovery, JWKS,
+- Odchádzajúce HTTPS na `https://<idp-host>` (OIDC discovery, JWKS,
   token a userinfo endpoint) — inak SSO nefunguje. Certifikát IdP je vydaný
-  firemnou CA — jej PEM musí byť v balíku ako `ca/corp-ca.pem`.
+  firemnou CA — jej PEM musí byť v balíku ako `ca/corp-ca.pem` **a** v
+  `docker-compose.prod.yml` (služba `backend`) musia byť odkomentované oba
+  pripravené riadky: `NODE_EXTRA_CA_CERTS` v `environment` a volume mount
+  `./ca/corp-ca.pem` vo `volumes`. V balíku sú zakomentované — bez ich
+  odkomentovania backend CA nenačíta a SSO zlyhá na TLS (postup v
+  `ca/README.md`).
 - Synchronizovaný čas (NTP) — validácia tokenov toleruje len 60 s odchýlky.
 - Privátny kľúč čitateľný pre kontajner: nginx beží ako uid 101 —
   `chown 101 nginx/certs/ideahub.key && chmod 600 nginx/certs/ideahub.key`
@@ -91,13 +98,14 @@ predvolené oddelenie. Počkajte, kým `ps` ukáže všetky služby healthy/runn
 
 ## 6. Overenie po nasadení
 
-1. `curl -sSI https://ideahub` → `200`, bezpečnostné hlavičky (CSP,
+1. `curl -sSI https://<app-host>` → `200`, bezpečnostné hlavičky (CSP,
    X-Frame-Options…). Ak CLI nepozná firemnú CA, otestujte v prehliadači —
    zámok bez varovania.
-2. Prihlasovacia stránka `https://ideahub/login` zobrazuje tlačidlo
+2. Prihlasovacia stránka `https://<app-host>/login` zobrazuje tlačidlo
    **„Sign in with SSO"**.
-3. **SSO test**: prihláste sa účtom s rolou `ideahub_admin` → v aplikácii ste
-   ADMIN; účet bez roly → bežný používateľ. Prihlásený SSO používateľ nemá
+3. **SSO test**: prihláste sa účtom s IAM rolou mapovanou na ADMIN (kódy rolí
+   určuje `SSO_ROLE_MAP` v `.env`) → v aplikácii ste ADMIN; účet bez roly →
+   bežný používateľ. Prihlásený SSO používateľ nemá
    tlačidlo odhlásenia ani zmenu hesla — **to je zámer** (session vlastní IAM).
 4. **Break-glass test**: „Use a local account" + `ADMIN_EMAIL`/`ADMIN_PASSWORD`
    z `.env.production` → funguje lokálne prihlásenie (poistka pre výpadok IAM).
@@ -110,9 +118,9 @@ predvolené oddelenie. Počkajte, kým `ps` ukáže všetky služby healthy/runn
 |---|---|
 | `/login?error=sso_failed` | Dôvod je len v logu: `docker logs ideahub-backend --tail 50` (riadok „SSO callback failed: …") |
 | dôvod `idp error: invalid_scope` | IAM odmietol scope — over hodnotu `SSO_SCOPE` v `.env.production` voči scopes registrovaným pre klienta (TODO poznámka v súbore); po zmene `up -d` znova |
-| dôvod `redirect_uri` / mismatch | registrovaná redirect URI v IAM sa musí PRESNE zhodovať s `https://ideahub/api/auth/sso/callback` |
+| dôvod `redirect_uri` / mismatch | registrovaná redirect URI v IAM sa musí PRESNE zhodovať s `https://<app-host>/api/auth/sso/callback` (hodnota `SSO_REDIRECT_URI` v `.env`) |
 | chybová stránka IAM „Neznámy typ autentifikácie" | autentifikačný typ klienta nie je na IAM podporovaný/nastavený — IAM tím upraví `diam_authn`/`diam_authn_default` v registrácii klienta (na tomto nasadení funguje `L`); nahláste s Correlation ID z chybovej stránky. Na strane aplikácie sa nemení nič |
-| dôvod `unable to verify the first certificate` / `unable to get local issuer certificate` | backend neverí TLS certifikátu IdP — chýba alebo je zlý `ca/corp-ca.pem` (postup v `ca/README.md`); ak pri prvom `up` súbor chýbal, Docker vytvoril rovnomenný ADRESÁR — zmazať, nahradiť súborom, potom `up -d` |
+| dôvod `unable to verify the first certificate` / `unable to get local issuer certificate` | backend neverí TLS certifikátu IdP — chýba alebo je zlý `ca/corp-ca.pem`, alebo v `docker-compose.prod.yml` ostali zakomentované riadky `NODE_EXTRA_CA_CERTS`/volume mount (postup v `ca/README.md`); ak pri prvom `up` súbor chýbal, Docker vytvoril rovnomenný ADRESÁR — zmazať, nahradiť súborom, potom `up -d` |
 | certifikátové varovanie v prehliadači | skontrolujte, že `ideahub.crt` je full chain a klient dôveruje firemnej CA |
 | mongo unhealthy | prvý štart trvá ~40 s; inak `docker logs ideahub-mongodb` |
 | prihlásenie „nedrží" (cookie) | `COOKIE_SECURE=true` vyžaduje funkčné HTTPS; port 80 v balíku automaticky presmerúva na HTTPS |
