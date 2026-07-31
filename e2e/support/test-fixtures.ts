@@ -18,6 +18,15 @@ function randomForwardedFor(): string {
 export const test = base.extend({
   context: async ({ context }, use) => {
     await context.setExtraHTTPHeaders({ 'X-Forwarded-For': randomForwardedFor() });
+    // The app defaults to Slovak (frontend/src/i18n) while the specs assert
+    // English copy, so preselect EN in every fresh context. Conditional on the
+    // key being absent so a locale chosen by a test (i18n.spec.ts switches to
+    // SK and asserts it persists across reload) survives later page loads.
+    await context.addInitScript(() => {
+      if (!localStorage.getItem('locale')) {
+        localStorage.setItem('locale', 'en');
+      }
+    });
     await use(context);
   },
 });
