@@ -140,7 +140,7 @@ describe('LoginPage', () => {
       expect(wrapper.find('input[type="email"]').exists()).toBe(false);
 
       // Toggle reveals the local account form.
-      const toggle = findByText(wrapper, '.v-btn', 'Use a local account');
+      const toggle = findByText(wrapper, '.v-btn', 'Use a local account (admin only)');
       expect(toggle).toBeTruthy();
       await toggle!.trigger('click');
       await flushPromises();
