@@ -95,6 +95,13 @@ model Idea {
   departmentId String?     @db.ObjectId
   department   Department? @relation(fields: [departmentId], references: [id])
 
+  // Submitter opt-in to lifecycle notification mail (approve/reject/claim/complete/
+  // progress step). Nullable with no default: pre-existing Mongo documents predate
+  // the field, and a required column would fail to read them. null (legacy docs) is
+  // treated as false (strict opt-out) by every read path; a boot-time backfill
+  // (utils/init-idea-notify.ts) sets the explicit default on existing deployments.
+  notifyOnChange Boolean?
+
   submittedAt DateTime  @default(now())
   approvedAt  DateTime?
   startedAt   DateTime?
