@@ -74,7 +74,7 @@ Bez prístupu na Hub (offline prenos — pripraví ho odovzdávajúci):
 ```bash
 # na stroji s prístupom:
 docker save -o ideahub-images.tar \
-  fokips/ideahub-backend:1.2.2 fokips/ideahub-frontend:1.2.2 \
+  fokips/ideahub-backend:1.2.5 fokips/ideahub-frontend:1.2.5 \
   mongo:7.0.39 nginxinc/nginx-unprivileged:1.25.5-alpine
 # na hoste:
 docker load -i ideahub-images.tar
@@ -131,7 +131,13 @@ predvolené oddelenie. Počkajte, kým `ps` ukáže všetky služby healthy/runn
   (rotované, max 3×10 MB).
 - **Reštart**: `docker compose -f docker-compose.prod.yml restart` (spúšťať z `/opt/ideahub`, aby sa načítal `.env`)
 - **Upgrade**: nové tagy obrazov → `pull` (alebo `load`) → `up -d --no-build`
-  (migrácie schémy prebehnú pri štarte backendu automaticky).
+  (migrácie schémy prebehnú pri štarte backendu automaticky). Táto verzia pridáva
+  pole `notifyOnChange` (prihlásenie autora na e-maily o zmenách jeho nápadu) —
+  zmena je aditívna: backend pri štarte sám doplní chýbajúce pole existujúcim
+  nápadom (predvolene vypnuté), takže netreba žiadny manuálny DB krok. Žiadne nové
+  premenné prostredia; funkcia ostáva neaktívna, kým e-maily nezapne admin v Email
+  settings a zároveň sa autor neprihlási na odber zmien pri konkrétnom nápade — obe
+  podmienky musia platiť súčasne.
 - **Zálohy zatiaľ nie sú zriadené** (denný `mongodump` + záloha
   `.env.production` je odporúčaná — v riešení mimo tohto runbooku).
 - SMTP notifikácie sa konfigurujú za behu v UI (Email settings, len admin);
