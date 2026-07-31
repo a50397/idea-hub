@@ -33,7 +33,11 @@ export async function ensureIdeaNotifyDefaults(): Promise<void> {
       console.log(`Backfilled notifyOnChange=false on ${updated} legacy idea(s)`);
     }
   } catch (error) {
-    console.error('Failed to ensure idea notify defaults:', error);
-    process.exit(1);
+    // Best-effort by design: every read path treats a missing/null flag as opted
+    // out, so a failed backfill degrades nothing — and this runs after the server
+    // is already listening, so exiting would turn a transient DB hiccup into an
+    // outage (unlike ensureDepartments, whose data the app genuinely requires).
+    // Log and keep serving; the backfill re-runs on the next boot.
+    console.error('Failed to ensure idea notify defaults (continuing):', error);
   }
 }

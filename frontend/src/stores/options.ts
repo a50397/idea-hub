@@ -11,7 +11,22 @@ export const useOptionsStore = defineStore('options', () => {
   const mailEnabled = ref(false);
   const ssoShowLogout = ref(false);
 
-  async function fetch() {
+  // MainLayout and the idea pages all fetch() on mount, so overlapping calls are
+  // routine. Sharing one in-flight request keeps a late-failing duplicate from
+  // resetting flags a concurrent successful read just set; sequential calls
+  // (remounts) still re-read the runtime-mutable flags.
+  let inFlight: Promise<void> | null = null;
+
+  function fetch(): Promise<void> {
+    if (!inFlight) {
+      inFlight = doFetch().finally(() => {
+        inFlight = null;
+      });
+    }
+    return inFlight;
+  }
+
+  async function doFetch(): Promise<void> {
     try {
       const options = await optionsApi.get();
       mailEnabled.value = options.mailEnabled;

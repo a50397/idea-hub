@@ -56,6 +56,27 @@ describe('options store', () => {
     expect(store.ssoShowLogout).toBe(false);
   });
 
+  it('shares a single in-flight request across overlapping fetch() calls', async () => {
+    let resolveGet!: (value: { mailEnabled: boolean; ssoShowLogout: boolean }) => void;
+    mockedApi.get.mockImplementationOnce(
+      () => new Promise((resolve) => (resolveGet = resolve))
+    );
+    const store = useOptionsStore();
+
+    const first = store.fetch();
+    const second = store.fetch();
+
+    // Overlapping calls must not fire a second network request (a late-failing
+    // duplicate would reset flags a concurrent successful read just set).
+    expect(mockedApi.get).toHaveBeenCalledTimes(1);
+
+    resolveGet({ mailEnabled: true, ssoShowLogout: true });
+    await Promise.all([first, second]);
+
+    expect(store.mailEnabled).toBe(true);
+    expect(store.ssoShowLogout).toBe(true);
+  });
+
   it('resets previously-true flags to false when a later fetch fails', async () => {
     const store = useOptionsStore();
 
