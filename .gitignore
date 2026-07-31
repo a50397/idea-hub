@@ -61,3 +61,7 @@ frontend/vite.config.js
 frontend/vite.config.js.map
 frontend/vite.config.d.ts
 frontend/vite.config.d.ts.map
+
+graphify-out/cache/
+graphify-out/manifest.json
+graphify-out/cost.json
