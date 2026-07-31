@@ -5,22 +5,39 @@ A modern web application for managing internal improvement ideas, designed for e
 ## Features
 
 ### Core Functionality
-- **Idea Submission**: Employees can submit improvement ideas with title, description, benefits, effort estimation, and tags
+- **Idea Submission**: Employees can submit improvement ideas with title, description, benefits, effort estimation, tags, and a target department
 - **Review & Approval**: Power users and admins can review, approve, or reject submitted ideas
 - **Idea Execution**: Approved ideas can be claimed and worked on by any user
+- **Progress Steps**: Assignees can log progress notes on in-progress ideas
 - **Completion Tracking**: Users can mark their claimed ideas as completed
 - **Activity Timeline**: Full audit trail of all actions taken on each idea
+- **Status Views**: Dedicated pages for my ideas and for approved, in-progress, and completed ideas
 
 ### Dashboard & Analytics
 - Real-time statistics (submitted, approved, in-progress, done, rejected)
+- Idea counts per department
 - Monthly trend charts showing completed ideas over time
 - Average time metrics (submission to approval, approval to completion)
-- Top contributors leaderboard
+- Top contributors leaderboard (power users and admins)
+- Regular users see statistics scoped to their own ideas
 
 ### Reporting
-- Advanced filtering (status, date range, submitter, assignee, tags)
-- CSV export functionality for data analysis
+- Advanced filtering (status, department, date range, submitter, assignee, tags)
+- Pagination and CSV export functionality for data analysis
 - Comprehensive reporting interface
+
+### Departments (Admin Only)
+- Manage the list of target departments (create, rename, reorder, delete)
+- Per-department notification email addresses
+
+### Email Notifications
+- Admin-managed SMTP configuration on the **Email settings** page (server, from address, notification language, optional subject template), stored in the database with the SMTP password encrypted
+- New-idea notification sent to the target department's notification addresses (best-effort — mail problems never block the request)
+- Test-email button to verify the configuration
+
+### Internationalization
+- Bilingual UI — Slovak (default) and English, switchable in the app bar and persisted in the browser
+- Email notifications use the admin-configured language
 
 ### User Management (Admin Only)
 - Create, edit, and delete users
@@ -28,8 +45,9 @@ A modern web application for managing internal improvement ideas, designed for e
 - User statistics (submitted ideas, assigned ideas)
 
 ### Security & Authentication
-- Session-based authentication with bcrypt password hashing
+- Session-based authentication with bcrypt password hashing (sessions stored in MongoDB with a 7-day TTL)
 - Optional corporate SSO via OIDC authorization-code flow with PKCE (see [Single Sign-On (SSO)](#single-sign-on-sso))
+- Self-service password change for local accounts
 - Role-based access control (RBAC)
 - CSRF protection via custom header validation
 - Security headers (CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy)
@@ -38,15 +56,17 @@ A modern web application for managing internal improvement ideas, designed for e
 - Session invalidation on role/email changes
 - Graceful server shutdown (SIGTERM/SIGINT)
 - Admin self-protection (cannot delete own account or change own role)
-- Rate limiting on API and login endpoints
+- Rate limiting on the API and stricter limits on sensitive endpoints (login, password change, SSO, idea submission)
 
 ## Tech Stack
 
 ### Backend
-- **Runtime**: Node.js 20+
+- **Runtime**: Node.js 22+
 - **Framework**: Express.js
 - **Database**: MongoDB with Prisma ORM
-- **Authentication**: express-session with bcrypt
+- **Authentication**: express-session (MongoDB session store) with bcrypt; openid-client for SSO/OIDC
+- **Email**: Nodemailer with admin-managed SMTP settings
+- **Security**: Helmet, express-rate-limit
 - **Validation**: Zod
 - **Testing**: Jest + Supertest
 
@@ -55,13 +75,17 @@ A modern web application for managing internal improvement ideas, designed for e
 - **UI Library**: Vuetify 3
 - **State Management**: Pinia
 - **Routing**: Vue Router
+- **Internationalization**: vue-i18n (Slovak & English)
 - **Charts**: Chart.js with vue-chartjs
 - **HTTP Client**: Axios
 - **Build Tool**: Vite
+- **Testing**: Vitest
 
 ### DevOps
 - **Containerization**: Docker & Docker Compose
 - **Reverse Proxy**: Nginx (for frontend in production)
+- **E2E Testing**: Playwright
+- **CI**: GitHub Actions (backend, frontend, and E2E test workflows)
 
 ## Project Structure
 
@@ -72,18 +96,23 @@ idea-hub/
 │   │   ├── schema.prisma   # Database schema
 │   │   └── seed.ts         # Database seeding script
 │   ├── src/
-│   │   ├── __tests__/      # Jest tests
+│   │   ├── __tests__/      # Jest unit/route tests (mocked Prisma)
+│   │   ├── __integration__/# Jest integration tests (real MongoDB)
+│   │   ├── config/         # Mail & SSO configuration
+│   │   ├── lib/            # Prisma client
 │   │   ├── middleware/     # Auth & RBAC middleware
-│   │   ├── routes/         # API routes
+│   │   ├── routes/         # API routes (auth, sso, ideas, users, reports, departments, mail-settings)
 │   │   ├── types/          # TypeScript types
-│   │   ├── utils/          # Validation schemas
+│   │   ├── utils/          # Validation, mailer & templates, bootstrap, SSO pruning
 │   │   └── index.ts        # Server entry point
 │   ├── Dockerfile
 │   └── package.json
 ├── frontend/               # Vue 3 frontend
 │   ├── src/
+│   │   ├── __tests__/     # Vitest unit tests
 │   │   ├── api/           # API client modules
 │   │   ├── components/    # Reusable components
+│   │   ├── i18n/          # Locale catalogs (sk, en)
 │   │   ├── layouts/       # Layout components
 │   │   ├── pages/         # Page components
 │   │   ├── plugins/       # Vuetify setup
@@ -96,14 +125,20 @@ idea-hub/
 │   ├── Dockerfile
 │   ├── nginx.conf
 │   └── package.json
+├── e2e/                    # Playwright E2E tests (start their own servers + mock IdP)
+├── dev/                    # Dev & testing kits (Keycloak SSO kit, mail testing, IAM onboarding)
+├── docs/                   # Deployment runbook & project docs
+├── .github/workflows/      # CI (tests, E2E, PR checks)
+├── playwright.config.ts
 ├── docker-compose.yml
+├── docker-compose.prod.yml
 ├── .env.example
 └── README.md
 ```
 
 ## Prerequisites
 
-- **Node.js** 20.x or higher
+- **Node.js** 22.12 or higher
 - **npm** or **yarn**
 - **MongoDB** 7.x (or use Docker)
 - **Docker** & **Docker Compose** (for containerized deployment)
@@ -193,7 +228,9 @@ This is the easiest way to get started. Docker will handle all dependencies and 
 6. **Login with demo accounts** *(seeded by `prisma:seed` — LOCAL DEVELOPMENT ONLY)*
    - **Admin**: admin@ideahub.com / admin123
    - **Power User**: power@ideahub.com / power123
-   - **User**: john@ideahub.com / user123
+   - **Users**: john@ideahub.com, jane@ideahub.com, bob@ideahub.com / user123
+
+   The seed also creates two departments (Všeobecné, Marketing) and sample ideas in every status.
 
    > **Warning:** These are well-known default credentials created by the seed
    > script. Never run `prisma:seed` against a shared or production database, and
@@ -263,12 +300,18 @@ For active development without Docker.
 ### Root Level
 
 ```bash
-npm run dev              # Start both backend and frontend in dev mode
-npm run build            # Build both backend and frontend
-npm run test             # Run backend tests
+npm run dev              # Start backend and frontend in dev mode (concurrently)
+npm run build            # Build backend and frontend
+npm run test             # Run backend + frontend unit tests
+npm run test:backend     # Backend tests only
+npm run test:frontend    # Frontend tests only
+npm run test:e2e         # Playwright E2E suite (starts its own servers)
+npm run prisma:generate  # Generate Prisma Client
+npm run prisma:seed      # Seed database with test data
 npm run docker:build     # Build Docker images
 npm run docker:up        # Start Docker containers
 npm run docker:down      # Stop Docker containers
+npm run docker:logs      # Tail Docker container logs
 ```
 
 ### Backend
@@ -277,7 +320,8 @@ npm run docker:down      # Stop Docker containers
 npm run dev              # Start development server with hot reload
 npm run build            # Compile TypeScript to JavaScript
 npm run start            # Start production server
-npm run test             # Run Jest tests
+npm run test             # Run Jest unit/route tests (no database needed)
+npm run test:integration # Run integration tests (requires a running MongoDB)
 npm run prisma:generate  # Generate Prisma Client
 npm run prisma:migrate   # Run database migrations
 npm run prisma:seed      # Seed database with test data
@@ -288,8 +332,10 @@ npm run prisma:studio    # Open Prisma Studio (database GUI)
 
 ```bash
 npm run dev              # Start Vite dev server
-npm run build            # Build for production
+npm run build            # Type-check and build for production
 npm run preview          # Preview production build
+npm run test             # Run Vitest unit tests
+npm run test:watch       # Vitest in watch mode
 ```
 
 ## API Documentation
@@ -298,38 +344,58 @@ npm run preview          # Preview production build
 
 - `GET /api/auth/config` - Public: whether SSO is enabled (`{ ssoEnabled }`)
 - `POST /api/auth/login` - Login with email and password (local accounts only)
-- `POST /api/auth/logout` - Logout current user
+- `POST /api/auth/logout` - Logout current user (SSO sessions may return a `redirectTo` for RP-initiated logout)
+- `POST /api/auth/change-password` - Change own password (local accounts only)
 - `GET /api/auth/me` - Get current user info
 - `GET /api/auth/sso/login` - Begin OIDC login (redirects to the corporate IAM)
 - `GET /api/auth/sso/callback` - OIDC redirect URI; completes login and sets the session
 
 ### Ideas Endpoints
 
-- `GET /api/ideas` - Get all ideas (with optional filters)
-- `GET /api/ideas/:id` - Get single idea with events
-- `POST /api/ideas` - Create new idea
-- `PATCH /api/ideas/:id` - Update idea (submitter only)
+- `GET /api/ideas` - Get all ideas (with filters and pagination)
+- `GET /api/ideas/:id` - Get single idea with events and progress steps
+- `POST /api/ideas` - Create new idea (emails the target department when mail is configured)
+- `PATCH /api/ideas/:id` - Update idea (submitter only, while SUBMITTED)
 - `PATCH /api/ideas/:id/approve` - Approve idea (Power User/Admin)
 - `PATCH /api/ideas/:id/reject` - Reject idea (Power User/Admin)
 - `PATCH /api/ideas/:id/claim` - Claim and start working on idea
-- `PATCH /api/ideas/:id/complete` - Mark idea as completed
+- `PATCH /api/ideas/:id/complete` - Mark idea as completed (assignee only)
+- `POST /api/ideas/:id/steps` - Add progress step to in-progress idea (assignee only)
 - `DELETE /api/ideas/:id` - Delete idea (Admin only)
-- `POST /api/ideas/:id/steps` - Add progress step to in-progress idea
 
 ### Reports Endpoints
 
-- `GET /api/reports/summary` - Get dashboard summary statistics
-- `GET /api/reports/monthly-trend` - Get monthly completion trend
-- `GET /api/reports/top-contributors` - Get top contributors
-- `GET /api/reports/filtered` - Get filtered ideas (with CSV export)
+- `GET /api/reports/summary` - Dashboard summary statistics (regular users: own ideas only)
+- `GET /api/reports/by-department` - Idea counts per department (regular users: own ideas only)
+- `GET /api/reports/monthly-trend` - Monthly completion trend (regular users: own ideas only)
+- `GET /api/reports/top-contributors` - Top contributors (Power User/Admin)
+- `GET /api/reports/filtered` - Filtered ideas with pagination (with CSV export)
+
+### Departments Endpoints
+
+- `GET /api/departments` - List departments (notification emails visible to admins only)
+- `POST /api/departments` - Create department (Admin only)
+- `PATCH /api/departments/reorder` - Reorder departments (Admin only)
+- `PATCH /api/departments/:id` - Update department name / notification emails (Admin only)
+- `DELETE /api/departments/:id` - Delete department (Admin only; refused for the last department or one that has ideas)
+
+### Email Settings Endpoints (Admin Only)
+
+- `GET /api/mail-settings` - Get SMTP configuration (the password is never returned)
+- `PUT /api/mail-settings` - Save SMTP configuration (password stored encrypted)
+- `POST /api/mail-settings/test` - Send a test email using the saved configuration
 
 ### Users Endpoints (Admin Only)
 
 - `GET /api/users` - Get all users
 - `GET /api/users/:id` - Get single user
 - `POST /api/users` - Create new user
-- `PATCH /api/users/:id` - Update user (cannot change own role)
-- `DELETE /api/users/:id` - Delete user (cannot delete self)
+- `PATCH /api/users/:id` - Update user (cannot change own role; SSO-managed users cannot be edited)
+- `DELETE /api/users/:id` - Delete user (cannot delete self, SSO-managed users, or users with ideas)
+
+### Miscellaneous
+
+- `GET /health` - Liveness check (`{ status: "ok" }`)
 
 ## User Roles & Permissions
 
@@ -337,18 +403,21 @@ npm run preview          # Preview production build
 - Submit new ideas
 - View all ideas (global list and own ideas)
 - Claim approved ideas for execution
-- Mark claimed ideas as completed
+- Log progress steps and mark claimed ideas as completed
+- Dashboard and reports scoped to own ideas
 
 ### POWER_USER
 - All USER permissions
 - Access to review queue
 - Approve or reject submitted ideas
-- Request changes on ideas
+- Organization-wide dashboard, reports, and top-contributors view
 
 ### ADMIN
 - All POWER_USER permissions
 - Manage users (create, edit, delete, change roles)
-- Access to user management interface
+- Manage departments and their notification emails
+- Configure email (SMTP) settings
+- Delete ideas
 
 ## Database Schema
 
@@ -356,8 +425,11 @@ npm run preview          # Preview production build
 - `id`: Unique identifier
 - `name`: User's full name
 - `email`: Unique email address
-- `passwordHash`: Bcrypt hashed password
+- `passwordHash`: Bcrypt hashed password (absent for SSO-managed users)
 - `role`: USER | POWER_USER | ADMIN
+- `authProvider`: LOCAL | SSO
+- `ssoSub`: OIDC subject identifier (SSO users)
+- `department`: Department/org unit synced from the IdP (SSO users)
 - `createdAt`, `updatedAt`: Timestamps
 
 ### Idea Model
@@ -368,76 +440,93 @@ npm run preview          # Preview production build
 - `effort`: Effort estimation (< 1 day, 1-3 days, > 3 days)
 - `status`: SUBMITTED | APPROVED | IN_PROGRESS | DONE | REJECTED
 - `tags`: Array of tag strings
+- `departmentId`: Target department
 - `submitterId`: User who submitted
 - `approverId`: User who approved (nullable)
 - `assigneeId`: User working on it (nullable)
-- `submittedAt`, `approvedAt`, `startedAt`, `completedAt`: Timestamps
+- `submittedAt`, `approvedAt`, `startedAt`, `completedAt`, `rejectedAt`: Timestamps
+
+### Department Model
+- `id`: Unique identifier
+- `name`: Unique department name
+- `order`: Display order
+- `notificationEmails`: Addresses notified about new ideas targeting this department
 
 ### IdeaEvent Model
 - `id`: Unique identifier
 - `ideaId`: Related idea
-- `type`: Event type (SUBMITTED, APPROVED, REJECTED, etc.)
+- `type`: SUBMITTED | APPROVED | REJECTED | CLAIMED | STARTED | COMPLETED | UPDATED | CHANGE_REQUESTED
 - `byUserId`: User who performed action
 - `timestamp`: When event occurred
 - `note`: Optional note/comment
 
+### IdeaStep Model
+- `id`: Unique identifier
+- `ideaId`: Related idea
+- `text`: Progress note
+- `createdAt`: Timestamp
+
+### MailSettings Model (singleton)
+- SMTP `host`, `port`, `secure`, `username`, and the password stored encrypted (AES-256-GCM)
+- `from` address, notification `language` (en/sk), optional `subjectTemplate`
+- `enabled`: Master switch for outbound mail
+
 ## Testing
 
-IdeaHub has **comprehensive test coverage** across backend and frontend.
+IdeaHub has **comprehensive test coverage** across backend, frontend, and end-to-end suites.
 
 ### Test Coverage Summary
 
-- **Backend Tests**: 184 test cases across 7 suites
-- **Frontend Tests**: 265 test cases (i18n)
-- **Total**: 449 tests
-- **Test Files**: 7 backend (auth, ideas, reports, users, integration, validation, init-admin) + 1 frontend
+- **Backend**: 414 tests across 13 Jest suites (run against mocked Prisma — no database needed)
+- **Backend integration**: separate Jest suite against a real MongoDB (`npm run test:integration`)
+- **Frontend**: 415 Vitest tests across 13 files (pages, stores, API client, i18n)
+- **E2E**: Playwright scenarios covering local & SSO login, RBAC, the idea lifecycle, departments, email settings, and i18n
 
 **What's Tested:**
-- ✅ Authentication & session management (23 tests)
-- ✅ Ideas CRUD & workflows (35 tests)
-- ✅ Reports & analytics (15 tests)
-- ✅ User management (20 tests)
-- ✅ Integration workflows (10 tests)
-- ✅ Validation schemas (30+ tests)
-- ✅ Admin initialization (10+ tests)
-- ✅ RBAC enforcement
-- ✅ Error handling & edge cases
-- ✅ Frontend i18n (265 tests)
-
-See [backend/TEST_COVERAGE.md](backend/TEST_COVERAGE.md) for detailed coverage report.
+- ✅ Authentication, sessions & password change
+- ✅ SSO/OIDC flow (login, callback, provisioning, break-glass)
+- ✅ Ideas CRUD & workflow transitions
+- ✅ Departments CRUD, reordering & notification emails
+- ✅ Email settings, mail templates & mailer behavior
+- ✅ Reports & analytics (including role scoping)
+- ✅ User management & RBAC enforcement
+- ✅ Validation schemas & error handling
+- ✅ Frontend pages, stores & i18n catalogs
 
 ### Run Backend Tests
 
 ```bash
 cd backend
-npm test
+npm test                       # unit/route suites (no database needed)
+npm run test:integration       # integration suites (requires a running MongoDB)
+npm test -- --coverage         # coverage report
+npm test -- sso.test.ts        # single suite
+npm test -- --watch            # watch mode
 ```
 
-### Test Coverage Report
+### Run Frontend Tests
 
 ```bash
-cd backend
-npm test -- --coverage
+cd frontend
+npm test                       # Vitest, single run
+npm run test:watch             # watch mode
 ```
 
-### Run Specific Test Suite
+### Run E2E Tests
 
 ```bash
-npm test auth.test.ts          # Authentication tests
-npm test ideas.test.ts         # Ideas CRUD & workflow tests
-npm test reports.test.ts       # Reports & analytics tests
-npm test users.test.ts         # User management tests
-npm test integration.test.ts   # End-to-end workflows
-npm test validation.test.ts    # Validation schema tests
+npm run test:e2e
 ```
 
-### Watch Mode (Development)
+Playwright starts its own backend, frontend, and mock identity provider — ports 3001, 5173, and 8099 must be free.
 
-```bash
-npm test -- --watch
-```
+### Continuous Integration
+
+GitHub Actions (`.github/workflows/`) runs the backend, frontend, and E2E suites plus PR checks on pushes and pull requests.
 
 ## Production Deployment
+
+A step-by-step production runbook (Slovak) is available in [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ### Using Docker Compose (Recommended)
 
@@ -474,13 +563,14 @@ npm test -- --watch
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `DATABASE_URL` | MongoDB connection string | `mongodb://mongodb:27017/ideahub` |
-| `SESSION_SECRET` | Secret for signing session cookies | Required in production |
-| `NODE_ENV` | Environment mode | `production` |
+| `MONGO_ROOT_USER` / `MONGO_ROOT_PASSWORD` | MongoDB root credentials — docker-compose creates the mongod user from them and composes the backend's credentialed `DATABASE_URL` | Required |
+| `DATABASE_URL` | Credentialed MongoDB connection string (see `.env.example` for the exact form) | Required |
+| `SESSION_SECRET` | Secret for signing session cookies | Required outside development |
+| `NODE_ENV` | `development` for a host-run backend; `production` for any Docker deploy | `production` |
 | `BACKEND_PORT` | Backend server port | `3001` |
-| `COOKIE_SECURE` | Set `Secure` flag on cookies (requires HTTPS) | `false` |
-| `ADMIN_EMAIL` | Default admin email | `admin@ideahub.com` |
-| `ADMIN_PASSWORD` | Default admin password | `admin123` |
+| `COOKIE_SECURE` | Set `Secure` flag on cookies and switch session-cookie `SameSite` from `Lax` to `Strict` (requires HTTPS) | `false` |
+| `ADMIN_EMAIL` | Bootstrap admin email — the first admin is created from these on first run | Required |
+| `ADMIN_PASSWORD` | Bootstrap admin password | Required |
 | `ADMIN_NAME` | Default admin display name | `Admin` |
 | `FRONTEND_URL` | Frontend origin; used for CORS and the SSO post-login redirect | `http://localhost:5173` |
 | `VITE_API_URL` | Frontend API base URL (build-time) | `/api` (Docker), `http://localhost:3001` (dev) |
@@ -512,13 +602,14 @@ See [Single Sign-On (SSO)](#single-sign-on-sso) for the `SSO_*` and `BREAK_GLASS
 ## Security Considerations
 
 - **Passwords**: All passwords are hashed using bcrypt with 10 salt rounds
-- **Sessions**: Secure session cookies with httpOnly flag; configurable `Secure` and `SameSite` attributes
+- **Sessions**: httpOnly cookies backed by a MongoDB session store with a 7-day TTL; `Secure` and `SameSite` follow `COOKIE_SECURE`
 - **CSRF**: Custom `X-Requested-With` header required on all state-changing API requests
 - **Input Validation**: All inputs validated using Zod schemas; URL params validated as MongoDB ObjectIds
 - **RBAC**: Role-based access control on all protected routes
 - **CSV Injection**: Report exports sanitize fields to prevent formula injection
 - **Security Headers**: CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy via nginx and Helmet
-- **Rate Limiting**: General API rate limit (100 req/15min) and login rate limit (10 req/15min)
+- **Rate Limiting**: General API limit (300 req/15min, active in production) with stricter per-endpoint limits: login 10, password change 5, SSO login 30, and idea submission 30 per 15 minutes
+- **SMTP Password**: Stored AES-256-GCM-encrypted with `MAIL_SETTINGS_KEY` and never returned by the API
 - **Error Handling**: Internal server errors return generic messages to prevent information leakage
 - **Session Invalidation**: Sessions are invalidated when user role or email is changed by admin
 - **Admin Protection**: Admins cannot delete their own account or change their own role
@@ -646,6 +737,7 @@ break-glass admin with a strong local password.
 | `SSO_NAME_CLAIM` | Claim holding display name (ID token or userinfo) | `name` |
 | `SSO_ROLE_MAP` | `iam-role:APP_ROLE,...` mapping (app role ∈ `USER`/`POWER_USER`/`ADMIN`) | — |
 | `BREAK_GLASS_EMAILS` | Emails forbidden from SSO (csv, lowercased) | `[ADMIN_EMAIL]` |
+| `SSO_PRUNE_INTERVAL_HOURS` | Hours between prunes of orphaned SSO users (no session, no ideas, no events) | `24` |
 
 Role mapping keys are matched case-insensitively and the **highest-privilege**
 match wins; an IdP role with no mapping resolves to `USER`. Example:

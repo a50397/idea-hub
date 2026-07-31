@@ -39,7 +39,7 @@ export default {
     passwordRequired: 'Heslo je povinné',
     loginFailed: 'Prihlásenie zlyhalo',
     signInWithSso: 'Prihlásiť sa cez SSO',
-    useLocalAccount: 'Použiť lokálny účet',
+    useLocalAccount: 'Použiť lokálny účet (iba admin)',
     ssoFailed: 'Prihlásenie cez SSO zlyhalo. Skúste to znova alebo použite lokálny účet.',
   },
   dashboard: {

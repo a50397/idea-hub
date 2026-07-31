@@ -39,7 +39,7 @@ export default {
     passwordRequired: 'Password is required',
     loginFailed: 'Login failed',
     signInWithSso: 'Sign in with SSO',
-    useLocalAccount: 'Use a local account',
+    useLocalAccount: 'Use a local account (admin only)',
     ssoFailed: 'SSO sign-in failed. Please try again or use a local account.',
   },
   dashboard: {

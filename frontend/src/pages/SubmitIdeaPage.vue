@@ -15,6 +15,7 @@
                 counter="120"
                 :hint="$t('ideas.titleHint')"
                 persistent-hint
+                class="mb-4"
               ></v-text-field>
 
               <v-textarea
@@ -26,6 +27,7 @@
                 rows="5"
                 :hint="$t('ideas.descriptionHint')"
                 persistent-hint
+                class="mb-4"
               ></v-textarea>
 
               <v-textarea
@@ -37,6 +39,7 @@
                 rows="4"
                 :hint="$t('ideas.benefitsHint')"
                 persistent-hint
+                class="mb-4"
               ></v-textarea>
 
               <v-select
@@ -45,6 +48,7 @@
                 :items="effortOptions"
                 variant="outlined"
                 :error-messages="errors.effort"
+                class="mb-4"
               ></v-select>
 
               <v-select
@@ -55,6 +59,7 @@
                 item-value="id"
                 variant="outlined"
                 :error-messages="errors.department"
+                class="mb-4"
               ></v-select>
 
               <v-combobox

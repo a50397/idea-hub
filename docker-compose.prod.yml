@@ -96,8 +96,16 @@ services:
       SSO_ROLE_MAP: ${SSO_ROLE_MAP:-}
       SSO_SHOW_LOGOUT: ${SSO_SHOW_LOGOUT:-false}
       BREAK_GLASS_EMAILS: ${BREAK_GLASS_EMAILS:-}
+      # Corporate-CA trust for OUTBOUND HTTPS (OIDC discovery/token/userinfo).
+      # Node does NOT use the OS trust store — an internally-issued IdP
+      # certificate needs the corporate CA chain (PEM) mounted and this var set
+      # (uncomment here AND the volumes below). Never "fix" this with
+      # NODE_TLS_REJECT_UNAUTHORIZED=0 — that disables all TLS verification.
+      # NODE_EXTRA_CA_CERTS: /etc/ssl/corp/corp-ca.pem
     expose:
       - "3001"
+    # volumes:
+    #   - ./ca/corp-ca.pem:/etc/ssl/corp/corp-ca.pem:ro
     depends_on:
       mongodb:
         condition: service_healthy
