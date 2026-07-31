@@ -243,26 +243,31 @@ beforeEach(() => {
 // 1. Config / enablement
 // ===========================================================================
 describe('SSO enablement', () => {
+  // /config is the PUBLIC pre-login endpoint and now carries ONLY ssoEnabled. The
+  // session-scoped ssoShowLogout flag (SSO_SHOW_LOGOUT) moved to the authenticated
+  // GET /api/options and is covered by options.test.ts.
   test('GET /api/auth/config reports ssoEnabled:false when disabled', async () => {
     process.env.SSO_ENABLED = 'false';
     const res = await request(app).get('/api/auth/config');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ssoEnabled: false, ssoShowLogout: false });
+    expect(res.body).toEqual({ ssoEnabled: false });
   });
 
   test('GET /api/auth/config reports ssoEnabled:true when enabled', async () => {
     process.env.SSO_ENABLED = 'true';
     const res = await request(app).get('/api/auth/config');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ssoEnabled: true, ssoShowLogout: false });
+    expect(res.body).toEqual({ ssoEnabled: true });
   });
 
-  test('GET /api/auth/config reports ssoShowLogout:true only when SSO_SHOW_LOGOUT=true', async () => {
+  test('GET /api/auth/config never leaks ssoShowLogout, even when SSO_SHOW_LOGOUT=true', async () => {
     process.env.SSO_ENABLED = 'true';
     process.env.SSO_SHOW_LOGOUT = 'true';
     const res = await request(app).get('/api/auth/config');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ssoEnabled: true, ssoShowLogout: true });
+    // The public config carries ONLY ssoEnabled — the logout flag lives on /options.
+    expect(res.body).toEqual({ ssoEnabled: true });
+    expect(res.body).not.toHaveProperty('ssoShowLogout');
   });
 
   test('GET /api/auth/sso/login returns 404 when disabled', async () => {

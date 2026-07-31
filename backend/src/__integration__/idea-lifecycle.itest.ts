@@ -19,6 +19,7 @@ import {
   getDefaultDepartmentId,
 } from './support/helpers';
 import request from 'supertest';
+import { ensureIdeaNotifyDefaults } from '../utils/init-idea-notify';
 
 beforeAll(async () => {
   await waitForBoot();
@@ -173,5 +174,73 @@ describe('idea lifecycle across roles (real DB)', () => {
     const res = await withCsrf(assigneeAgent.patch(`/api/ideas/${idea.id}/claim`));
     expect(res.status).toBe(400);
     expect(res.body).toHaveProperty('error', 'Can only claim ideas in APPROVED status');
+  });
+
+  // The missing-field proof for notifyOnChange. Pre-existing idea documents predate
+  // the field; a raw insert reproduces one faithfully. Prove: (1) a missing nullable
+  // Boolean reads back as null via Prisma and the API surfaces it as opted-out;
+  // (2) the boot backfill (ensureIdeaNotifyDefaults) — what an existing deployment
+  // runs on upgrade — MATCHES the missing-field doc (Prisma updateMany cannot) and
+  // sets the strict-opt-out default false; (3) the submitter (and only the
+  // submitter) can then opt in via the notify endpoint, which writes no IdeaEvent.
+  test('a legacy idea without notifyOnChange: reads null, API opts it out, boot backfill sets false, submitter opts in', async () => {
+    const { submitter } = await seedActors();
+    const departmentId = await getDefaultDepartmentId();
+
+    // Raw-insert a legacy idea document WITHOUT the notifyOnChange field.
+    // submitterId/departmentId are @db.ObjectId, so they use the {$oid} form.
+    await prisma.$runCommandRaw({
+      insert: 'ideas',
+      documents: [
+        {
+          title: 'Legacy idea without a notify flag',
+          description: 'A sufficiently detailed legacy idea description.',
+          benefits: 'Clear and measurable benefits described here.',
+          effort: 'LESS_THAN_ONE_DAY',
+          status: 'SUBMITTED',
+          tags: [],
+          submitterId: { $oid: submitter.id },
+          departmentId: { $oid: departmentId },
+          submittedAt: { $date: '2026-01-01T00:00:00.000Z' },
+          createdAt: { $date: '2026-01-01T00:00:00.000Z' },
+          updatedAt: { $date: '2026-01-01T00:00:00.000Z' },
+        },
+      ],
+    });
+
+    // (1a) A missing nullable Boolean reads back as null via Prisma (no crash).
+    const legacy = await prisma.idea.findFirst({ where: { title: 'Legacy idea without a notify flag' } });
+    expect(legacy).not.toBeNull();
+    expect(legacy!.notifyOnChange).toBeNull();
+
+    // (1b) The API returns null and treats it as opted out (read paths handle
+    // null==false regardless of the backfill — defense in depth).
+    const submitterAgent = newAgent();
+    await loginAs(submitterAgent, 'submitter@life.test', 'pw');
+    const getRes = await submitterAgent.get(`/api/ideas/${legacy!.id}`);
+    expect(getRes.status).toBe(200);
+    expect(getRes.body.notifyOnChange).toBeNull();
+
+    // (2) The boot backfill matches the missing field and writes the default false.
+    await ensureIdeaNotifyDefaults();
+    const backfilled = await prisma.idea.findUnique({ where: { id: legacy!.id } });
+    expect(backfilled!.notifyOnChange).toBe(false);
+
+    // (3a) A non-submitter cannot flip the toggle.
+    const otherAgent = newAgent();
+    await loginAs(otherAgent, 'assignee@life.test', 'pw');
+    const forbidden = await withCsrf(otherAgent.patch(`/api/ideas/${legacy!.id}/notify`)).send({ enabled: true });
+    expect(forbidden.status).toBe(403);
+
+    // (3b) The submitter opts in; the field flips and persists.
+    const notifyRes = await withCsrf(submitterAgent.patch(`/api/ideas/${legacy!.id}/notify`)).send({ enabled: true });
+    expect(notifyRes.status).toBe(200);
+    expect(notifyRes.body.notifyOnChange).toBe(true);
+    const after = await prisma.idea.findUnique({ where: { id: legacy!.id } });
+    expect(after!.notifyOnChange).toBe(true);
+
+    // The toggle is a preference change, not a lifecycle action: no IdeaEvent.
+    const events = await prisma.ideaEvent.findMany({ where: { ideaId: legacy!.id } });
+    expect(events).toHaveLength(0);
   });
 });

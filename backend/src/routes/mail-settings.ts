@@ -1,12 +1,14 @@
 // Admin-only management of the singleton outbound-mail configuration.
 //
-//   GET  /api/mail-settings       -> masked settings + hasPassword (no ciphertext)
-//   PUT  /api/mail-settings       -> save (upsert) the single document
-//   POST /api/mail-settings/test  -> send a short test mail using the SAVED config
+//   GET  /api/mail-settings         -> masked settings + hasPassword (no ciphertext)
+//   PUT  /api/mail-settings         -> save (upsert) the single document
+//   POST /api/mail-settings/test    -> send a short test mail using the SAVED config
 //
-// All three require an ADMIN session (requireRole). The stored password is
-// AES-256-GCM ciphertext (utils/secretbox.ts) and is NEVER returned by any
-// endpoint — the GET/PUT responses expose only a `hasPassword` boolean. State-
+// Every route here requires an ADMIN session (requireRole). The effective
+// mail-enabled boolean any authenticated user needs (to drive the per-idea notify
+// toggle) now lives on GET /api/options (routes/options.ts), not here. The stored
+// password is AES-256-GCM ciphertext (utils/secretbox.ts) and is NEVER returned by
+// any endpoint — the GET/PUT responses expose only a `hasPassword` boolean. State-
 // changing requests (PUT, POST) are additionally covered by the app-wide CSRF
 // header check registered in index.ts (they are not GET/HEAD/OPTIONS).
 

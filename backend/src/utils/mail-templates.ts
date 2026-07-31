@@ -100,6 +100,24 @@ function interpolate(template: string, values: Record<string, string>): string {
 }
 
 /**
+ * Visually delimit user-supplied free text by prefixing every line with "> ".
+ *
+ * These bodies are plain text: a user value (an idea description, a progress-step
+ * note) is embedded among system-generated lines. Without a delimiter a multi-line
+ * user value could inject lines that read like system sections (e.g. a forged
+ * "View the idea: http://evil…"). Quoting every line keeps the whole block
+ * unambiguously user-authored. Applied to the VALUE before interpolation, so the
+ * single-pass injection guarantee (see file header) is unchanged — the quoted value
+ * is still emitted verbatim and never re-scanned for placeholders.
+ */
+function quoteBlock(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => `> ${line}`)
+    .join('\n');
+}
+
+/**
  * Build the department "new idea" notification email.
  *
  * Subject: the built-in wording for the active language, or `input.subjectTemplate`
@@ -129,9 +147,142 @@ export function newIdeaEmail(input: NewIdeaEmailInput): BuiltEmail {
     department: input.departmentName,
     title: input.title,
     submitterName: input.submitterName,
-    description: input.description.slice(0, DESCRIPTION_PREVIEW_CHARS),
+    // User-supplied free text: quote every line so an injected pseudo-section in the
+    // description cannot masquerade as a system line in the plain-text body.
+    description: quoteBlock(input.description.slice(0, DESCRIPTION_PREVIEW_CHARS)),
     link: input.link,
   });
 
   return { subject, text };
+}
+
+// ---------------------------------------------------------------------------
+// Idea LIFECYCLE notification wording (subject + body) — sent to the SUBMITTER
+// when their idea is approved, rejected, claimed, completed, or gets a progress
+// step (see utils/lifecycle-notify.ts). Same install-wide language selection as
+// the new-idea mail above and the SAME single-pass, injection-safe interpolate()
+// (a user value that itself looks like a placeholder is emitted verbatim).
+//
+// DELIBERATELY, the admin `subjectTemplate` is NOT applied here: its placeholders
+// ({department}, {title}) are scoped to the new-idea mail and would render
+// literally/misleadingly on a lifecycle event, so each event carries its OWN
+// built-in subject per language.
+// ---------------------------------------------------------------------------
+
+export type IdeaLifecycleEvent = 'APPROVED' | 'REJECTED' | 'CLAIMED' | 'COMPLETED' | 'STEP_ADDED';
+
+export interface IdeaLifecycleEmailInput {
+  event: IdeaLifecycleEvent;
+  title: string;
+  /** Name of the user who performed the change. */
+  actorName: string;
+  /** The progress-step text; used only by the STEP_ADDED event. */
+  stepText?: string;
+  link: string;
+  /** Active notification language (from the mail settings). */
+  language: MailLang;
+}
+
+// Built-in wording per language per event. Each event has its OWN subject (the
+// admin subjectTemplate is not applied — see the section header). SK is genuine
+// formal Slovak using the house vocabulary (nápad / Zobraziť nápad) and the same
+// gender-neutral verb suffix as the new-idea mail's "Odoslal/a" (schválil/a,
+// zamietol/la, začal/a, dokončil/a, pridal/a). Placeholders: {title}, {actorName},
+// {stepText} (STEP_ADDED only), {link}.
+const LIFECYCLE_WORDING: Record<MailLang, Record<IdeaLifecycleEvent, Wording>> = {
+  en: {
+    APPROVED: {
+      subject: '[IdeaHub] Your idea was approved: {title}',
+      body:
+        'Your idea "{title}" has been approved by {actorName}.\n\n' +
+        'View the idea: {link}',
+    },
+    REJECTED: {
+      subject: '[IdeaHub] Your idea was rejected: {title}',
+      body:
+        'Your idea "{title}" has been rejected by {actorName}.\n\n' +
+        'View the idea: {link}',
+    },
+    CLAIMED: {
+      subject: '[IdeaHub] Work has started on your idea: {title}',
+      body:
+        '{actorName} has started working on your idea "{title}".\n\n' +
+        'View the idea: {link}',
+    },
+    COMPLETED: {
+      subject: '[IdeaHub] Your idea was completed: {title}',
+      body:
+        'Your idea "{title}" has been completed by {actorName}.\n\n' +
+        'View the idea: {link}',
+    },
+    STEP_ADDED: {
+      subject: '[IdeaHub] New progress on your idea: {title}',
+      body:
+        '{actorName} added a progress update to your idea "{title}":\n\n' +
+        '{stepText}\n\n' +
+        'View the idea: {link}',
+    },
+  },
+  sk: {
+    APPROVED: {
+      subject: '[IdeaHub] Váš nápad bol schválený: {title}',
+      body:
+        'Váš nápad "{title}" schválil/a {actorName}.\n\n' +
+        'Zobraziť nápad: {link}',
+    },
+    REJECTED: {
+      subject: '[IdeaHub] Váš nápad bol zamietnutý: {title}',
+      body:
+        'Váš nápad "{title}" zamietol/la {actorName}.\n\n' +
+        'Zobraziť nápad: {link}',
+    },
+    CLAIMED: {
+      subject: '[IdeaHub] Na Vašom nápade sa začalo pracovať: {title}',
+      body:
+        'Na Vašom nápade "{title}" začal/a pracovať {actorName}.\n\n' +
+        'Zobraziť nápad: {link}',
+    },
+    COMPLETED: {
+      subject: '[IdeaHub] Váš nápad bol dokončený: {title}',
+      body:
+        'Váš nápad "{title}" dokončil/a {actorName}.\n\n' +
+        'Zobraziť nápad: {link}',
+    },
+    STEP_ADDED: {
+      subject: '[IdeaHub] Nový pokrok na Vašom nápade: {title}',
+      body:
+        '{actorName} pridal/a aktualizáciu pokroku k Vášmu nápadu "{title}":\n\n' +
+        '{stepText}\n\n' +
+        'Zobraziť nápad: {link}',
+    },
+  },
+};
+
+/**
+ * Build a submitter lifecycle-notification email for the given event. Subject and
+ * body both come from the built-in per-event wording for the active language; the
+ * admin subjectTemplate is deliberately NOT consulted. Interpolation is the same
+ * single-pass, injection-safe pass used by newIdeaEmail — a title/actor/step value
+ * that itself contains "{...}" is emitted verbatim. Never throws for string inputs.
+ */
+export function ideaLifecycleEmail(input: IdeaLifecycleEmailInput): BuiltEmail {
+  // Defensive normalization (parity with newIdeaEmail): anything other than 'sk'
+  // resolves to the English built-in.
+  const lang: MailLang = input.language === 'sk' ? 'sk' : 'en';
+  const wording = LIFECYCLE_WORDING[lang][input.event];
+
+  const values = {
+    title: input.title,
+    actorName: input.actorName,
+    // User-supplied free text (STEP_ADDED body only): quote every line so an injected
+    // pseudo-section in the step note cannot masquerade as a system line. Harmless for
+    // the other events, whose bodies never reference {stepText}.
+    stepText: quoteBlock(input.stepText ?? ''),
+    link: input.link,
+  };
+
+  return {
+    subject: interpolate(wording.subject, values),
+    text: interpolate(wording.body, values),
+  };
 }

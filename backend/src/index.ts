@@ -12,9 +12,11 @@ import reportsRoutes from './routes/reports';
 import usersRoutes from './routes/users';
 import departmentsRoutes from './routes/departments';
 import mailSettingsRoutes from './routes/mail-settings';
+import optionsRoutes from './routes/options';
 import crypto from 'crypto';
 import { ensureAdminExists } from './utils/init-admin';
 import { ensureDepartments } from './utils/init-departments';
+import { ensureIdeaNotifyDefaults } from './utils/init-idea-notify';
 import { pruneOrphanSsoUsers } from './utils/prune-sso-users';
 import { isMailKeyValid } from './utils/secretbox';
 import prisma from './lib/prisma';
@@ -138,6 +140,7 @@ app.use('/api/reports', reportsRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/departments', departmentsRoutes);
 app.use('/api/mail-settings', mailSettingsRoutes);
+app.use('/api/options', optionsRoutes);
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -159,6 +162,7 @@ const server = app.listen(PORT, async () => {
   console.log(`🔗 API available at: http://localhost:${PORT}`);
   await ensureAdminExists();
   await ensureDepartments();
+  await ensureIdeaNotifyDefaults();
 
   // Automatic pruning of orphaned SSO users. Skipped ENTIRELY under NODE_ENV=test:
   // the integration tier boots this app, and a boot-time (or interval) prune would

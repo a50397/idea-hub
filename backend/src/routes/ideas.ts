@@ -1,14 +1,26 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { IdeaStatus, EventType, Role, Prisma } from '@prisma/client';
 import { rateLimit } from 'express-rate-limit';
 import prisma from '../lib/prisma';
 import { requireAuth, requireRole } from '../middleware/auth';
-import { createIdeaSchema, reviewIdeaSchema, updateIdeaSchema, ideasQuerySchema, createStepSchema, objectIdParamSchema } from '../utils/validation';
+import { createIdeaSchema, reviewIdeaSchema, updateIdeaSchema, ideasQuerySchema, createStepSchema, objectIdParamSchema, notifyToggleSchema } from '../utils/validation';
 import { sendMail } from '../utils/mailer';
 import { newIdeaEmail } from '../utils/mail-templates';
 import { getEffectiveMailConfig } from '../config/mail';
+import { maybeNotifySubmitter, type NotifiableIdea, type MaybeNotifyArgs } from '../utils/lifecycle-notify';
 
 const router = Router();
+
+// Best-effort, fire-and-forget submitter notification, built from the actor in req.session.
+function notifySubmitter(req: Request, idea: NotifiableIdea, event: MaybeNotifyArgs['event'], stepText?: string): void {
+  maybeNotifySubmitter({
+    idea,
+    event,
+    actorUserId: req.session.userId!,
+    actorName: req.session.name ?? '',
+    stepText,
+  });
+}
 
 // Dedicated limiter for idea creation. A single POST /api/ideas can fan out up to
 // ~20 department-notification emails carrying a user-controlled subject/body, so
@@ -29,6 +41,22 @@ const ideaCreateLimiter = rateLimit({
   legacyHeaders: false,
   skip: () => process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development',
   message: { error: 'Too many idea submissions. Please try again later.' },
+});
+
+// Dedicated limiter for progress-step creation, mirroring ideaCreateLimiter exactly.
+// A POST /:id/steps fires a best-effort lifecycle notification to the (opted-in)
+// submitter, so a burst of step posts is a mail amplifier toward that submitter —
+// the same class of abuse the create route already caps, which is why it gets its
+// own limiter here. Identical window/max and the SAME test||development skip parity
+// (index.ts's general limiter) so the real-DB integration tier and local dev are
+// never throttled, while production/staging still are.
+const stepCreateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development',
+  message: { error: 'Too many progress updates. Please try again later.' },
 });
 
 // Get all ideas with filters
@@ -176,6 +204,9 @@ router.post('/', ideaCreateLimiter as any, requireAuth, async (req, res) => {
           ...data,
           submitterId: userId,
           status: IdeaStatus.SUBMITTED,
+          // Strict opt-out default: persist an explicit boolean even when the
+          // client omits the flag, so the field is never absent on a new doc.
+          notifyOnChange: data.notifyOnChange ?? false,
         },
         include: {
           submitter: {
@@ -315,6 +346,62 @@ router.patch('/:id', requireAuth, async (req, res) => {
   }
 });
 
+// Toggle the submitter's lifecycle-mail opt-in. Separate from the generic
+// PATCH /:id (which is submitter-only WHILE SUBMITTED) because the submitter must
+// be able to opt in/out in ANY status. Submitter-only; writes NO IdeaEvent (this
+// is a preference change, not a lifecycle action); returns the idea in the usual
+// include shape.
+router.patch('/:id/notify', requireAuth, async (req, res) => {
+  try {
+    const idParsed = objectIdParamSchema.safeParse(req.params.id);
+    if (!idParsed.success) {
+      return res.status(400).json({ error: 'Invalid idea ID format' });
+    }
+    const id = idParsed.data;
+    const userId = req.session.userId!;
+    const { enabled } = notifyToggleSchema.parse(req.body);
+
+    const existingIdea = await prisma.idea.findUnique({
+      where: { id },
+    });
+
+    if (!existingIdea) {
+      return res.status(404).json({ error: 'Idea not found' });
+    }
+
+    if (existingIdea.submitterId !== userId) {
+      return res.status(403).json({ error: 'You can only change notifications for your own ideas' });
+    }
+
+    const updatedIdea = await prisma.idea.update({
+      where: { id },
+      data: { notifyOnChange: enabled },
+      include: {
+        submitter: {
+          select: { id: true, name: true, email: true },
+        },
+        approver: {
+          select: { id: true, name: true, email: true },
+        },
+        assignee: {
+          select: { id: true, name: true, email: true },
+        },
+        department: {
+          select: { id: true, name: true },
+        },
+      },
+    });
+
+    res.json(updatedIdea);
+  } catch (error) {
+    if (error instanceof Error) {
+      res.status(400).json({ error: error.message });
+    } else {
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+});
+
 // Approve idea (Power User or Admin only)
 router.patch('/:id/approve', requireRole(Role.POWER_USER, Role.ADMIN), async (req, res) => {
   try {
@@ -371,10 +458,10 @@ router.patch('/:id/approve', requireRole(Role.POWER_USER, Role.ADMIN), async (re
       return updated;
     });
 
-    // TODO: Send notification to submitter
-    console.log(`[NOTIFICATION] Idea "${updatedIdea.title}" approved by ${req.session.name}`);
-
     res.json(updatedIdea);
+
+    // Best-effort, fire-and-forget submitter notification (after the response).
+    notifySubmitter(req, updatedIdea, 'APPROVED');
   } catch (error) {
     if (error instanceof Error) {
       res.status(400).json({ error: error.message });
@@ -441,6 +528,9 @@ router.patch('/:id/reject', requireRole(Role.POWER_USER, Role.ADMIN), async (req
     });
 
     res.json(updatedIdea);
+
+    // Best-effort, fire-and-forget submitter notification (after the response).
+    notifySubmitter(req, updatedIdea, 'REJECTED');
   } catch (error) {
     if (error instanceof Error) {
       res.status(400).json({ error: error.message });
@@ -509,6 +599,9 @@ router.patch('/:id/claim', requireAuth, async (req, res) => {
     });
 
     res.json(updatedIdea);
+
+    // Best-effort, fire-and-forget submitter notification (after the response).
+    notifySubmitter(req, updatedIdea, 'CLAIMED');
   } catch (error) {
     if (error instanceof Error) {
       res.status(400).json({ error: error.message });
@@ -581,6 +674,9 @@ router.patch('/:id/complete', requireAuth, async (req, res) => {
     });
 
     res.json(updatedIdea);
+
+    // Best-effort, fire-and-forget submitter notification (after the response).
+    notifySubmitter(req, updatedIdea, 'COMPLETED');
   } catch (error) {
     if (error instanceof Error) {
       res.status(400).json({ error: error.message });
@@ -621,8 +717,10 @@ router.delete('/:id', requireRole(Role.ADMIN), async (req, res) => {
   }
 });
 
-// Add a progress step to an idea (assignee only, IN_PROGRESS only)
-router.post('/:id/steps', requireAuth, async (req, res) => {
+// Add a progress step to an idea (assignee only, IN_PROGRESS only). stepCreateLimiter
+// runs before requireAuth (same ordering and `as any` bridge as the create route)
+// so the per-IP cap applies to this mail amplifier regardless of session state.
+router.post('/:id/steps', stepCreateLimiter as any, requireAuth, async (req, res) => {
   try {
     const idParsed = objectIdParamSchema.safeParse(req.params.id);
     if (!idParsed.success) {
@@ -632,8 +730,16 @@ router.post('/:id/steps', requireAuth, async (req, res) => {
     const userId = req.session.userId!;
     const data = createStepSchema.parse(req.body);
 
+    // Load the submitter alongside the existence check so the lifecycle
+    // notification (below) has the recipient without a second query — unlike the
+    // approve/claim/complete paths, this route has no transaction returning it.
     const existingIdea = await prisma.idea.findUnique({
       where: { id },
+      include: {
+        submitter: {
+          select: { id: true, name: true, email: true },
+        },
+      },
     });
 
     if (!existingIdea) {
@@ -656,6 +762,9 @@ router.post('/:id/steps', requireAuth, async (req, res) => {
     });
 
     res.status(201).json(step);
+
+    // Best-effort, fire-and-forget submitter notification (after the response).
+    notifySubmitter(req, existingIdea, 'STEP_ADDED', data.text);
   } catch (error) {
     if (error instanceof Error) {
       res.status(400).json({ error: error.message });

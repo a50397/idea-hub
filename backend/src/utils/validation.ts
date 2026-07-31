@@ -20,6 +20,14 @@ export const createIdeaSchema = z.object({
   // departmentId is optional in the Prisma schema (legacy docs) but REQUIRED here:
   // every new idea targets a department. Existence is verified in the handler.
   departmentId: z.string().regex(objectIdRegex, 'Invalid department ID'),
+  // Optional submitter opt-in to lifecycle mail. Absent -> the create handler
+  // persists the strict-opt-out default (false).
+  notifyOnChange: z.boolean().optional(),
+});
+
+// PATCH /api/ideas/:id/notify — the submitter flips their lifecycle-mail opt-in.
+export const notifyToggleSchema = z.object({
+  enabled: z.boolean(),
 });
 
 export const updateIdeaSchema = z.object({
