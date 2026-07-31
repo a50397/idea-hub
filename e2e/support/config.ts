@@ -85,6 +85,17 @@ export const BACKEND_ENV: Record<string, string> = {
   SSO_REDIRECT_URI: `${API_BASE}/auth/sso/callback`,
   SSO_ROLE_MAP: 'ideahub-admin:ADMIN,ideahub-power:POWER_USER,ideahub-user:USER',
   SSO_POST_LOGOUT_REDIRECT_URI: `${FRONTEND_URL}/login`,
+  // The backend also loads the repo-root .env via dotenv, which fills in any
+  // variable not set here (dotenv never overrides, but it does fill gaps). Pin
+  // every SSO knob the backend consults so a developer's local IdP config
+  // (e.g. the DIAM SSO_ROLES_CLAIM=diam:roles) can never leak into the e2e
+  // backend and silently change claim extraction or UI behavior.
+  SSO_SCOPE: 'openid profile email',
+  SSO_ROLES_CLAIM: 'roles',
+  SSO_ORG_CLAIM: 'org',
+  SSO_EMAIL_CLAIM: 'email',
+  SSO_NAME_CLAIM: 'name',
+  SSO_SHOW_LOGOUT: 'false',
 };
 
 /** Env consumed by e2e/support/mock-idp.mjs (single source of truth). */
