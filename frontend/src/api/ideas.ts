@@ -63,4 +63,11 @@ export const ideasApi = {
     const response = await client.post(`/ideas/${ideaId}/steps`, data);
     return response.data;
   },
+
+  // Toggle the submitter's opt-in to lifecycle notification emails. Submitter-only
+  // on the backend; allowed in any status. Returns the updated idea.
+  setNotify: async (id: string, enabled: boolean): Promise<Idea> => {
+    const response = await client.patch(`/ideas/${id}/notify`, { enabled });
+    return response.data;
+  },
 };

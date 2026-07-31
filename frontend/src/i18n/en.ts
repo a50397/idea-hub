@@ -93,6 +93,8 @@ export default {
     ideaNotFound: 'Idea not found',
     activityTimeline: 'Activity Timeline',
     details: 'Details',
+    notifyToggle: 'Notify me about changes to this idea',
+    notifyToggleHint: 'Get notified when this idea is approved, rejected, claimed, completed, or gets a new progress update.',
   },
   effort: {
     lessThanOneDay: '< 1 day',

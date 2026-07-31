@@ -48,11 +48,21 @@ export interface UserWithCounts extends User {
   };
 }
 
+// The PUBLIC pre-login config (GET /api/auth/config). It carries ONLY what the
+// login page needs: whether to show the SSO button. Every session-scoped flag
+// (including the SSO logout-button visibility) lives on AppOptions instead.
 export interface AuthConfig {
   ssoEnabled: boolean;
-  // Show the in-app logout button for SSO users (SSO_SHOW_LOGOUT). Optional so
-  // a config-fetch miss or older backend safely falls back to hidden.
-  ssoShowLogout?: boolean;
+}
+
+// Consolidated FE-facing runtime flags for the authenticated app (GET /api/options).
+// Every session-scoped UI flag — DB-derived (mailEnabled) or env-derived
+// (ssoShowLogout) — lives here rather than on the public AuthConfig.
+export interface AppOptions {
+  // Whether outbound mail is effectively enabled (drives the per-idea notify toggle).
+  mailEnabled: boolean;
+  // Whether to re-expose the in-app logout button for SSO users (SSO_SHOW_LOGOUT).
+  ssoShowLogout: boolean;
 }
 
 export interface Department {
@@ -107,6 +117,10 @@ export interface Idea {
   approver?: User;
   assigneeId?: string;
   assignee?: User;
+  // Submitter's opt-in to lifecycle notification emails. Nullable: legacy docs
+  // created before the field existed read back as null, which every consumer
+  // treats as false (opted out).
+  notifyOnChange?: boolean | null;
   submittedAt: string;
   approvedAt?: string;
   startedAt?: string;
@@ -142,6 +156,8 @@ export interface CreateIdeaInput {
   effort: Effort;
   departmentId: string;
   tags?: string[];
+  // Opt-in to lifecycle notification emails, only sent when mail is enabled.
+  notifyOnChange?: boolean;
 }
 
 export interface UpdateIdeaInput {

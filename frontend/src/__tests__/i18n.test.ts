@@ -146,6 +146,7 @@ describe('translation coverage for components', () => {
     SubmitIdeaPage: [
       'ideas.submitTitle', 'ideas.title', 'ideas.description', 'ideas.benefits',
       'ideas.effort', 'ideas.tags', 'ideas.submitIdea', 'ideas.submitSuccess',
+      'ideas.notifyToggle', 'ideas.notifyToggleHint',
       'guidelines.title', 'guidelines.specific', 'guidelines.problem',
       'validation.titleMinLength', 'validation.effortRequired',
     ],
@@ -172,7 +173,7 @@ describe('translation coverage for components', () => {
     IdeaDetailPage: [
       'ideas.description', 'ideas.benefits', 'ideas.details',
       'ideas.submittedBy', 'ideas.approvedByLabel', 'ideas.assignedToLabel',
-      'ideas.activityTimeline', 'ideas.ideaNotFound',
+      'ideas.activityTimeline', 'ideas.ideaNotFound', 'ideas.notifyToggle',
     ],
     ReportsPage: [
       'reports.title', 'reports.filters', 'reports.status', 'reports.startDate',

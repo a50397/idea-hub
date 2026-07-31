@@ -32,7 +32,7 @@
         <!-- SSO sessions are IAM-owned: no logout for SSO users unless the
              deployment re-exposes it (SSO_SHOW_LOGOUT); the button then also
              RP-logs-out at the IdP via the logout redirect. -->
-        <div v-if="!isSsoUser || ssoLogoutVisible" class="pa-2">
+        <div v-if="!isSsoUser || optionsStore.ssoShowLogout" class="pa-2">
           <v-btn block @click="handleLogout" prepend-icon="mdi-logout" variant="outlined">
             {{ $t('common.logout') }}
           </v-btn>
@@ -61,24 +61,22 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '../stores/auth';
-import { authApi } from '../api/auth';
+import { useOptionsStore } from '../stores/options';
 
 const drawer = ref(true);
 const router = useRouter();
 const authStore = useAuthStore();
+const optionsStore = useOptionsStore();
 const { locale } = useI18n();
 
 const isSsoUser = computed(() => authStore.user?.authProvider === 'SSO');
 
 // Whether this deployment re-exposes the logout button for SSO users
-// (SSO_SHOW_LOGOUT). A failed config fetch keeps the fail-safe default: hidden.
-const ssoLogoutVisible = ref(false);
-onMounted(async () => {
-  try {
-    ssoLogoutVisible.value = (await authApi.getConfig()).ssoShowLogout ?? false;
-  } catch {
-    ssoLogoutVisible.value = false;
-  }
+// (SSO_SHOW_LOGOUT), sourced from the authenticated /api/options. The store's
+// fetch swallows failures and leaves the flag false, so the button stays hidden
+// for SSO users when it can't be read.
+onMounted(() => {
+  optionsStore.fetch();
 });
 
 const currentLocale = ref(locale.value);

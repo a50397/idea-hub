@@ -4,7 +4,7 @@ import { rateLimit } from 'express-rate-limit';
 import prisma from '../lib/prisma';
 import { loginSchema, changePasswordSchema } from '../utils/validation';
 import { requireAuth } from '../middleware/auth';
-import { isSsoEnabled, isSsoLogoutVisible, getSsoConfig } from '../config/sso';
+import { isSsoEnabled, getSsoConfig } from '../config/sso';
 import { buildEndSessionUrl } from './sso';
 
 const router = Router();
@@ -17,10 +17,11 @@ const BCRYPT_COST = 12;
 // Computed once at startup with the same cost used for real passwords.
 const DUMMY_PASSWORD_HASH = bcrypt.hashSync('idea-hub-timing-equalizer', BCRYPT_COST);
 
-// Public: lets the frontend decide whether to show the SSO button.
-// No auth guard and no rate limiter by design.
+// Public: the ONLY flag the pre-login page needs — whether to show the SSO button.
+// No auth guard and no rate limiter by design. Every session-scoped flag (including
+// ssoShowLogout) lives on the authenticated GET /api/options instead.
 router.get('/config', (_req, res) => {
-  res.json({ ssoEnabled: isSsoEnabled(), ssoShowLogout: isSsoLogoutVisible() });
+  res.json({ ssoEnabled: isSsoEnabled() });
 });
 
 const loginLimiter = rateLimit({

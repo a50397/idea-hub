@@ -479,6 +479,57 @@ describe('Ideas API', () => {
       expect(response.body).toHaveProperty('error');
       expect(mockPrismaFunctions.idea.create).not.toHaveBeenCalled();
     });
+
+    test('persists notifyOnChange=true when the submitter opts in at creation', async () => {
+      const { agent, user } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue({ id: DEPT_ID, name: 'Všeobecné' });
+      mockPrismaFunctions.idea.create.mockResolvedValue({
+        id: 'aaaaaaaaaaaaaaaaaaaaa001',
+        title: 'New notifiable idea',
+        submitter: { id: user.id, name: user.name, email: user.email },
+        department: { id: DEPT_ID, name: 'Všeobecné' },
+      });
+      mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
+
+      const response = await agent.post('/api/ideas').send({
+        title: 'New notifiable idea',
+        description: 'This is a new idea description with enough characters',
+        benefits: 'Great benefits that are well described',
+        effort: 'ONE_TO_THREE_DAYS',
+        departmentId: DEPT_ID,
+        notifyOnChange: true,
+      });
+
+      expect(response.status).toBe(201);
+      expect(mockPrismaFunctions.idea.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ notifyOnChange: true }) })
+      );
+    });
+
+    test('persists notifyOnChange=false (strict opt-out default) when the flag is omitted', async () => {
+      const { agent, user } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue({ id: DEPT_ID, name: 'Všeobecné' });
+      mockPrismaFunctions.idea.create.mockResolvedValue({
+        id: 'aaaaaaaaaaaaaaaaaaaaa001',
+        title: 'New idea without a notify flag',
+        submitter: { id: user.id, name: user.name, email: user.email },
+        department: { id: DEPT_ID, name: 'Všeobecné' },
+      });
+      mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
+
+      const response = await agent.post('/api/ideas').send({
+        title: 'New idea without a notify flag',
+        description: 'This is a new idea description with enough characters',
+        benefits: 'Great benefits that are well described',
+        effort: 'ONE_TO_THREE_DAYS',
+        departmentId: DEPT_ID,
+      });
+
+      expect(response.status).toBe(201);
+      expect(mockPrismaFunctions.idea.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ notifyOnChange: false }) })
+      );
+    });
   });
 
   describe('POST /api/ideas — department notification email', () => {
@@ -803,6 +854,95 @@ describe('Ideas API', () => {
 
       expect(response.status).toBe(400);
       expect(response.body).toHaveProperty('error');
+    });
+  });
+
+  describe('PATCH /api/ideas/:id/notify', () => {
+    const NOTIFY_ID = 'aaaaaaaaaaaaaaaaaaaaa001';
+
+    test('submitter can enable notifications (200) and writes NO IdeaEvent', async () => {
+      const { agent, user } = await loginAsUser(app);
+      const existingIdea = { id: NOTIFY_ID, status: 'APPROVED', submitterId: user.id, notifyOnChange: false };
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue(existingIdea);
+      mockPrismaFunctions.idea.update.mockResolvedValue({
+        ...existingIdea,
+        notifyOnChange: true,
+        submitter: { id: user.id, name: user.name, email: user.email },
+      });
+
+      const response = await agent.patch(`/api/ideas/${NOTIFY_ID}/notify`).send({ enabled: true });
+
+      expect(response.status).toBe(200);
+      expect(response.body.notifyOnChange).toBe(true);
+      expect(mockPrismaFunctions.idea.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: NOTIFY_ID }, data: { notifyOnChange: true } })
+      );
+      // A preference change is NOT a lifecycle action — no event row.
+      expect(mockPrismaFunctions.ideaEvent.create).not.toHaveBeenCalled();
+    });
+
+    test('submitter can disable notifications in any status (200)', async () => {
+      const { agent, user } = await loginAsUser(app);
+      const existingIdea = { id: NOTIFY_ID, status: 'DONE', submitterId: user.id, notifyOnChange: true };
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue(existingIdea);
+      mockPrismaFunctions.idea.update.mockResolvedValue({
+        ...existingIdea,
+        notifyOnChange: false,
+        submitter: { id: user.id, name: user.name, email: user.email },
+      });
+
+      const response = await agent.patch(`/api/ideas/${NOTIFY_ID}/notify`).send({ enabled: false });
+
+      expect(response.status).toBe(200);
+      expect(mockPrismaFunctions.idea.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { notifyOnChange: false } })
+      );
+    });
+
+    test('a non-submitter cannot toggle (403) and no update happens', async () => {
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue({
+        id: NOTIFY_ID,
+        status: 'APPROVED',
+        submitterId: 'otheruser',
+      });
+
+      const response = await agent.patch(`/api/ideas/${NOTIFY_ID}/notify`).send({ enabled: true });
+
+      expect(response.status).toBe(403);
+      expect(response.body).toHaveProperty('error');
+      expect(mockPrismaFunctions.idea.update).not.toHaveBeenCalled();
+    });
+
+    test('returns 401 when unauthenticated', async () => {
+      const response = await request(app).patch(`/api/ideas/${NOTIFY_ID}/notify`).send({ enabled: true });
+      expect(response.status).toBe(401);
+      expect(response.body).toHaveProperty('error');
+    });
+
+    test('returns 400 for a non-boolean enabled and never updates', async () => {
+      const { agent } = await loginAsUser(app);
+      const response = await agent.patch(`/api/ideas/${NOTIFY_ID}/notify`).send({ enabled: 'yes' });
+      expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty('error');
+      expect(mockPrismaFunctions.idea.update).not.toHaveBeenCalled();
+    });
+
+    test('returns 404 for an unknown idea id', async () => {
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue(null);
+
+      const response = await agent.patch('/api/ideas/ccccccccccccccccccccc404/notify').send({ enabled: true });
+
+      expect(response.status).toBe(404);
+      expect(response.body).toHaveProperty('error', 'Idea not found');
+    });
+
+    test('returns 400 for an invalid idea id format', async () => {
+      const { agent } = await loginAsUser(app);
+      const response = await agent.patch('/api/ideas/not-a-valid-id/notify').send({ enabled: true });
+      expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty('error', 'Invalid idea ID format');
     });
   });
 
@@ -1180,6 +1320,291 @@ describe('Ideas API', () => {
 
       expect(response.status).toBe(400);
       expect(response.body).toHaveProperty('error');
+    });
+  });
+
+  // The lifecycle notification is fire-and-forget: after the 200/201 the handler
+  // calls maybeNotifySubmitter, which (when opted in) reads the effective mail
+  // config and sends. Settle those awaits with flushAsync before asserting. The
+  // config mock now carries effectiveEnabled (true=sent, false=disabled) — the
+  // helper bails on a disabled config so it never calls sendMail.
+  describe('lifecycle submitter notifications (fire-and-forget mail)', () => {
+    const IDEA_ID = 'aaaaaaaaaaaaaaaaaaaaa001';
+    const TITLE = 'Notifiable idea';
+    // The submitter is a DIFFERENT person from the actor (user123), so an opted-in
+    // idea genuinely mails.
+    const SUBMITTER = { id: 'submitter1', name: 'Sub Mitter', email: 'submitter@example.com' };
+    // The actor as a submitter — used to prove the no-self-notification guard.
+    const SELF = { id: 'user123', name: 'Test User', email: 'test@example.com' };
+
+    beforeEach(() => {
+      mockedSendMail.mockReset();
+      mockedSendMail.mockResolvedValue(true);
+      mockedGetConfig.mockReset();
+      // Effective mail ON by default; "disabled" cases override per test.
+      mockedGetConfig.mockResolvedValue({ language: 'en', subjectTemplate: '', effectiveEnabled: true } as any);
+    });
+
+    // The four transaction-based transitions (approve/reject/claim/complete), each
+    // resolving idea.update with the post-transition idea (carrying submitter +
+    // notifyOnChange). addStep is covered separately (it has no transaction and
+    // notifies from the findUnique result).
+    interface Tx {
+      event: string;
+      role: string;
+      path: string;
+      existing: Record<string, unknown>;
+      updated: (notifyOnChange: boolean, submitter: typeof SUBMITTER) => Record<string, unknown>;
+      subjectEn: string;
+    }
+
+    const transitions: Tx[] = [
+      {
+        event: 'APPROVED',
+        role: 'POWER_USER',
+        path: `/api/ideas/${IDEA_ID}/approve`,
+        existing: { id: IDEA_ID, title: TITLE, status: 'SUBMITTED', submitterId: SUBMITTER.id },
+        updated: (notifyOnChange, submitter) => ({
+          id: IDEA_ID, title: TITLE, status: 'APPROVED', submitterId: submitter.id, notifyOnChange,
+          submitter, approver: SELF,
+        }),
+        subjectEn: '[IdeaHub] Your idea was approved: Notifiable idea',
+      },
+      {
+        event: 'REJECTED',
+        role: 'POWER_USER',
+        path: `/api/ideas/${IDEA_ID}/reject`,
+        existing: { id: IDEA_ID, title: TITLE, status: 'SUBMITTED', submitterId: SUBMITTER.id },
+        updated: (notifyOnChange, submitter) => ({
+          id: IDEA_ID, title: TITLE, status: 'REJECTED', submitterId: submitter.id, notifyOnChange,
+          submitter, approver: SELF,
+        }),
+        subjectEn: '[IdeaHub] Your idea was rejected: Notifiable idea',
+      },
+      {
+        event: 'CLAIMED',
+        role: 'USER',
+        path: `/api/ideas/${IDEA_ID}/claim`,
+        existing: { id: IDEA_ID, title: TITLE, status: 'APPROVED', submitterId: SUBMITTER.id },
+        updated: (notifyOnChange, submitter) => ({
+          id: IDEA_ID, title: TITLE, status: 'IN_PROGRESS', submitterId: submitter.id, notifyOnChange,
+          submitter, assignee: SELF,
+        }),
+        subjectEn: '[IdeaHub] Work has started on your idea: Notifiable idea',
+      },
+      {
+        event: 'COMPLETED',
+        role: 'USER',
+        path: `/api/ideas/${IDEA_ID}/complete`,
+        existing: { id: IDEA_ID, title: TITLE, status: 'IN_PROGRESS', submitterId: SUBMITTER.id, assigneeId: SELF.id },
+        updated: (notifyOnChange, submitter) => ({
+          id: IDEA_ID, title: TITLE, status: 'DONE', submitterId: submitter.id, notifyOnChange,
+          submitter, assignee: SELF,
+        }),
+        subjectEn: '[IdeaHub] Your idea was completed: Notifiable idea',
+      },
+    ];
+
+    describe.each(transitions)('$event', (t) => {
+      test('mails the submitter (once) when opted in', async () => {
+        const cfg = { language: 'en', subjectTemplate: '', effectiveEnabled: true } as any;
+        mockedGetConfig.mockResolvedValue(cfg);
+        const { agent } = await loginAsUser(app, t.role);
+        mockPrismaFunctions.idea.findUnique.mockResolvedValue(t.existing);
+        mockPrismaFunctions.idea.update.mockResolvedValue(t.updated(true, SUBMITTER));
+        mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
+
+        const response = await agent.patch(t.path).send({});
+        await flushAsync();
+
+        expect(response.status).toBe(200);
+        expect(mockedSendMail).toHaveBeenCalledTimes(1);
+        const arg = mockedSendMail.mock.calls[0][0];
+        expect(arg.to).toBe(SUBMITTER.email);
+        expect(arg.subject).toBe(t.subjectEn);
+        expect(arg.text).toContain(TITLE);
+        expect(arg.text).toContain(`/ideas/${IDEA_ID}`);
+        // The config read once is handed straight to sendMail (single settings read).
+        expect(mockedGetConfig).toHaveBeenCalledTimes(1);
+        expect(mockedSendMail.mock.calls[0][1]).toBe(cfg);
+      });
+
+      test('does NOT mail when the submitter opted out (notifyOnChange false)', async () => {
+        const { agent } = await loginAsUser(app, t.role);
+        mockPrismaFunctions.idea.findUnique.mockResolvedValue(t.existing);
+        mockPrismaFunctions.idea.update.mockResolvedValue(t.updated(false, SUBMITTER));
+        mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
+
+        const response = await agent.patch(t.path).send({});
+        await flushAsync();
+
+        expect(response.status).toBe(200);
+        expect(mockedSendMail).not.toHaveBeenCalled();
+        // Opted out is a synchronous bail — the settings are never even read.
+        expect(mockedGetConfig).not.toHaveBeenCalled();
+      });
+
+      test('does NOT mail when outbound mail is disabled (effectiveEnabled false)', async () => {
+        mockedGetConfig.mockResolvedValue({ language: 'en', subjectTemplate: '', effectiveEnabled: false } as any);
+        const { agent } = await loginAsUser(app, t.role);
+        mockPrismaFunctions.idea.findUnique.mockResolvedValue(t.existing);
+        mockPrismaFunctions.idea.update.mockResolvedValue(t.updated(true, SUBMITTER));
+        mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
+
+        const response = await agent.patch(t.path).send({});
+        await flushAsync();
+
+        expect(response.status).toBe(200);
+        expect(mockedGetConfig).toHaveBeenCalledTimes(1);
+        expect(mockedSendMail).not.toHaveBeenCalled();
+      });
+
+      test('does NOT mail when the actor IS the submitter (no self-notification)', async () => {
+        const { agent } = await loginAsUser(app, t.role);
+        mockPrismaFunctions.idea.findUnique.mockResolvedValue({ ...t.existing, submitterId: SELF.id });
+        mockPrismaFunctions.idea.update.mockResolvedValue(t.updated(true, SELF));
+        mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
+
+        const response = await agent.patch(t.path).send({});
+        await flushAsync();
+
+        expect(response.status).toBe(200);
+        expect(mockedSendMail).not.toHaveBeenCalled();
+      });
+    });
+
+    // addStep: no transaction — notifies from the (submitter-included) findUnique.
+    describe('STEP_ADDED', () => {
+      const stepExisting = (notifyOnChange: boolean, submitter = SUBMITTER) => ({
+        id: IDEA_ID,
+        title: TITLE,
+        status: 'IN_PROGRESS',
+        submitterId: submitter.id,
+        assigneeId: SELF.id,
+        notifyOnChange,
+        submitter,
+      });
+
+      test('mails the submitter with the step text when opted in', async () => {
+        const cfg = { language: 'en', subjectTemplate: '', effectiveEnabled: true } as any;
+        mockedGetConfig.mockResolvedValue(cfg);
+        const { agent } = await loginAsUser(app);
+        mockPrismaFunctions.idea.findUnique.mockResolvedValue(stepExisting(true));
+        mockPrismaFunctions.ideaStep.create.mockResolvedValue({ id: 'step1', ideaId: IDEA_ID, text: 'Wired the backfill' });
+
+        const response = await agent.post(`/api/ideas/${IDEA_ID}/steps`).send({ text: 'Wired the backfill' });
+        await flushAsync();
+
+        expect(response.status).toBe(201);
+        expect(mockedSendMail).toHaveBeenCalledTimes(1);
+        const arg = mockedSendMail.mock.calls[0][0];
+        expect(arg.to).toBe(SUBMITTER.email);
+        expect(arg.subject).toBe('[IdeaHub] New progress on your idea: Notifiable idea');
+        // The step text is line-delimited with "> " in the body (injection safety).
+        expect(arg.text).toContain('> Wired the backfill');
+        expect(mockedSendMail.mock.calls[0][1]).toBe(cfg);
+      });
+
+      test('does NOT mail when the submitter opted out', async () => {
+        const { agent } = await loginAsUser(app);
+        mockPrismaFunctions.idea.findUnique.mockResolvedValue(stepExisting(false));
+        mockPrismaFunctions.ideaStep.create.mockResolvedValue({ id: 'step1', ideaId: IDEA_ID, text: 'A progress note' });
+
+        const response = await agent.post(`/api/ideas/${IDEA_ID}/steps`).send({ text: 'A progress note' });
+        await flushAsync();
+
+        expect(response.status).toBe(201);
+        expect(mockedSendMail).not.toHaveBeenCalled();
+        expect(mockedGetConfig).not.toHaveBeenCalled();
+      });
+
+      test('does NOT mail when outbound mail is disabled', async () => {
+        mockedGetConfig.mockResolvedValue({ language: 'en', subjectTemplate: '', effectiveEnabled: false } as any);
+        const { agent } = await loginAsUser(app);
+        mockPrismaFunctions.idea.findUnique.mockResolvedValue(stepExisting(true));
+        mockPrismaFunctions.ideaStep.create.mockResolvedValue({ id: 'step1', ideaId: IDEA_ID, text: 'A progress note' });
+
+        const response = await agent.post(`/api/ideas/${IDEA_ID}/steps`).send({ text: 'A progress note' });
+        await flushAsync();
+
+        expect(response.status).toBe(201);
+        expect(mockedGetConfig).toHaveBeenCalledTimes(1);
+        expect(mockedSendMail).not.toHaveBeenCalled();
+      });
+
+      test('does NOT mail when the assignee IS the submitter (no self-notification)', async () => {
+        const { agent } = await loginAsUser(app);
+        mockPrismaFunctions.idea.findUnique.mockResolvedValue(stepExisting(true, SELF));
+        mockPrismaFunctions.ideaStep.create.mockResolvedValue({ id: 'step1', ideaId: IDEA_ID, text: 'A progress note' });
+
+        const response = await agent.post(`/api/ideas/${IDEA_ID}/steps`).send({ text: 'A progress note' });
+        await flushAsync();
+
+        expect(response.status).toBe(201);
+        expect(mockedSendMail).not.toHaveBeenCalled();
+      });
+    });
+
+    // Representative edge cases exercised on a single transition (APPROVED — a
+    // POWER_USER approving another user's opted-in idea). These cover branches in
+    // utils/lifecycle-notify.ts the per-event matrix above does not: a submitter with
+    // no email address (the recipient bail at lifecycle-notify.ts:48-49), the settings
+    // language flowing through to the REAL Slovak wording, and a rejecting mailer being
+    // swallowed after the request already succeeded.
+    describe('edge cases (APPROVED representative)', () => {
+      const t = transitions[0];
+
+      test('does NOT mail when the opted-in submitter has no email address', async () => {
+        const noEmailSubmitter = { id: 'submitter1', name: 'Sub Mitter', email: '' };
+        const { agent } = await loginAsUser(app, t.role);
+        mockPrismaFunctions.idea.findUnique.mockResolvedValue(t.existing);
+        mockPrismaFunctions.idea.update.mockResolvedValue(t.updated(true, noEmailSubmitter));
+        mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
+
+        const response = await agent.patch(t.path).send({});
+        await flushAsync();
+
+        expect(response.status).toBe(200);
+        // A missing recipient is a synchronous bail — the settings are never even read.
+        expect(mockedGetConfig).not.toHaveBeenCalled();
+        expect(mockedSendMail).not.toHaveBeenCalled();
+      });
+
+      test('uses the settings language (sk) so the real Slovak subject reaches sendMail', async () => {
+        mockedGetConfig.mockResolvedValue({ language: 'sk', subjectTemplate: '', effectiveEnabled: true } as any);
+        const { agent } = await loginAsUser(app, t.role);
+        mockPrismaFunctions.idea.findUnique.mockResolvedValue(t.existing);
+        mockPrismaFunctions.idea.update.mockResolvedValue(t.updated(true, SUBMITTER));
+        mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
+
+        const response = await agent.patch(t.path).send({});
+        await flushAsync();
+
+        expect(response.status).toBe(200);
+        expect(mockedSendMail).toHaveBeenCalledTimes(1);
+        const arg = mockedSendMail.mock.calls[0][0];
+        // The real utils/mail-templates.ts renders the Slovak APPROVED wording; no
+        // English lifecycle fragment leaks.
+        expect(arg.subject).toBe('[IdeaHub] Váš nápad bol schválený: Notifiable idea');
+        expect(arg.text).toContain('Zobraziť nápad:');
+        expect(arg.text).not.toContain('View the idea:');
+      });
+
+      test('still returns 200 when the lifecycle mailer rejects (best-effort; error swallowed)', async () => {
+        mockedSendMail.mockRejectedValueOnce(new Error('unexpected transport blow-up'));
+        const { agent } = await loginAsUser(app, t.role);
+        mockPrismaFunctions.idea.findUnique.mockResolvedValue(t.existing);
+        mockPrismaFunctions.idea.update.mockResolvedValue(t.updated(true, SUBMITTER));
+        mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
+
+        const response = await agent.patch(t.path).send({});
+        await flushAsync();
+
+        // The rejection is caught inside the fire-and-forget IIFE; the already-sent
+        // response is unaffected and no unhandled rejection surfaces.
+        expect(response.status).toBe(200);
+        expect(mockedSendMail).toHaveBeenCalledTimes(1);
+      });
     });
   });
 });

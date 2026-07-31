@@ -33,6 +33,7 @@ A modern web application for managing internal improvement ideas, designed for e
 ### Email Notifications
 - Admin-managed SMTP configuration on the **Email settings** page (server, from address, notification language, optional subject template), stored in the database with the SMTP password encrypted
 - New-idea notification sent to the target department's notification addresses (best-effort — mail problems never block the request)
+- Per-idea lifecycle notifications: the submitter can opt in (a toggle on the create form and on the idea's details page, shown only when outbound mail is enabled) to be emailed when their idea is approved, rejected, claimed, completed, or gets a progress step. A change the submitter makes themselves never notifies them, and delivery is best-effort like the department mail
 - Test-email button to verify the configuration
 
 ### Internationalization
@@ -350,6 +351,10 @@ npm run test:watch       # Vitest in watch mode
 - `GET /api/auth/sso/login` - Begin OIDC login (redirects to the corporate IAM)
 - `GET /api/auth/sso/callback` - OIDC redirect URI; completes login and sets the session
 
+### Options Endpoint
+
+- `GET /api/options` - Authenticated: consolidated runtime UI flags for the app, as `{ mailEnabled, ssoShowLogout }` (any logged-in user). `mailEnabled` (outbound mail effectively enabled) drives the per-idea notify toggle; `ssoShowLogout` (`SSO_SHOW_LOGOUT`) re-exposes the in-app logout button for SSO users. Exposes only these two booleans — no admin configuration.
+
 ### Ideas Endpoints
 
 - `GET /api/ideas` - Get all ideas (with filters and pagination)
@@ -360,6 +365,7 @@ npm run test:watch       # Vitest in watch mode
 - `PATCH /api/ideas/:id/reject` - Reject idea (Power User/Admin)
 - `PATCH /api/ideas/:id/claim` - Claim and start working on idea
 - `PATCH /api/ideas/:id/complete` - Mark idea as completed (assignee only)
+- `PATCH /api/ideas/:id/notify` - Toggle the submitter's lifecycle-email opt-in (submitter only, any status)
 - `POST /api/ideas/:id/steps` - Add progress step to in-progress idea (assignee only)
 - `DELETE /api/ideas/:id` - Delete idea (Admin only)
 
@@ -395,7 +401,7 @@ npm run test:watch       # Vitest in watch mode
 
 ### Miscellaneous
 
-- `GET /health` - Liveness check (`{ status: "ok" }`)
+- `GET /health` - Liveness check (`{ status: "ok", timestamp }`)
 
 ## User Roles & Permissions
 
@@ -444,6 +450,7 @@ npm run test:watch       # Vitest in watch mode
 - `submitterId`: User who submitted
 - `approverId`: User who approved (nullable)
 - `assigneeId`: User working on it (nullable)
+- `notifyOnChange`: Submitter opt-in to lifecycle-change email (nullable Boolean; `null` on pre-feature ideas, backfilled to `false` at boot)
 - `submittedAt`, `approvedAt`, `startedAt`, `completedAt`, `rejectedAt`: Timestamps
 
 ### Department Model
@@ -477,17 +484,17 @@ IdeaHub has **comprehensive test coverage** across backend, frontend, and end-to
 
 ### Test Coverage Summary
 
-- **Backend**: 414 tests across 13 Jest suites (run against mocked Prisma — no database needed)
+- **Backend**: 474 tests across 14 Jest suites (run against mocked Prisma — no database needed)
 - **Backend integration**: separate Jest suite against a real MongoDB (`npm run test:integration`)
-- **Frontend**: 415 Vitest tests across 13 files (pages, stores, API client, i18n)
-- **E2E**: Playwright scenarios covering local & SSO login, RBAC, the idea lifecycle, departments, email settings, and i18n
+- **Frontend**: 445 Vitest tests across 16 files (pages, stores, API client, i18n)
+- **E2E**: Playwright scenarios covering local & SSO login, RBAC, the idea lifecycle, departments, email settings, the per-idea notification opt-in, and i18n
 
 **What's Tested:**
 - ✅ Authentication, sessions & password change
 - ✅ SSO/OIDC flow (login, callback, provisioning, break-glass)
 - ✅ Ideas CRUD & workflow transitions
 - ✅ Departments CRUD, reordering & notification emails
-- ✅ Email settings, mail templates & mailer behavior
+- ✅ Email settings, mail templates (new-idea & lifecycle) & mailer behavior
 - ✅ Reports & analytics (including role scoping)
 - ✅ User management & RBAC enforcement
 - ✅ Validation schemas & error handling
