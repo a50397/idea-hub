@@ -13,7 +13,7 @@ záložné lokálne konto pre výpadok IAM.
 | `nginx/proxy.conf` | reverzný proxy — HTTPS server blok už aktívny |
 | `nginx/certs/ideahub.crt` | certifikát (full chain: leaf + intermediates) |
 | `nginx/certs/ideahub.key` | privátny kľúč (PKCS#8, nešifrovaný) |
-| `ca/corp-ca.pem` | firemná CA — backend ňou overuje TLS certifikát IdP (Node nepoužíva systémové úložisko dôvery); detaily v `ca/README.md` |
+| `ca/corp-ca.pem` | firemná CA — backend ňou overuje TLS certifikát IdP (Node nepoužíva systémové úložisko dôvery); detaily nižšie v tomto dokumente |
 | `docs/DEPLOY.md` | tento dokument |
 
 ## 2. Predpoklady hosta
