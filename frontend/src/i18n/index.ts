@@ -2,7 +2,8 @@ import { createI18n } from 'vue-i18n';
 import en from './en';
 import sk from './sk';
 
-const savedLocale = localStorage.getItem('locale') || 'sk';
+const storedLocale = localStorage.getItem('locale');
+const savedLocale = storedLocale === 'en' || storedLocale === 'sk' ? storedLocale : 'sk';
 
 const i18n = createI18n({
   legacy: false,
