@@ -61,7 +61,7 @@
       </v-row>
 
       <v-row>
-        <v-col cols="12" md="6">
+        <v-col cols="12" md="6" class="d-flex flex-column">
           <v-card>
             <v-card-title>{{ $t('dashboard.averageTimes') }}</v-card-title>
             <v-card-text>
@@ -77,10 +77,34 @@
               </v-list>
             </v-card-text>
           </v-card>
+
+          <v-card class="mt-6 flex-grow-1 d-flex flex-column">
+            <v-card-title>{{ $t('dashboard.monthlyTrend') }}</v-card-title>
+            <v-card-text class="flex-grow-1 d-flex flex-column">
+              <div v-if="monthlyTrend.length" class="chart-container flex-grow-1">
+                <Bar :data="chartData" :options="chartOptions" />
+              </div>
+              <div v-else class="text-center pa-4 my-auto">
+                <p>{{ $t('dashboard.noTrendData') }}</p>
+              </div>
+            </v-card-text>
+          </v-card>
         </v-col>
 
-        <v-col v-if="authStore.isPowerUser" cols="12" md="6">
-          <v-card>
+        <v-col cols="12" md="6" class="d-flex flex-column">
+          <v-card class="flex-grow-1 d-flex flex-column">
+            <v-card-title>{{ $t('dashboard.ideasByDepartment') }}</v-card-title>
+            <v-card-text class="flex-grow-1 d-flex flex-column">
+              <div v-if="byDepartment.length" class="chart-container flex-grow-1">
+                <Bar :data="departmentChartData" :options="chartOptions" />
+              </div>
+              <div v-else class="text-center pa-4 my-auto">
+                <p>{{ $t('dashboard.noDepartmentData') }}</p>
+              </div>
+            </v-card-text>
+          </v-card>
+
+          <v-card v-if="authStore.isPowerUser" class="mt-6">
             <v-card-title>{{ $t('dashboard.topContributors') }}</v-card-title>
             <v-card-text>
               <v-list>
@@ -99,35 +123,6 @@
           </v-card>
         </v-col>
       </v-row>
-
-      <v-row>
-        <v-col cols="12" md="6">
-          <v-card>
-            <v-card-title>{{ $t('dashboard.monthlyTrend') }}</v-card-title>
-            <v-card-text>
-              <div v-if="monthlyTrend.length" class="chart-container">
-                <Line :data="chartData" :options="chartOptions" />
-              </div>
-              <div v-else class="text-center pa-4">
-                <p>{{ $t('dashboard.noTrendData') }}</p>
-              </div>
-            </v-card-text>
-          </v-card>
-        </v-col>
-        <v-col cols="12" md="6">
-          <v-card>
-            <v-card-title>{{ $t('dashboard.ideasByDepartment') }}</v-card-title>
-            <v-card-text>
-              <div v-if="byDepartment.length" class="chart-container">
-                <Bar :data="departmentChartData" :options="chartOptions" />
-              </div>
-              <div v-else class="text-center pa-4">
-                <p>{{ $t('dashboard.noDepartmentData') }}</p>
-              </div>
-            </v-card-text>
-          </v-card>
-        </v-col>
-      </v-row>
     </div>
   </v-container>
 </template>
@@ -135,13 +130,11 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Line, Bar } from 'vue-chartjs';
+import { Bar } from 'vue-chartjs';
 import {
   Chart as ChartJS,
   CategoryScale,
   LinearScale,
-  PointElement,
-  LineElement,
   BarElement,
   Title,
   Tooltip,
@@ -151,7 +144,7 @@ import { reportsApi } from '../api/reports';
 import { useAuthStore } from '../stores/auth';
 import type { DashboardSummary, MonthlyTrend, TopContributor, DepartmentReport } from '../types';
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend);
+ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
 const { t } = useI18n();
 const authStore = useAuthStore();
@@ -167,9 +160,10 @@ const chartData = computed(() => ({
     {
       label: t('dashboard.completedIdeas'),
       data: monthlyTrend.value.map((item) => item.count),
-      borderColor: '#1976D2',
-      backgroundColor: 'rgba(25, 118, 210, 0.1)',
-      tension: 0.3,
+      backgroundColor: 'rgba(0, 137, 123, 0.6)',
+      borderColor: '#00897B',
+      borderWidth: 1,
+      maxBarThickness: 64,
     },
   ],
 }));
@@ -192,7 +186,7 @@ const chartOptions = {
   maintainAspectRatio: false,
   plugins: {
     legend: {
-      position: 'top' as const,
+      display: false,
     },
     title: {
       display: false,
