@@ -123,9 +123,9 @@ describe('SubmitIdeaPage', () => {
     vi.clearAllMocks();
     mockedIdeas.create.mockResolvedValue({} as any);
     mockedDepartments.getAll.mockResolvedValue(departments);
-    // Mail disabled by default: the pre-existing tests (incl. the exact-6-key
+    // Both channels disabled by default: the pre-existing tests (incl. the exact-6-key
     // payload assertion) must see NO notify toggle and NO notifyOnChange field.
-    mockedOptions.get.mockResolvedValue({ mailEnabled: false, ssoShowLogout: false });
+    mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, ssoShowLogout: false });
   });
 
   it('renders the submission form and guidelines', () => {
@@ -302,8 +302,8 @@ describe('SubmitIdeaPage', () => {
   });
 
   describe('lifecycle-notification toggle', () => {
-    it('is absent when mail is disabled', async () => {
-      mockedOptions.get.mockResolvedValue({ mailEnabled: false, ssoShowLogout: false });
+    it('is absent when both channels are disabled', async () => {
+      mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, ssoShowLogout: false });
       const wrapper = mountPage();
       await flushPromises();
 
@@ -311,7 +311,7 @@ describe('SubmitIdeaPage', () => {
     });
 
     it('is present and off by default when mail is enabled', async () => {
-      mockedOptions.get.mockResolvedValue({ mailEnabled: true, ssoShowLogout: false });
+      mockedOptions.get.mockResolvedValue({ mailEnabled: true, webexEnabled: false, ssoShowLogout: false });
       const wrapper = mountPage();
       await flushPromises();
 
@@ -320,8 +320,19 @@ describe('SubmitIdeaPage', () => {
       expect(toggle.props('modelValue')).toBe(false);
     });
 
-    it('carries notifyOnChange: true in the create payload after the toggle is switched on', async () => {
-      mockedOptions.get.mockResolvedValue({ mailEnabled: true, ssoShowLogout: false });
+    // The toggle is channel-agnostic: Webex alone (mail off) must reveal it too.
+    it('is present when only Webex is enabled (mail off)', async () => {
+      mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: true, ssoShowLogout: false });
+      const wrapper = mountPage();
+      await flushPromises();
+
+      const toggle = wrapper.findComponent({ name: 'VSwitch' });
+      expect(toggle.exists()).toBe(true);
+      expect(toggle.props('modelValue')).toBe(false);
+    });
+
+    it('carries notifyOnChange: true in the create payload after the toggle is switched on (webex-only)', async () => {
+      mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: true, ssoShowLogout: false });
       const wrapper = mountPage();
       await flushPromises();
 

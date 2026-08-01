@@ -25,6 +25,8 @@
 
         <v-list-item v-if="authStore.isAdmin" prepend-icon="mdi-email-outline" :title="$t('nav.mailSettings')" :to="{ name: 'MailSettings' }"></v-list-item>
 
+        <v-list-item v-if="authStore.isAdmin" prepend-icon="mdi-message-text-outline" :title="$t('nav.webexSettings')" :to="{ name: 'WebexSettings' }"></v-list-item>
+
         <v-list-item v-if="!isSsoUser" prepend-icon="mdi-lock-reset" :title="$t('nav.changePassword')" :to="{ name: 'ChangePassword' }"></v-list-item>
       </v-list>
 

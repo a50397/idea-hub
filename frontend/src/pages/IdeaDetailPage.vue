@@ -135,7 +135,7 @@
                 </v-list-item>
 
                 <!-- Submitter-only opt-in to lifecycle notifications, shown only when
-                     mail is enabled admin-side. Settings-style row at the bottom of the
+                     a channel is enabled admin-side. Settings-style row at the bottom of the
                      card: label on the left, switch in the append slot on the right.
                      Optimistic flip with revert on failure (see onNotifyToggle). -->
                 <template v-if="canToggleNotify">
@@ -245,9 +245,9 @@ const snackbarColor = ref('success');
 
 // Notification opt-in state. `notifyOn` mirrors idea.notifyOnChange but is driven
 // independently so a flip can be applied optimistically and reverted on failure.
-// `mailEnabled` tracks the options store reactively (like MainLayout) so a runtime
-// mail toggle flips the notify switch's visibility without a manual re-snapshot.
-const mailEnabled = computed(() => optionsStore.mailEnabled);
+// `notifyEnabled` tracks the options store reactively (like MainLayout) so a runtime
+// channel toggle flips the notify switch's visibility without a manual re-snapshot.
+const notifyEnabled = computed(() => optionsStore.notifyEnabled);
 const notifyOn = ref(false);
 const notifyUpdating = ref(false);
 
@@ -256,10 +256,10 @@ const canManageSteps = computed(() => {
     idea.value?.assigneeId === authStore.user?.id;
 });
 
-// The switch is shown only to the submitter, and only when mail is enabled
-// (same comparison style as canManageSteps).
+// The switch is shown only to the submitter, and only when a notification channel
+// is enabled (same comparison style as canManageSteps).
 const canToggleNotify = computed(() => {
-  return mailEnabled.value && idea.value?.submitterId === authStore.user?.id;
+  return notifyEnabled.value && idea.value?.submitterId === authStore.user?.id;
 });
 
 const timelineItems = computed<TimelineItem[]>(() => {
@@ -391,10 +391,11 @@ async function addStep() {
 
 onMounted(async () => {
   await loadIdea();
-  // The mail-enabled flag is runtime-mutable, so refetch on mount. `mailEnabled` is
-  // a computed over the store, so it tracks this fetch (and any later change)
-  // reactively. The store swallows failures and leaves the flag false, so a failed
-  // read simply keeps the notify toggle hidden (same best-effort semantics as before).
+  // The channel-enabled flags are runtime-mutable, so refetch on mount.
+  // `notifyEnabled` is a computed over the store, so it tracks this fetch (and any
+  // later change) reactively. The store swallows failures and leaves the flags false,
+  // so a failed read simply keeps the notify toggle hidden (same best-effort
+  // semantics as before).
   await optionsStore.fetch();
 });
 </script>

@@ -29,6 +29,15 @@ export default defineConfig(({ mode }) => ({
       'vue-i18n': 'vue-i18n/dist/vue-i18n.runtime.esm-bundler.js',
     },
   },
+  // Pre-bundle Vuetify components used by only one lazily-loaded page. The dep
+  // scanner cannot see through the vuetify autoImport transform, so the first
+  // browser visit to such a page triggers "new dependencies optimized →
+  // reloading" mid-session, which reverts in-flight UI state (this flaked the
+  // webex-settings e2e spec on a cold cache). Add an entry whenever a page
+  // introduces a Vuetify component no other page uses yet.
+  optimizeDeps: {
+    include: ['vuetify/components/VCheckbox'],
+  },
   test: {
     globals: true,
     environment: 'happy-dom',

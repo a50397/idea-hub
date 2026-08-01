@@ -91,11 +91,11 @@ describe('IdeaDetailPage notify toggle', () => {
     vi.clearAllMocks();
     mockedIdeas.getOne.mockResolvedValue(makeIdea());
     mockedIdeas.setNotify.mockResolvedValue(makeIdea({ notifyOnChange: true }));
-    mockedOptions.get.mockResolvedValue({ mailEnabled: true, ssoShowLogout: false });
+    mockedOptions.get.mockResolvedValue({ mailEnabled: true, webexEnabled: false, ssoShowLogout: false });
   });
 
   it('hides the toggle for a non-submitter even when mail is enabled', async () => {
-    mockedOptions.get.mockResolvedValue({ mailEnabled: true, ssoShowLogout: false });
+    mockedOptions.get.mockResolvedValue({ mailEnabled: true, webexEnabled: false, ssoShowLogout: false });
     signInAs(OTHER_ID);
     const wrapper = mountPage();
     await flushPromises();
@@ -103,13 +103,23 @@ describe('IdeaDetailPage notify toggle', () => {
     expect(toggle(wrapper).exists()).toBe(false);
   });
 
-  it('hides the toggle from the submitter when mail is disabled', async () => {
-    mockedOptions.get.mockResolvedValue({ mailEnabled: false, ssoShowLogout: false });
+  it('hides the toggle from the submitter when both channels are disabled', async () => {
+    mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, ssoShowLogout: false });
     signInAs(SUBMITTER_ID);
     const wrapper = mountPage();
     await flushPromises();
 
     expect(toggle(wrapper).exists()).toBe(false);
+  });
+
+  // The toggle is channel-agnostic: Webex alone (mail off) reveals it for the submitter.
+  it('shows the toggle to the submitter when only Webex is enabled (mail off)', async () => {
+    mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: true, ssoShowLogout: false });
+    signInAs(SUBMITTER_ID);
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(toggle(wrapper).exists()).toBe(true);
   });
 
   it('shows the toggle to the submitter when mail is enabled, reflecting the stored opt-in', async () => {

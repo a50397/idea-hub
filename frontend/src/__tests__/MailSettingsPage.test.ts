@@ -270,4 +270,47 @@ describe('MailSettingsPage', () => {
     expect(mockedApi.sendTest).not.toHaveBeenCalled();
     expect(wrapper.text()).toContain('Enter a valid email address');
   });
+
+  it('clears the stale test-result banner when settings are saved', async () => {
+    // A successful test leaves a green banner; saving DIFFERENT settings without
+    // re-testing must drop it so it can't imply the freshly-saved config was verified.
+    mockedApi.sendTest.mockResolvedValueOnce({ status: 'sent' });
+    const wrapper = mountPage();
+    await flushPromises();
+
+    setField(wrapper, 'Recipient email', 'ops@corp.example');
+    await flushPromises();
+    await button(wrapper, 'Send test email')!.trigger('click');
+    await flushPromises();
+    // The inline success banner is showing.
+    expect(wrapper.findComponent({ name: 'VAlert' }).exists()).toBe(true);
+
+    await button(wrapper, 'Save settings')!.trigger('click');
+    await flushPromises();
+
+    // save() resets testResult → the banner is gone.
+    expect(wrapper.findComponent({ name: 'VAlert' }).exists()).toBe(false);
+  });
+
+  it('disables the interactive controls while the initial settings fetch is in flight', async () => {
+    // Hold the GET open so the store's fetch-loading ref stays true.
+    let resolveGet!: (value: MailSettings) => void;
+    mockedApi.get.mockReturnValueOnce(new Promise<MailSettings>((res) => { resolveGet = res; }));
+    const wrapper = mountPage();
+    await flushPromises();
+
+    // While the fetch is in flight, the controls are disabled so the in-flight
+    // applySettings() cannot clobber an admin's in-progress edits.
+    expect(wrapper.findComponent({ name: 'VSwitch' }).props('disabled')).toBe(true);
+    expect(fieldByLabel(wrapper, 'Password')!.props('disabled')).toBe(true);
+    expect(button(wrapper, 'Save settings')!.props('disabled')).toBe(true);
+
+    // Once the settings arrive (loading → false) the controls become editable.
+    resolveGet(masked());
+    await flushPromises();
+
+    expect(wrapper.findComponent({ name: 'VSwitch' }).props('disabled')).toBe(false);
+    expect(fieldByLabel(wrapper, 'Password')!.props('disabled')).toBe(false);
+    expect(button(wrapper, 'Save settings')!.props('disabled')).toBe(false);
+  });
 });

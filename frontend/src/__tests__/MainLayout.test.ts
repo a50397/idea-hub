@@ -49,6 +49,7 @@ function makeRouter(): Router {
       { path: '/users', name: 'Users', component: Dummy },
       { path: '/departments', name: 'Departments', component: Dummy },
       { path: '/mail-settings', name: 'MailSettings', component: Dummy },
+      { path: '/webex-settings', name: 'WebexSettings', component: Dummy },
     ],
   });
 }
@@ -85,7 +86,7 @@ describe('MainLayout', () => {
     mockedAuth.logout.mockResolvedValue({ message: 'Logged out successfully' });
     // MainLayout fetches /api/options on mount for the SSO logout-visibility flag;
     // default: flag false → logout stays hidden for SSO users.
-    mockedOptions.get.mockResolvedValue({ mailEnabled: false, ssoShowLogout: false });
+    mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, ssoShowLogout: false });
   });
 
   it('always shows the core nav items and the current user info', async () => {
@@ -108,19 +109,21 @@ describe('MainLayout', () => {
   });
 
   const roleCases = [
-    { role: Role.USER, reviewQueue: false, users: false, departments: false, mailSettings: false },
-    { role: Role.POWER_USER, reviewQueue: true, users: false, departments: false, mailSettings: false },
-    { role: Role.ADMIN, reviewQueue: true, users: true, departments: true, mailSettings: true },
+    { role: Role.USER, reviewQueue: false, users: false, departments: false, adminSettings: false },
+    { role: Role.POWER_USER, reviewQueue: true, users: false, departments: false, adminSettings: false },
+    { role: Role.ADMIN, reviewQueue: true, users: true, departments: true, adminSettings: true },
   ] as const;
 
-  describe.each(roleCases)('role-based nav for $role', ({ role, reviewQueue, users, departments, mailSettings }) => {
-    it(`${reviewQueue ? 'shows' : 'hides'} Review Queue, ${users ? 'shows' : 'hides'} Users, ${departments ? 'shows' : 'hides'} Departments, ${mailSettings ? 'shows' : 'hides'} Email Settings`, async () => {
+  describe.each(roleCases)('role-based nav for $role', ({ role, reviewQueue, users, departments, adminSettings }) => {
+    it(`${reviewQueue ? 'shows' : 'hides'} Review Queue, ${users ? 'shows' : 'hides'} Users, ${departments ? 'shows' : 'hides'} Departments, ${adminSettings ? 'shows' : 'hides'} Email + Webex Settings`, async () => {
       const { wrapper } = await mountLayout(role);
       const titles = navTitles(wrapper);
       expect(titles.includes('Review Queue')).toBe(reviewQueue);
       expect(titles.includes('Users')).toBe(users);
       expect(titles.includes('Departments')).toBe(departments);
-      expect(titles.includes('Email Settings')).toBe(mailSettings);
+      // The two admin-only notification-channel settings pages appear together.
+      expect(titles.includes('Email Settings')).toBe(adminSettings);
+      expect(titles.includes('Webex Settings')).toBe(adminSettings);
     });
   });
 
@@ -178,7 +181,7 @@ describe('MainLayout', () => {
     );
 
     it('SSO user with ssoShowLogout: logout button returns, Change Password stays hidden', async () => {
-      mockedOptions.get.mockResolvedValue({ mailEnabled: false, ssoShowLogout: true });
+      mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, ssoShowLogout: true });
       const { wrapper } = await mountLayout(Role.USER, 'en', 'SSO');
       expect(Boolean(findByText(wrapper, '.v-btn', 'Logout'))).toBe(true);
       expect(navTitles(wrapper).includes('Change Password')).toBe(false);
