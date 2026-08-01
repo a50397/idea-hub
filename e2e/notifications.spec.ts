@@ -1,6 +1,6 @@
 import { test, expect } from './support/test-fixtures';
 import { API_BASE, FRONTEND_URL, storageStatePath, type RoleKey } from './support/config';
-import { withFileLock } from './support/file-lock';
+import { withFileLock, SETTINGS_LOCK } from './support/file-lock';
 import type { APIRequestContext, Browser, BrowserContext, Page } from '@playwright/test';
 
 /**
@@ -94,7 +94,7 @@ test('per-idea notify toggle: hidden when mail off, submitter-only when mail on,
   const card = (page: Page) => page.locator('.v-card', { hasText: title });
 
   try {
-    await withFileLock('mail-settings', async () => {
+    await withFileLock(SETTINGS_LOCK, async () => {
       try {
         // Known starting point (idempotent across retries): mail OFF.
         await setMailEnabled(adminContext.request, false);
