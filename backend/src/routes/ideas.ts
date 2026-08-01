@@ -7,6 +7,8 @@ import { createIdeaSchema, reviewIdeaSchema, updateIdeaSchema, ideasQuerySchema,
 import { sendMail } from '../utils/mailer';
 import { newIdeaEmail } from '../utils/mail-templates';
 import { getEffectiveMailConfig } from '../config/mail';
+import { sendWebexMessage, getEffectiveWebexConfig } from '../utils/webex';
+import { newIdeaWebexMessage } from '../utils/webex-templates';
 import { maybeNotifySubmitter, type NotifiableIdea, type MaybeNotifyArgs } from '../utils/lifecycle-notify';
 
 const router = Router();
@@ -261,6 +263,47 @@ router.post('/', ideaCreateLimiter as any, requireAuth, async (req, res) => {
           await sendMail({ to: recipients, subject, text }, mailCfg);
         } catch (err) {
           console.error(`[MAIL] department notification failed ideaId=${idea.id}:`, err);
+        }
+      })();
+
+      // Fire-and-forget Webex department notification — an INDEPENDENT second
+      // channel, in its own IIFE with its own try/catch so a Webex outage never
+      // affects the mail send (or the already-sent 201). Webex has no bulk "to" a
+      // list: every send is a 1:1 bot DM, so we fan out ONE DM per recipient over
+      // the SAME notificationEmails list (an address with no Webex identity simply
+      // fails best-effort in the logs). Guarded on effectiveEnabled so a disabled
+      // channel neither builds the message nor logs a disabled line per recipient.
+      void (async () => {
+        try {
+          const webexCfg = await getEffectiveWebexConfig();
+          if (!webexCfg.effectiveEnabled) return;
+          const link = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/ideas/${idea.id}`;
+          const { markdown } = newIdeaWebexMessage({
+            departmentName: department.name,
+            title: idea.title,
+            submitterName: idea.submitter.name,
+            description: idea.description,
+            link,
+            language: webexCfg.language,
+          });
+          // Fan out one 1:1 DM per DISTINCT recipient, in parallel. Dedupe
+          // case-insensitively first (keeping the first-seen original casing) so a
+          // list that repeats an address in different case never double-DMs the same
+          // person. sendWebexMessage never throws, so Promise.all is safe (there is
+          // no rejection to swallow) and each send still runs best-effort. Pass the
+          // config we ALREADY read so no send re-reads the settings.
+          const seen = new Set<string>();
+          const uniqueRecipients = recipients.filter((to) => {
+            const key = to.toLowerCase();
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+          await Promise.all(
+            uniqueRecipients.map((to) => sendWebexMessage({ toPersonEmail: to, markdown }, webexCfg))
+          );
+        } catch (err) {
+          console.error(`[WEBEX] department notification failed ideaId=${idea.id}:`, err);
         }
       })();
     }

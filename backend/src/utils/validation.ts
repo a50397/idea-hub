@@ -116,6 +116,24 @@ export const mailTestSendSchema = z.object({
   to: z.string().trim().email('Invalid email address'),
 });
 
+// PUT /api/webex-settings — full save of the singleton admin-managed Webex config.
+// `token` is the ONLY optional field and drives keep/set/wipe of the stored bot
+// token (the Webex analogue of the mail password): ABSENT keeps the existing
+// token, a NON-EMPTY value is encrypted and stored, and an EMPTY STRING wipes it.
+// (Unlike mail there is no username to key the wipe off, so the empty-string token
+// is itself the wipe signal.) `language` is the en|sk enum; the token is bounded
+// generously so a long Webex bot token is never rejected.
+export const updateWebexSettingsSchema = z.object({
+  enabled: z.boolean(),
+  language: z.enum(['en', 'sk'], { errorMap: () => ({ message: 'Language must be en or sk' }) }),
+  token: z.string().max(512, 'Token must be at most 512 characters').optional(),
+});
+
+// POST /api/webex-settings/test — send a short test Webex DM to a single address.
+export const webexTestSendSchema = z.object({
+  to: z.string().trim().email('Invalid email address'),
+});
+
 export const reviewIdeaSchema = z.object({
   note: z.string().max(1000).optional(),
 });

@@ -58,6 +58,10 @@ export async function resetDb(): Promise<void> {
   // disabled (absent doc = defaults). Without this, a suite that enables mail could
   // leak an enabled/misconfigured relay into another suite's idea-creation path.
   await prisma.mailSettings.deleteMany({});
+  // The singleton Webex settings document: same reasoning as mail — idea creation now
+  // fans out Webex DMs guarded on the effective config, so a suite that enables Webex
+  // must not leak an enabled channel into another suite's idea-creation path.
+  await prisma.webexSettings.deleteMany({});
   // Recreate the default department so every test starts from a valid target
   // (mirrors the boot seed; idempotent by construction).
   await ensureDepartments();
