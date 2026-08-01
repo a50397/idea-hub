@@ -200,3 +200,33 @@ model MailSettings {
 
   @@map("mail_settings")
 }
+
+// Admin-UI-managed Webex notification configuration. A SINGLETON with the exact
+// same shape and semantics as MailSettings above (findUnique on the unique
+// `singleton` key ?? in-code defaults; a save upserts the one document), and a
+// second, independent notification CHANNEL alongside mail: an idea's single
+// `notifyOnChange` opt-in fires every effectively-enabled channel, and each
+// channel is best-effort so one failing never affects the other. All Webex sends
+// are 1:1 bot DMs (POST /v1/messages with toPersonEmail) — no rooms/spaces.
+//
+// SECURITY: `botTokenEnc` holds the Webex bot access token encrypted with the
+// SAME AES-256-GCM secretbox (utils/secretbox.ts, keyed by MAIL_SETTINGS_KEY) as
+// the SMTP password — never a plaintext secret, and never returned by the API
+// (routes/webex-settings.ts exposes only a `hasToken` boolean). Nullable (unlike
+// mail's `passwordEnc @default("")`) because a fresh install simply has no token.
+model WebexSettings {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  // DB-enforced singleton discriminator — identical to MailSettings.singleton: a
+  // unique index on a constant value keeps the collection at AT MOST ONE document
+  // (the PUT route upserts on this key; a concurrent first-save loses P2002).
+  singleton   String   @unique @default("singleton")
+  enabled     Boolean  @default(false)
+  // AES-256-GCM ciphertext of the Webex bot access token. null / empty == no token
+  // stored. NEVER returned by the API.
+  botTokenEnc String?
+  language    String   @default("sk")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("webex_settings")
+}
