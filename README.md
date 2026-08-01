@@ -30,11 +30,13 @@ A modern web application for managing internal improvement ideas, designed for e
 - Manage the list of target departments (create, rename, reorder, delete)
 - Per-department notification email addresses
 
-### Email Notifications
+### Notifications (Email & Webex)
+- Two independent, coexisting channels: email (SMTP) and Webex (1:1 bot messages); an admin can enable either or both
 - Admin-managed SMTP configuration on the **Email settings** page (server, from address, notification language, optional subject template), stored in the database with the SMTP password encrypted
-- New-idea notification sent to the target department's notification addresses (best-effort — mail problems never block the request)
-- Per-idea lifecycle notifications: the submitter can opt in (a toggle on the create form and on the idea's details page, shown only when outbound mail is enabled) to be emailed when their idea is approved, rejected, claimed, completed, or gets a progress step. A change the submitter makes themselves never notifies them, and delivery is best-effort like the department mail
-- Test-email button to verify the configuration
+- Admin-managed Webex configuration on the **Webex settings** page (bot access token stored encrypted, message language); every Webex notification is a direct bot message addressed by the recipient's email — no shared spaces
+- New-idea notification sent to the target department's notification addresses over every enabled channel (best-effort — delivery problems never block the request)
+- Per-idea lifecycle notifications: the submitter can opt in (a toggle on the create form and on the idea's details page, shown only when at least one channel is enabled) to be notified when their idea is approved, rejected, claimed, completed, or gets a progress step. A change the submitter makes themselves never notifies them, and delivery is best-effort like the department notifications
+- Test buttons (test email / test Webex message) to verify each configuration
 
 ### Internationalization
 - Bilingual UI — Slovak (default) and English, switchable in the app bar and persisted in the browser
@@ -67,6 +69,7 @@ A modern web application for managing internal improvement ideas, designed for e
 - **Database**: MongoDB with Prisma ORM
 - **Authentication**: express-session (MongoDB session store) with bcrypt; openid-client for SSO/OIDC
 - **Email**: Nodemailer with admin-managed SMTP settings
+- **Webex**: Webex REST API (bot 1:1 messages) via native fetch, admin-managed settings
 - **Security**: Helmet, express-rate-limit
 - **Validation**: Zod
 - **Testing**: Jest + Supertest
@@ -102,7 +105,7 @@ idea-hub/
 │   │   ├── config/         # Mail & SSO configuration
 │   │   ├── lib/            # Prisma client
 │   │   ├── middleware/     # Auth & RBAC middleware
-│   │   ├── routes/         # API routes (auth, sso, ideas, users, reports, departments, mail-settings)
+│   │   ├── routes/         # API routes (auth, sso, ideas, users, reports, departments, mail-settings, webex-settings)
 │   │   ├── types/          # TypeScript types
 │   │   ├── utils/          # Validation, mailer & templates, bootstrap, SSO pruning
 │   │   └── index.ts        # Server entry point
@@ -190,9 +193,10 @@ This is the easiest way to get started. Docker will handle all dependencies and 
    >   ```
    > - **Generate a `MAIL_SETTINGS_KEY`** the same way (64 hex chars). It is
    >   **required outside development** — the backend refuses to boot without it and
-   >   both compose files fail-fast if it's unset. It encrypts the SMTP password an
-   >   admin later sets on the **Email settings** page; keep it stable, or previously
-   >   saved passwords become undecryptable.
+   >   both compose files fail-fast if it's unset. It encrypts the SMTP password and
+   >   the Webex bot token an admin later sets on the **Email settings** / **Webex
+   >   settings** pages; keep it stable, or previously saved secrets become
+   >   undecryptable.
    > - **Set `ADMIN_EMAIL` / `ADMIN_PASSWORD` to unique, non-default values.** The
    >   bootstrap admin is created on first run from these; use a long, random
    >   password (12+ characters — the app enforces a 12-char minimum for
@@ -353,7 +357,7 @@ npm run test:watch       # Vitest in watch mode
 
 ### Options Endpoint
 
-- `GET /api/options` - Authenticated: consolidated runtime UI flags for the app, as `{ mailEnabled, ssoShowLogout }` (any logged-in user). `mailEnabled` (outbound mail effectively enabled) drives the per-idea notify toggle; `ssoShowLogout` (`SSO_SHOW_LOGOUT`) re-exposes the in-app logout button for SSO users. Exposes only these two booleans — no admin configuration.
+- `GET /api/options` - Authenticated: consolidated runtime UI flags for the app, as `{ mailEnabled, webexEnabled, ssoShowLogout }` (any logged-in user). `mailEnabled` / `webexEnabled` (channel effectively enabled) together drive the per-idea notify toggle — it appears when at least one is true; `ssoShowLogout` (`SSO_SHOW_LOGOUT`) re-exposes the in-app logout button for SSO users. Exposes only these booleans — no admin configuration.
 
 ### Ideas Endpoints
 
@@ -391,6 +395,12 @@ npm run test:watch       # Vitest in watch mode
 - `PUT /api/mail-settings` - Save SMTP configuration (password stored encrypted)
 - `POST /api/mail-settings/test` - Send a test email using the saved configuration
 
+### Webex Settings Endpoints (Admin Only)
+
+- `GET /api/webex-settings` - Get Webex configuration (the bot token is never returned)
+- `PUT /api/webex-settings` - Save Webex configuration (bot token stored encrypted)
+- `POST /api/webex-settings/test` - Send a test Webex message using the saved configuration
+
 ### Users Endpoints (Admin Only)
 
 - `GET /api/users` - Get all users
@@ -422,7 +432,7 @@ npm run test:watch       # Vitest in watch mode
 - All POWER_USER permissions
 - Manage users (create, edit, delete, change roles)
 - Manage departments and their notification emails
-- Configure email (SMTP) settings
+- Configure email (SMTP) and Webex notification settings
 - Delete ideas
 
 ## Database Schema
@@ -478,16 +488,21 @@ npm run test:watch       # Vitest in watch mode
 - `from` address, notification `language` (en/sk), optional `subjectTemplate`
 - `enabled`: Master switch for outbound mail
 
+### WebexSettings Model (singleton)
+- Webex bot access token stored encrypted (AES-256-GCM)
+- Message `language` (en/sk)
+- `enabled`: Master switch for Webex notifications
+
 ## Testing
 
 IdeaHub has **comprehensive test coverage** across backend, frontend, and end-to-end suites.
 
 ### Test Coverage Summary
 
-- **Backend**: 474 tests across 14 Jest suites (run against mocked Prisma — no database needed)
+- **Backend**: 580 tests across 18 Jest suites (run against mocked Prisma — no database needed)
 - **Backend integration**: separate Jest suite against a real MongoDB (`npm run test:integration`)
-- **Frontend**: 445 Vitest tests across 16 files (pages, stores, API client, i18n)
-- **E2E**: Playwright scenarios covering local & SSO login, RBAC, the idea lifecycle, departments, email settings, the per-idea notification opt-in, and i18n
+- **Frontend**: 480 Vitest tests across 18 files (pages, stores, API client, i18n)
+- **E2E**: Playwright scenarios covering local & SSO login, RBAC, the idea lifecycle, departments, email settings, Webex settings, the per-idea notification opt-in, and i18n
 
 **What's Tested:**
 - ✅ Authentication, sessions & password change
@@ -495,6 +510,7 @@ IdeaHub has **comprehensive test coverage** across backend, frontend, and end-to
 - ✅ Ideas CRUD & workflow transitions
 - ✅ Departments CRUD, reordering & notification emails
 - ✅ Email settings, mail templates (new-idea & lifecycle) & mailer behavior
+- ✅ Webex settings, message templates (markdown escaping) & sender behavior
 - ✅ Reports & analytics (including role scoping)
 - ✅ User management & RBAC enforcement
 - ✅ Validation schemas & error handling
@@ -581,7 +597,7 @@ A step-by-step production runbook (Slovak) is available in [docs/DEPLOY.md](docs
 | `ADMIN_NAME` | Default admin display name | `Admin` |
 | `FRONTEND_URL` | Frontend origin; used for CORS and the SSO post-login redirect | `http://localhost:5173` |
 | `VITE_API_URL` | Frontend API base URL (build-time) | `/api` (Docker), `http://localhost:3001` (dev) |
-| `MAIL_SETTINGS_KEY` | AES-256-GCM key that encrypts the stored SMTP password. 32 bytes: 64 hex chars (preferred) or base64 decoding to 32 bytes. Required outside development — the backend fails fast at boot if missing (like `SESSION_SECRET`). Everything else about mail (SMTP server, from address, notification language, subject template, password) is admin-managed at runtime on the **Email settings** page and stored in the database | Required in production |
+| `MAIL_SETTINGS_KEY` | AES-256-GCM key that encrypts the stored SMTP password and the Webex bot token. 32 bytes: 64 hex chars (preferred) or base64 decoding to 32 bytes. Required outside development — the backend fails fast at boot if missing (like `SESSION_SECRET`). Everything else about the notification channels (SMTP server, from address, language, subject template, password; Webex token and language) is admin-managed at runtime on the **Email settings** / **Webex settings** pages and stored in the database | Required in production |
 
 See [Single Sign-On (SSO)](#single-sign-on-sso) for the `SSO_*` and `BREAK_GLASS_EMAILS` variables, and [dev/MAIL-TESTING.md](dev/MAIL-TESTING.md) for the mail dev/testing story.
 
@@ -616,7 +632,7 @@ See [Single Sign-On (SSO)](#single-sign-on-sso) for the `SSO_*` and `BREAK_GLASS
 - **CSV Injection**: Report exports sanitize fields to prevent formula injection
 - **Security Headers**: CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy via nginx and Helmet
 - **Rate Limiting**: General API limit (300 req/15min, active in production) with stricter per-endpoint limits: login 10, password change 5, SSO login 30, and idea submission 30 per 15 minutes
-- **SMTP Password**: Stored AES-256-GCM-encrypted with `MAIL_SETTINGS_KEY` and never returned by the API
+- **SMTP Password & Webex Bot Token**: Stored AES-256-GCM-encrypted with `MAIL_SETTINGS_KEY` and never returned by the API
 - **Error Handling**: Internal server errors return generic messages to prevent information leakage
 - **Session Invalidation**: Sessions are invalidated when user role or email is changed by admin
 - **Admin Protection**: Admins cannot delete their own account or change their own role
