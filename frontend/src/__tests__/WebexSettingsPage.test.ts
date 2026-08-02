@@ -122,6 +122,39 @@ describe('WebexSettingsPage', () => {
     expect(mockedApi.update.mock.calls[0][0]).toMatchObject({ token: 'brand-new-bot-token' });
   });
 
+  it('TRIMS surrounding whitespace off a typed token before sending it', async () => {
+    // Enabled + no stored token + a padded token: the trimmed value is what is sent.
+    mockedApi.get.mockResolvedValue(masked({ enabled: true, hasToken: false }));
+    const wrapper = mountPage();
+    await flushPromises();
+
+    setField(wrapper, 'Bot access token', '  padded-token  ');
+    await flushPromises();
+
+    await button(wrapper, 'Save settings')!.trigger('click');
+    await flushPromises();
+
+    expect(mockedApi.update).toHaveBeenCalledTimes(1);
+    expect(mockedApi.update.mock.calls[0][0]).toMatchObject({ token: 'padded-token' });
+  });
+
+  it('does NOT send a whitespace-only token — it trims to empty and falls through to KEEP', async () => {
+    // Disabled + no stored token + only spaces typed: trims to empty, so no token key
+    // is sent (KEEP) and no unusable credential is ever stored.
+    mockedApi.get.mockResolvedValue(masked({ enabled: false, hasToken: false }));
+    const wrapper = mountPage();
+    await flushPromises();
+
+    setField(wrapper, 'Bot access token', '     ');
+    await flushPromises();
+
+    await button(wrapper, 'Save settings')!.trigger('click');
+    await flushPromises();
+
+    expect(mockedApi.update).toHaveBeenCalledTimes(1);
+    expect(mockedApi.update.mock.calls[0][0]).not.toHaveProperty('token');
+  });
+
   it('WIPES the token (sends an empty string) when the clear-token box is checked', async () => {
     // Disabled + a stored token: opting to clear sends token: '' so the server wipes it.
     mockedApi.get.mockResolvedValue(masked({ enabled: false, hasToken: true }));

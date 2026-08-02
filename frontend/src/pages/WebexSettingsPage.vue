@@ -220,11 +220,13 @@ async function save() {
   };
   // Token keep/set/wipe — wipe WINS: send an empty string when the admin opted to
   // clear the stored token (even if stale text lingers in the model); else send a
-  // newly typed token (set); else omit the field entirely so the stored token is kept.
+  // newly typed token, TRIMMED, when one was entered (set); else omit the field
+  // entirely so the stored token is kept. A whitespace-only entry trims to empty and
+  // thus falls through to KEEP (mirrors validate(), which also uses form.token.trim()).
   if (clearToken.value) {
     payload.token = '';
-  } else if (form.token.length > 0) {
-    payload.token = form.token;
+  } else if (form.token.trim().length > 0) {
+    payload.token = form.token.trim();
   }
 
   const ok = await webexStore.save(payload);

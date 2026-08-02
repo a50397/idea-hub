@@ -119,14 +119,29 @@ export const mailTestSendSchema = z.object({
 // PUT /api/webex-settings — full save of the singleton admin-managed Webex config.
 // `token` is the ONLY optional field and drives keep/set/wipe of the stored bot
 // token (the Webex analogue of the mail password): ABSENT keeps the existing
-// token, a NON-EMPTY value is encrypted and stored, and an EMPTY STRING wipes it.
+// token, a NON-EMPTY value is TRIMMED then encrypted and stored, and an EMPTY
+// STRING wipes it. A whitespace-only (non-empty) token is REJECTED at validation —
+// trimmed it would leave nothing to store, yet effectiveEnabled (token.length > 0)
+// would still read true, i.e. an "enabled" channel with an unusable credential.
 // (Unlike mail there is no username to key the wipe off, so the empty-string token
-// is itself the wipe signal.) `language` is the en|sk enum; the token is bounded
-// generously so a long Webex bot token is never rejected.
+// is itself the wipe signal; and unlike the mail password — which may legitimately
+// contain surrounding spaces and is deliberately NOT trimmed — the bot token is
+// trimmed.) `language` is the en|sk enum; the token is bounded generously so a long
+// Webex bot token is never rejected.
 export const updateWebexSettingsSchema = z.object({
   enabled: z.boolean(),
   language: z.enum(['en', 'sk'], { errorMap: () => ({ message: 'Language must be en or sk' }) }),
-  token: z.string().max(512, 'Token must be at most 512 characters').optional(),
+  token: z
+    .string()
+    .max(512, 'Token must be at most 512 characters')
+    // A whitespace-only token would encrypt to an unusable credential yet still make
+    // effectiveEnabled true (token.length > 0). Reject it; the empty string stays the
+    // explicit WIPE signal, and a real token is trimmed before it is encrypted/stored.
+    .refine((v) => v === '' || v.trim().length > 0, {
+      message: 'Token cannot be only whitespace',
+    })
+    .transform((v) => (v === '' ? '' : v.trim()))
+    .optional(),
 });
 
 // POST /api/webex-settings/test — send a short test Webex DM to a single address.

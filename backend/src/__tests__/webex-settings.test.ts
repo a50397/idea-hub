@@ -255,6 +255,39 @@ describe('Webex settings API', () => {
       expect(response.body.hasToken).toBe(false);
     });
 
+    test('trims surrounding whitespace off a real token before encrypting/storing it', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockPrismaFunctions.webexSettings.findUnique.mockResolvedValue(null);
+
+      const response = await agent
+        .put('/api/webex-settings')
+        .send(validBody({ enabled: true, language: 'en', token: '  abc123  ' }));
+
+      expect(response.status).toBe(200);
+      const call = mockPrismaFunctions.webexSettings.upsert.mock.calls[0][0];
+      // secretbox is real: decrypt the stored ciphertext and prove it is the TRIMMED
+      // token — surrounding whitespace never reaches storage (create AND update).
+      expect(decrypt(call.create.botTokenEnc)).toBe('abc123');
+      expect(decrypt(call.update.botTokenEnc)).toBe('abc123');
+      expect(response.body.hasToken).toBe(true);
+      expect(response.body).not.toHaveProperty('botTokenEnc');
+    });
+
+    test('rejects a whitespace-only token with 400 and never writes', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockPrismaFunctions.webexSettings.findUnique.mockResolvedValue(null);
+
+      const response = await agent
+        .put('/api/webex-settings')
+        .send(validBody({ enabled: true, language: 'en', token: '   ' }));
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain('Token cannot be only whitespace');
+      // Validation fails before the write path: no upsert, so an unusable credential
+      // is never stored (and effectiveEnabled can't read true off whitespace).
+      expect(mockPrismaFunctions.webexSettings.upsert).not.toHaveBeenCalled();
+    });
+
     test('converges to 200 by re-reading the winner when the upsert loses the unique-singleton race (P2002)', async () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
       const persisted = settingsDoc({

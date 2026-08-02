@@ -82,6 +82,7 @@ router.put('/', requireRole(Role.ADMIN), async (req, res) => {
     //   - token absent            -> keep whatever is already stored
     //   - token present+non-empty -> encrypt and store the new secret
     //   - token present+empty     -> wipe any stored token
+    // The schema already trimmed a real token and rejected a whitespace-only one.
     let botTokenEnc: string;
     if (data.token === undefined) {
       botTokenEnc = existing?.botTokenEnc ?? '';
