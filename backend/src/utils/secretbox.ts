@@ -1,4 +1,4 @@
-// Authenticated symmetric encryption for the single stored SMTP password.
+// Authenticated symmetric encryption for the stored secrets: the SMTP password and the Webex bot token.
 //
 // AES-256-GCM via node's built-in crypto (NO third-party dependency). The key is
 // read lazily from MAIL_SETTINGS_KEY at call time so the deployment can be

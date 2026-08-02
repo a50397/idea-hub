@@ -1,6 +1,11 @@
 import { mkdirSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 
+// The ONE lock name the three settings-singleton specs (mail-settings, notifications,
+// webex-settings) must share: they all mutate the same global mail-settings document,
+// so their critical sections must serialize against each other under a single lock.
+export const SETTINGS_LOCK = 'mail-settings';
+
 /**
  * Cross-worker mutex via atomic `mkdir`.
  *

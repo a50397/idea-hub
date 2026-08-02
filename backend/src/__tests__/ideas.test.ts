@@ -79,16 +79,29 @@ jest.mock('../config/mail', () => ({
   getEffectiveMailConfig: jest.fn(),
 }));
 
+// utils/webex is the second, independent channel: the create + lifecycle handlers
+// read its effective config and send 1:1 DMs. Mock it (config + sender) so the
+// Webex behavior is controlled per-case WITHOUT any environment, DB, or real HTTP.
+// utils/webex-templates is left REAL (pure markdown builders), exactly as
+// utils/mail-templates is left real here.
+jest.mock('../utils/webex', () => ({
+  getEffectiveWebexConfig: jest.fn(),
+  sendWebexMessage: jest.fn(),
+}));
+
 // Import routes AFTER mocks
 import bcrypt from 'bcrypt';
 import authRoutes from '../routes/auth';
 import ideasRoutes from '../routes/ideas';
 import { sendMail } from '../utils/mailer';
 import { getEffectiveMailConfig } from '../config/mail';
+import { sendWebexMessage, getEffectiveWebexConfig } from '../utils/webex';
 import { IdeaStatus, Effort } from '@prisma/client';
 
 const mockedSendMail = jest.mocked(sendMail);
 const mockedGetConfig = jest.mocked(getEffectiveMailConfig);
+const mockedSendWebex = jest.mocked(sendWebexMessage);
+const mockedGetWebexConfig = jest.mocked(getEffectiveWebexConfig);
 
 // The department notification is fire-and-forget: it runs in an async IIFE AFTER
 // the 201 is sent (it awaits the settings read, then the send). Flush the
@@ -139,6 +152,12 @@ describe('Ideas API', () => {
   beforeEach(() => {
     app = createTestApp();
     jest.clearAllMocks();
+    // Hermetic Webex default: the second channel is OFF unless a test opts in, so
+    // every existing (mail-focused) test behaves exactly as before — the Webex IIFE
+    // reads its config, sees it disabled, and sends nothing. Set AFTER clearAllMocks
+    // (which clears call history but not implementations).
+    mockedGetWebexConfig.mockResolvedValue({ effectiveEnabled: false, language: 'sk' } as any);
+    mockedSendWebex.mockResolvedValue(true);
   });
 
   describe('GET /api/ideas', () => {
@@ -676,6 +695,202 @@ describe('Ideas API', () => {
 
       expect(response.status).toBe(201);
       expect(mockedSendMail).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // Webex department notification: the SECOND channel on idea creation. Unlike mail
+  // (one message to the whole list), Webex fans out ONE 1:1 DM per recipient over
+  // the SAME notificationEmails list, guarded on the effective Webex config, in its
+  // own fire-and-forget IIFE. utils/webex is mocked (config + sender);
+  // utils/webex-templates is real, so the markdown wording is genuinely exercised.
+  describe('POST /api/ideas — department notification (Webex DMs)', () => {
+    const DEPT_WITH_EMAILS = {
+      id: DEPT_ID,
+      name: 'Marketing',
+      notificationEmails: ['ops@corp.example', 'lead@corp.example'],
+    };
+
+    const createdIdea = {
+      id: 'aaaaaaaaaaaaaaaaaaaaa001',
+      title: 'Notify the department please',
+      description: 'A'.repeat(250), // exercises the ~200-char preview truncation
+      benefits: 'Great benefits that are well described',
+      effort: 'ONE_TO_THREE_DAYS',
+      status: 'SUBMITTED',
+      tags: [],
+      submitterId: 'user123',
+      submitter: { id: 'user123', name: 'Test User', email: 'test@example.com' },
+      department: { id: DEPT_ID, name: 'Marketing' },
+      submittedAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    function validBody() {
+      return {
+        title: 'Notify the department please',
+        description: 'A'.repeat(250),
+        benefits: 'Great benefits that are well described',
+        effort: 'ONE_TO_THREE_DAYS',
+        departmentId: DEPT_ID,
+      };
+    }
+
+    beforeEach(() => {
+      // Mail present but inert to keep the (independent) mail IIFE from erroring.
+      mockedSendMail.mockReset();
+      mockedSendMail.mockResolvedValue(true);
+      mockedGetConfig.mockReset();
+      mockedGetConfig.mockResolvedValue({ language: 'en', subjectTemplate: '' } as any);
+      // Webex ON by default for this block; individual tests override.
+      mockedSendWebex.mockReset();
+      mockedSendWebex.mockResolvedValue(true);
+      mockedGetWebexConfig.mockReset();
+      mockedGetWebexConfig.mockResolvedValue({ effectiveEnabled: true, language: 'en' } as any);
+      mockPrismaFunctions.idea.create.mockResolvedValue(createdIdea);
+      mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
+    });
+
+    test('sends one 1:1 DM per recipient with the idea title/department/link in the markdown', async () => {
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue(DEPT_WITH_EMAILS);
+
+      const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
+
+      expect(response.status).toBe(201);
+      // Exactly one DM per recipient, in order.
+      expect(mockedSendWebex).toHaveBeenCalledTimes(2);
+      expect(mockedSendWebex.mock.calls[0][0].toPersonEmail).toBe('ops@corp.example');
+      expect(mockedSendWebex.mock.calls[1][0].toPersonEmail).toBe('lead@corp.example');
+      const md = mockedSendWebex.mock.calls[0][0].markdown;
+      expect(md).toContain('Marketing');
+      expect(md).toContain('Notify the department please');
+      expect(md).toContain('/ideas/aaaaaaaaaaaaaaaaaaaaa001');
+      // Truncated description preview (200 chars, not 201).
+      expect(md).toContain('A'.repeat(200));
+      expect(md).not.toContain('A'.repeat(201));
+      // Both recipients get the SAME rendered body.
+      expect(mockedSendWebex.mock.calls[1][0].markdown).toBe(md);
+    });
+
+    test('reads the webex config exactly ONCE and hands it to every send (single read)', async () => {
+      const cfg = { effectiveEnabled: true, language: 'en' } as any;
+      mockedGetWebexConfig.mockReset();
+      mockedGetWebexConfig.mockResolvedValue(cfg);
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue(DEPT_WITH_EMAILS);
+
+      const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
+
+      expect(response.status).toBe(201);
+      expect(mockedGetWebexConfig).toHaveBeenCalledTimes(1);
+      expect(mockedSendWebex).toHaveBeenCalledTimes(2);
+      // The one config object is passed to every per-recipient send (single read).
+      expect(mockedSendWebex.mock.calls[0][1]).toBe(cfg);
+      expect(mockedSendWebex.mock.calls[1][1]).toBe(cfg);
+    });
+
+    test('uses Slovak markdown when the webex settings language is sk', async () => {
+      mockedGetWebexConfig.mockResolvedValue({ effectiveEnabled: true, language: 'sk' } as any);
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue(DEPT_WITH_EMAILS);
+
+      const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
+
+      expect(response.status).toBe(201);
+      const md = mockedSendWebex.mock.calls[0][0].markdown;
+      expect(md).toContain('Pre oddelenie');
+      expect(md).toContain('Zobraziť nápad');
+      expect(md).not.toContain('A new idea has been submitted');
+    });
+
+    test('does NOT send any DM when Webex is not effectively enabled', async () => {
+      mockedGetWebexConfig.mockResolvedValue({ effectiveEnabled: false, language: 'sk' } as any);
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue(DEPT_WITH_EMAILS);
+
+      const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
+
+      expect(response.status).toBe(201);
+      expect(mockedSendWebex).not.toHaveBeenCalled();
+    });
+
+    test('does NOT send when the department has no notification emails', async () => {
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue({
+        id: DEPT_ID,
+        name: 'Marketing',
+        notificationEmails: [],
+      });
+
+      const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
+
+      expect(response.status).toBe(201);
+      expect(mockedSendWebex).not.toHaveBeenCalled();
+    });
+
+    test('returns 201 and still attempts every recipient when a webex send resolves false (best-effort)', async () => {
+      mockedSendWebex.mockReset();
+      mockedSendWebex.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue(DEPT_WITH_EMAILS);
+
+      const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
+
+      expect(response.status).toBe(201);
+      expect(mockedSendWebex).toHaveBeenCalledTimes(2);
+    });
+
+    test('returns 201 when a webex send rejects (defensive; the real sender never rejects)', async () => {
+      mockedSendWebex.mockReset();
+      mockedSendWebex.mockRejectedValueOnce(new Error('unexpected webex blow-up'));
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue(DEPT_WITH_EMAILS);
+
+      const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
+
+      expect(response.status).toBe(201);
+      expect(mockedSendWebex).toHaveBeenCalled();
+    });
+
+    test('mail and webex are independent: mail sends once (to the list) AND webex sends per recipient', async () => {
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue(DEPT_WITH_EMAILS);
+
+      const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
+
+      expect(response.status).toBe(201);
+      expect(mockedSendMail).toHaveBeenCalledTimes(1);
+      expect(mockedSendMail.mock.calls[0][0].to).toEqual(['ops@corp.example', 'lead@corp.example']);
+      expect(mockedSendWebex).toHaveBeenCalledTimes(2);
+    });
+
+    test('dedupes recipients case-insensitively: one DM per person, first-seen casing kept', async () => {
+      const { agent } = await loginAsUser(app);
+      // The same address appears twice in different case; a third is distinct. The
+      // case-variant duplicate must collapse to a SINGLE send (no double-DM), keeping
+      // the first-seen original casing.
+      mockPrismaFunctions.department.findUnique.mockResolvedValue({
+        id: DEPT_ID,
+        name: 'Marketing',
+        notificationEmails: ['Ops@Corp.Example', 'ops@corp.example', 'lead@corp.example'],
+      });
+
+      const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
+
+      expect(response.status).toBe(201);
+      expect(mockedSendWebex).toHaveBeenCalledTimes(2);
+      expect(mockedSendWebex.mock.calls[0][0].toPersonEmail).toBe('Ops@Corp.Example');
+      expect(mockedSendWebex.mock.calls[1][0].toPersonEmail).toBe('lead@corp.example');
     });
   });
 
@@ -1604,6 +1819,127 @@ describe('Ideas API', () => {
         // response is unaffected and no unhandled rejection surfaces.
         expect(response.status).toBe(200);
         expect(mockedSendMail).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    // The two-channel fan-out: one notifyOnChange opt-in fires EVERY effectively-
+    // enabled channel, the channels are INDEPENDENT (a failure in one never affects
+    // the other), and the shared opt-out / self-notification guards still bail both
+    // BEFORE either channel is even read. Exercised on the APPROVED transition
+    // (a POWER_USER approving another user's opted-in idea) as the representative.
+    describe('channel matrix (mail + webex, per-channel isolation)', () => {
+      const existing = { id: IDEA_ID, title: TITLE, status: 'SUBMITTED', submitterId: SUBMITTER.id };
+      const updated = {
+        id: IDEA_ID,
+        title: TITLE,
+        status: 'APPROVED',
+        submitterId: SUBMITTER.id,
+        notifyOnChange: true,
+        submitter: SUBMITTER,
+        approver: SELF,
+      };
+      const PATH = `/api/ideas/${IDEA_ID}/approve`;
+
+      function setMail(effectiveEnabled: boolean) {
+        mockedGetConfig.mockResolvedValue({ language: 'en', subjectTemplate: '', effectiveEnabled } as any);
+      }
+      function setWebex(effectiveEnabled: boolean) {
+        mockedGetWebexConfig.mockResolvedValue({ effectiveEnabled, language: 'en' } as any);
+      }
+
+      // Approve as the session user (user123 == SELF, i.e. NOT the submitter) so an
+      // opted-in idea genuinely notifies. Returns after the fire-and-forget settles.
+      async function approve(overrides: { existing?: Record<string, unknown>; updated?: Record<string, unknown> } = {}) {
+        const { agent } = await loginAsUser(app, 'POWER_USER');
+        mockPrismaFunctions.idea.findUnique.mockResolvedValue(overrides.existing ?? existing);
+        mockPrismaFunctions.idea.update.mockResolvedValue(overrides.updated ?? updated);
+        mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
+        const response = await agent.patch(PATH).send({});
+        await flushAsync();
+        return response;
+      }
+
+      test('mail-only (mail on, webex off): mail sends, webex does not', async () => {
+        setMail(true);
+        setWebex(false);
+        const response = await approve();
+        expect(response.status).toBe(200);
+        expect(mockedSendMail).toHaveBeenCalledTimes(1);
+        expect(mockedSendWebex).not.toHaveBeenCalled();
+      });
+
+      test('webex-only (mail off, webex on): webex DMs the submitter, mail does not', async () => {
+        setMail(false);
+        setWebex(true);
+        const response = await approve();
+        expect(response.status).toBe(200);
+        expect(mockedSendWebex).toHaveBeenCalledTimes(1);
+        expect(mockedSendWebex.mock.calls[0][0].toPersonEmail).toBe(SUBMITTER.email);
+        expect(mockedSendWebex.mock.calls[0][0].markdown).toContain(TITLE);
+        expect(mockedSendMail).not.toHaveBeenCalled();
+      });
+
+      test('both channels on: mail AND webex both send (one opt-in fires every channel)', async () => {
+        setMail(true);
+        setWebex(true);
+        const response = await approve();
+        expect(response.status).toBe(200);
+        expect(mockedSendMail).toHaveBeenCalledTimes(1);
+        expect(mockedSendWebex).toHaveBeenCalledTimes(1);
+      });
+
+      test('neither channel on: nothing sends (but both configs ARE read)', async () => {
+        setMail(false);
+        setWebex(false);
+        const response = await approve();
+        expect(response.status).toBe(200);
+        expect(mockedSendMail).not.toHaveBeenCalled();
+        expect(mockedSendWebex).not.toHaveBeenCalled();
+        expect(mockedGetConfig).toHaveBeenCalledTimes(1);
+        expect(mockedGetWebexConfig).toHaveBeenCalledTimes(1);
+      });
+
+      test('opted out: neither channel is even read (shared synchronous bail)', async () => {
+        setMail(true);
+        setWebex(true);
+        const response = await approve({ updated: { ...updated, notifyOnChange: false } });
+        expect(response.status).toBe(200);
+        expect(mockedGetConfig).not.toHaveBeenCalled();
+        expect(mockedGetWebexConfig).not.toHaveBeenCalled();
+        expect(mockedSendMail).not.toHaveBeenCalled();
+        expect(mockedSendWebex).not.toHaveBeenCalled();
+      });
+
+      test('self-notification (actor is the submitter): neither channel sends', async () => {
+        setMail(true);
+        setWebex(true);
+        const response = await approve({
+          existing: { ...existing, submitterId: SELF.id },
+          updated: { ...updated, submitterId: SELF.id, submitter: SELF },
+        });
+        expect(response.status).toBe(200);
+        expect(mockedSendMail).not.toHaveBeenCalled();
+        expect(mockedSendWebex).not.toHaveBeenCalled();
+      });
+
+      test('a webex failure does NOT stop mail (isolated per channel)', async () => {
+        setMail(true);
+        setWebex(true);
+        mockedSendWebex.mockRejectedValue(new Error('webex down'));
+        const response = await approve();
+        expect(response.status).toBe(200);
+        expect(mockedSendWebex).toHaveBeenCalledTimes(1);
+        expect(mockedSendMail).toHaveBeenCalledTimes(1);
+      });
+
+      test('a mail failure does NOT stop webex (isolated per channel)', async () => {
+        setMail(true);
+        setWebex(true);
+        mockedSendMail.mockRejectedValue(new Error('smtp down'));
+        const response = await approve();
+        expect(response.status).toBe(200);
+        expect(mockedSendMail).toHaveBeenCalledTimes(1);
+        expect(mockedSendWebex).toHaveBeenCalledTimes(1);
       });
     });
   });

@@ -96,6 +96,11 @@ export const BACKEND_ENV: Record<string, string> = {
   SSO_EMAIL_CLAIM: 'email',
   SSO_NAME_CLAIM: 'name',
   SSO_SHOW_LOGOUT: 'false',
+  // Black-hole the Webex API so no e2e flow (specs enable the Webex channel to
+  // test toggle visibility) can ever reach the real cloud; sends are best-effort
+  // and fail instantly on this dead local port. Pinned for the same reason as
+  // the SSO knobs above: a developer's root .env must not leak a real URL in.
+  WEBEX_API_BASE_URL: 'http://127.0.0.1:9',
 };
 
 /** Env consumed by e2e/support/mock-idp.mjs (single source of truth). */

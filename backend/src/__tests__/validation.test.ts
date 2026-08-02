@@ -11,6 +11,7 @@ import {
   departmentNameSchema,
   updateDepartmentSchema,
   reorderDepartmentsSchema,
+  updateWebexSettingsSchema,
 } from '../utils/validation';
 
 // A valid ObjectId used wherever a schema now requires/accepts a department id.
@@ -337,6 +338,58 @@ describe('Validation Schemas', () => {
       expect(empty.success).toBe(true);
       if (empty.success) {
         expect(empty.data.notificationEmails).toEqual([]);
+      }
+    });
+  });
+
+  describe('updateWebexSettingsSchema — bot token trim/reject/keep/wipe', () => {
+    test('trims surrounding whitespace from a real token before it is stored', () => {
+      const result = updateWebexSettingsSchema.safeParse({
+        enabled: true,
+        language: 'en',
+        token: '  tok123  ',
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        // A real token is trimmed before the route encrypts/stores it.
+        expect(result.data.token).toBe('tok123');
+      }
+    });
+
+    test('rejects a whitespace-only token with the whitespace message', () => {
+      const result = updateWebexSettingsSchema.safeParse({
+        enabled: true,
+        language: 'en',
+        token: '   ',
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        // A whitespace-only token would encrypt to an unusable credential yet still
+        // make effectiveEnabled true (token.length > 0), so validation blocks it.
+        expect(result.error.issues[0].message).toContain('Token cannot be only whitespace');
+      }
+    });
+
+    test('preserves an empty-string token as the explicit WIPE signal', () => {
+      const result = updateWebexSettingsSchema.safeParse({
+        enabled: false,
+        language: 'sk',
+        token: '',
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.token).toBe('');
+      }
+    });
+
+    test('leaves an omitted token undefined (the KEEP signal)', () => {
+      const result = updateWebexSettingsSchema.safeParse({
+        enabled: false,
+        language: 'sk',
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.token).toBeUndefined();
       }
     });
   });

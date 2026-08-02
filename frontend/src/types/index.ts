@@ -56,11 +56,15 @@ export interface AuthConfig {
 }
 
 // Consolidated FE-facing runtime flags for the authenticated app (GET /api/options).
-// Every session-scoped UI flag — DB-derived (mailEnabled) or env-derived
-// (ssoShowLogout) — lives here rather than on the public AuthConfig.
+// Every session-scoped UI flag — DB-derived (mailEnabled, webexEnabled) or
+// env-derived (ssoShowLogout) — lives here rather than on the public AuthConfig.
 export interface AppOptions {
-  // Whether outbound mail is effectively enabled (drives the per-idea notify toggle).
+  // Whether outbound mail is effectively enabled. Together with webexEnabled this
+  // drives the per-idea notify toggle (shown when EITHER channel is enabled).
   mailEnabled: boolean;
+  // Whether the Webex notification channel is effectively enabled (enabled AND a
+  // usable bot token). The second channel behind the per-idea notify toggle.
+  webexEnabled: boolean;
   // Whether to re-expose the in-app logout button for SSO users (SSO_SHOW_LOGOUT).
   ssoShowLogout: boolean;
 }
@@ -92,6 +96,15 @@ export interface MailSettings {
   language: 'en' | 'sk';
   subjectTemplate: string;
   hasPassword: boolean;
+}
+
+// Admin-managed Webex notification configuration. This is the MASKED shape
+// returned by the API: the bot token is NEVER included — only `hasToken` indicates
+// whether one is stored. The token is write-only (sent on save, never read).
+export interface WebexSettings {
+  enabled: boolean;
+  language: 'en' | 'sk';
+  hasToken: boolean;
 }
 
 export interface LogoutResponse {

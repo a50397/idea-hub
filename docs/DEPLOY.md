@@ -31,6 +31,9 @@ sa zámerne neuvádzajú.
   `./ca/corp-ca.pem` vo `volumes`. V balíku sú zakomentované — bez ich
   odkomentovania backend CA nenačíta a SSO zlyhá na TLS (postup v
   `ca/README.md`).
+- Odchádzajúce HTTPS na `https://webexapis.com` — len ak sa bude používať
+  voliteľný Webex notifikačný kanál (zapína ho admin v UI). Bez tohto prístupu
+  aplikácia funguje normálne, iba Webex správy sa nedoručia.
 - Synchronizovaný čas (NTP) — validácia tokenov toleruje len 60 s odchýlky.
 - Privátny kľúč čitateľný pre kontajner: nginx beží ako uid 101 —
   `chown 101 nginx/certs/ideahub.key && chmod 600 nginx/certs/ideahub.key`
@@ -124,6 +127,7 @@ predvolené oddelenie. Počkajte, kým `ps` ukáže všetky služby healthy/runn
 | certifikátové varovanie v prehliadači | skontrolujte, že `ideahub.crt` je full chain a klient dôveruje firemnej CA |
 | mongo unhealthy | prvý štart trvá ~40 s; inak `docker logs ideahub-mongodb` |
 | prihlásenie „nedrží" (cookie) | `COOKIE_SECURE=true` vyžaduje funkčné HTTPS; port 80 v balíku automaticky presmerúva na HTTPS |
+| Webex notifikácie nechodia | v UI **Webex settings** musí byť kanál zapnutý a uložený bot token; doručenie je best-effort (aplikáciu nikdy neblokuje) — dôvod hľadajte v logu backendu (riadky `WEBEX`); overte odchádzajúce HTTPS na `webexapis.com` |
 
 ## 8. Prevádzka
 
@@ -137,8 +141,11 @@ predvolené oddelenie. Počkajte, kým `ps` ukáže všetky služby healthy/runn
   nápadom (predvolene vypnuté), takže netreba žiadny manuálny DB krok. Žiadne nové
   premenné prostredia; funkcia ostáva neaktívna, kým e-maily nezapne admin v Email
   settings a zároveň sa autor neprihlási na odber zmien pri konkrétnom nápade — obe
-  podmienky musia platiť súčasne.
+  podmienky musia platiť súčasne. Pridáva tiež voliteľný **Webex kanál**
+  (1:1 správy od bota, rovnaký opt-in mechanizmus popri e-mailoch) — tiež
+  aditívne: žiadne nové premenné prostredia, žiadny DB krok; kanál je neaktívny,
+  kým ho admin nenastaví v **Webex settings** (bot token sa ukladá šifrovane).
 - **Zálohy zatiaľ nie sú zriadené** (denný `mongodump` + záloha
   `.env.production` je odporúčaná — v riešení mimo tohto runbooku).
-- SMTP notifikácie sa konfigurujú za behu v UI (Email settings, len admin);
-  do prvého nastavenia sa maily neposielajú.
+- Notifikácie (SMTP aj Webex) sa konfigurujú za behu v UI (Email settings /
+  Webex settings, len admin); do prvého nastavenia sa nič neposiela.

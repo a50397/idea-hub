@@ -1,6 +1,6 @@
 import { test, expect } from './support/test-fixtures';
 import { API_BASE, storageStatePath } from './support/config';
-import { withFileLock } from './support/file-lock';
+import { withFileLock, SETTINGS_LOCK } from './support/file-lock';
 
 /**
  * Admin email settings through the real UI: save a configuration and prove it
@@ -21,7 +21,7 @@ test.use({ storageState: storageStatePath('admin') });
 const hostInput = 'smtp.e2e.example';
 
 test('admin saves email settings and they persist on reload', async ({ page }) => {
-  await withFileLock('mail-settings', async () => {
+  await withFileLock(SETTINGS_LOCK, async () => {
     // Self-enforced isolation: this spec asserts the SAVED-DISABLED state (and its
     // "no password saved" hint) persists, so it must start from mail DISABLED with no
     // stored password regardless of what another spec left in the singleton settings

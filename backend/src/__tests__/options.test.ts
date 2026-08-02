@@ -3,14 +3,19 @@ import express from 'express';
 import session from 'express-session';
 import cors from 'cors';
 
-// Define mock Prisma BEFORE importing routes. GET /options -> getEffectiveMailConfig
-// reads the singleton MailSettings via prisma.mailSettings.findUnique; the login
-// helper (used to obtain a session) reads prisma.user.findUnique.
+// Define mock Prisma BEFORE importing routes. GET /options ->
+// getEffectiveMailConfig reads the singleton MailSettings via
+// prisma.mailSettings.findUnique and getEffectiveWebexConfig reads the singleton
+// WebexSettings via prisma.webexSettings.findUnique; the login helper (used to
+// obtain a session) reads prisma.user.findUnique.
 const mockPrismaFunctions: Record<string, any> = {
   user: {
     findUnique: jest.fn(),
   },
   mailSettings: {
+    findUnique: jest.fn(),
+  },
+  webexSettings: {
     findUnique: jest.fn(),
   },
 };
@@ -28,13 +33,16 @@ jest.mock('@prisma/client', () => {
 
 jest.mock('bcrypt');
 
-// Import routes AFTER mocks. config/mail and config/sso are REAL (not mocked):
-// mailEnabled derives from the (mocked) mailSettings document via the same
-// getEffectiveMailConfig the mailer uses, and ssoShowLogout derives from the real
-// SSO_SHOW_LOGOUT env read — exactly as in production.
+// Import routes AFTER mocks. config/mail, utils/webex and config/sso are REAL (not
+// mocked): mailEnabled/webexEnabled derive from the (mocked) settings documents via
+// the same getEffectiveMailConfig/getEffectiveWebexConfig the senders use, and
+// ssoShowLogout derives from the real SSO_SHOW_LOGOUT env read — exactly as in
+// production. secretbox is real so the token decryption that gates webexEnabled is
+// genuine.
 import bcrypt from 'bcrypt';
 import authRoutes from '../routes/auth';
 import optionsRoutes from '../routes/options';
+import { encrypt } from '../utils/secretbox';
 
 // 64 hex chars == 32 bytes. getEffectiveMailConfig only decrypts when a password
 // ciphertext is stored (these tests never store one), but set a valid key so the
@@ -96,6 +104,21 @@ function settingsDoc(overrides: Record<string, unknown> = {}) {
   };
 }
 
+// A stored WebexSettings document (only the fields getEffectiveWebexConfig reads
+// matter here). Mirrors the helper in webex-settings.test.ts.
+function webexDoc(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'webex1',
+    singleton: 'singleton',
+    enabled: false,
+    botTokenEnc: null,
+    language: 'sk',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...overrides,
+  };
+}
+
 beforeAll(() => {
   savedKey = process.env.MAIL_SETTINGS_KEY;
   process.env.MAIL_SETTINGS_KEY = TEST_KEY;
@@ -117,6 +140,9 @@ describe('Options API', () => {
     jest.clearAllMocks();
     // Hermetic default: the env-derived logout flag is off unless a test opts in.
     delete process.env.SSO_SHOW_LOGOUT;
+    // Hermetic default: Webex disabled (no document) unless a test overrides it, so
+    // webexEnabled defaults false the same way mailEnabled does.
+    mockPrismaFunctions.webexSettings.findUnique.mockResolvedValue(null);
   });
 
   test('returns 401 when unauthenticated', async () => {
@@ -126,14 +152,14 @@ describe('Options API', () => {
     expect(response.body).toHaveProperty('error');
   });
 
-  test('returns 200 with both flags (all false by default) for an authenticated regular user', async () => {
+  test('returns 200 with all flags (all false by default) for an authenticated regular user', async () => {
     const { agent } = await loginAsUser(app, 'USER');
     mockPrismaFunctions.mailSettings.findUnique.mockResolvedValue(null);
 
     const response = await agent.get('/api/options');
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ mailEnabled: false, ssoShowLogout: false });
+    expect(response.body).toEqual({ mailEnabled: false, webexEnabled: false, ssoShowLogout: false });
   });
 
   test('mailEnabled is true when mail is effectively enabled (enabled AND host)', async () => {
@@ -160,6 +186,50 @@ describe('Options API', () => {
     expect(response.body.mailEnabled).toBe(false);
   });
 
+  test('webexEnabled is true when Webex is effectively enabled (enabled AND a usable token)', async () => {
+    const { agent } = await loginAsUser(app, 'USER');
+    mockPrismaFunctions.mailSettings.findUnique.mockResolvedValue(null);
+    mockPrismaFunctions.webexSettings.findUnique.mockResolvedValue(
+      webexDoc({ enabled: true, botTokenEnc: encrypt('bot-token-xyz') })
+    );
+
+    const response = await agent.get('/api/options');
+
+    expect(response.status).toBe(200);
+    expect(response.body.webexEnabled).toBe(true);
+    // The two channels are independent — mail stays off here.
+    expect(response.body.mailEnabled).toBe(false);
+  });
+
+  test('webexEnabled is false when enabled but no token is stored (half-configured is not effective)', async () => {
+    const { agent } = await loginAsUser(app, 'USER');
+    mockPrismaFunctions.mailSettings.findUnique.mockResolvedValue(null);
+    mockPrismaFunctions.webexSettings.findUnique.mockResolvedValue(
+      webexDoc({ enabled: true, botTokenEnc: null })
+    );
+
+    const response = await agent.get('/api/options');
+
+    expect(response.status).toBe(200);
+    expect(response.body.webexEnabled).toBe(false);
+  });
+
+  test('the two channel flags are independent (webex on, mail on, together)', async () => {
+    const { agent } = await loginAsUser(app, 'USER');
+    mockPrismaFunctions.mailSettings.findUnique.mockResolvedValue(
+      settingsDoc({ enabled: true, host: 'smtp.corp.example' })
+    );
+    mockPrismaFunctions.webexSettings.findUnique.mockResolvedValue(
+      webexDoc({ enabled: true, botTokenEnc: encrypt('bot-token-xyz') })
+    );
+
+    const response = await agent.get('/api/options');
+
+    expect(response.status).toBe(200);
+    expect(response.body.mailEnabled).toBe(true);
+    expect(response.body.webexEnabled).toBe(true);
+  });
+
   test('ssoShowLogout is true only when SSO_SHOW_LOGOUT=true', async () => {
     process.env.SSO_SHOW_LOGOUT = 'true';
     const { agent } = await loginAsUser(app, 'USER');
@@ -171,10 +241,11 @@ describe('Options API', () => {
     expect(response.body.ssoShowLogout).toBe(true);
   });
 
-  test('responds with EXACTLY the two flag fields — no config or secret leak', async () => {
+  test('responds with EXACTLY the flag fields — no config or secret leak from either channel', async () => {
     process.env.SSO_SHOW_LOGOUT = 'true';
     const { agent } = await loginAsUser(app, 'USER');
-    // A fully populated (secret-bearing) document must still yield only the two flags.
+    // Fully populated (secret-bearing) documents for BOTH channels must still yield
+    // only the flags.
     mockPrismaFunctions.mailSettings.findUnique.mockResolvedValue(
       settingsDoc({
         enabled: true,
@@ -183,18 +254,24 @@ describe('Options API', () => {
         passwordEnc: 'stored-ciphertext-value',
       })
     );
+    mockPrismaFunctions.webexSettings.findUnique.mockResolvedValue(
+      webexDoc({ enabled: true, botTokenEnc: encrypt('bot-token-secret-value') })
+    );
 
     const response = await agent.get('/api/options');
 
     expect(response.status).toBe(200);
-    // Exactly the two documented flags — nothing more.
-    expect(Object.keys(response.body).sort()).toEqual(['mailEnabled', 'ssoShowLogout']);
-    expect(response.body).toEqual({ mailEnabled: true, ssoShowLogout: true });
+    // Exactly the three documented flags — nothing more.
+    expect(Object.keys(response.body).sort()).toEqual(['mailEnabled', 'ssoShowLogout', 'webexEnabled']);
+    expect(response.body).toEqual({ mailEnabled: true, webexEnabled: true, ssoShowLogout: true });
     // No admin configuration, no public auth-config flag, and no secret material leaks.
     expect(response.body).not.toHaveProperty('host');
     expect(response.body).not.toHaveProperty('username');
     expect(response.body).not.toHaveProperty('passwordEnc');
+    expect(response.body).not.toHaveProperty('botTokenEnc');
+    expect(response.body).not.toHaveProperty('token');
     expect(response.body).not.toHaveProperty('ssoEnabled');
     expect(JSON.stringify(response.body)).not.toContain('stored-ciphertext-value');
+    expect(JSON.stringify(response.body)).not.toContain('bot-token-secret-value');
   });
 });

@@ -85,6 +85,12 @@ const router = createRouter({
           component: () => import('../pages/MailSettingsPage.vue'),
           meta: { requiresAdmin: true },
         },
+        {
+          path: 'webex-settings',
+          name: 'WebexSettings',
+          component: () => import('../pages/WebexSettingsPage.vue'),
+          meta: { requiresAdmin: true },
+        },
       ],
     },
   ],

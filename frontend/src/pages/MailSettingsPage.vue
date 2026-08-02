@@ -9,6 +9,7 @@
         <v-form @submit.prevent="save">
           <v-switch
             v-model="form.enabled"
+            :disabled="mailStore.loading"
             color="primary"
             :label="$t('mailSettings.enabled')"
             hide-details
@@ -17,6 +18,7 @@
 
           <v-text-field
             v-model="form.host"
+            :disabled="mailStore.loading"
             :label="$t('mailSettings.host')"
             variant="outlined"
             :error-messages="formErrors.host"
@@ -25,6 +27,7 @@
 
           <v-text-field
             v-model.number="form.port"
+            :disabled="mailStore.loading"
             :label="$t('mailSettings.port')"
             type="number"
             variant="outlined"
@@ -33,6 +36,7 @@
 
           <v-switch
             v-model="form.secure"
+            :disabled="mailStore.loading"
             color="primary"
             :label="$t('mailSettings.secure')"
             hide-details
@@ -41,6 +45,7 @@
 
           <v-text-field
             v-model="form.username"
+            :disabled="mailStore.loading"
             :label="$t('mailSettings.username')"
             variant="outlined"
             autocomplete="off"
@@ -50,6 +55,7 @@
                reflects whether a password is already stored. -->
           <v-text-field
             v-model="form.password"
+            :disabled="mailStore.loading"
             :label="$t('mailSettings.password')"
             type="password"
             variant="outlined"
@@ -61,6 +67,7 @@
 
           <v-text-field
             v-model="form.from"
+            :disabled="mailStore.loading"
             :label="$t('mailSettings.from')"
             variant="outlined"
             :error-messages="formErrors.from"
@@ -68,6 +75,7 @@
 
           <v-select
             v-model="form.language"
+            :disabled="mailStore.loading"
             :label="$t('mailSettings.language')"
             :items="languageItems"
             variant="outlined"
@@ -75,6 +83,7 @@
 
           <v-text-field
             v-model="form.subjectTemplate"
+            :disabled="mailStore.loading"
             :label="$t('mailSettings.subjectTemplate')"
             variant="outlined"
           ></v-text-field>
@@ -85,7 +94,7 @@
       </v-card-text>
       <v-card-actions>
         <v-spacer></v-spacer>
-        <v-btn color="primary" @click="save" :loading="mailStore.saving">
+        <v-btn color="primary" @click="save" :loading="mailStore.saving" :disabled="mailStore.loading">
           {{ $t('mailSettings.save') }}
         </v-btn>
       </v-card-actions>
@@ -234,6 +243,10 @@ function validate(): boolean {
 }
 
 async function save() {
+  // Drop any stale inline test-result banner before saving: once the config is
+  // (re)saved without re-testing, an earlier "test sent" result no longer reflects
+  // the stored settings and must not imply the new config was verified.
+  testResult.value = null;
   if (!validate()) return;
 
   const payload: MailSettingsUpdate = {

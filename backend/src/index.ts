@@ -12,6 +12,7 @@ import reportsRoutes from './routes/reports';
 import usersRoutes from './routes/users';
 import departmentsRoutes from './routes/departments';
 import mailSettingsRoutes from './routes/mail-settings';
+import webexSettingsRoutes from './routes/webex-settings';
 import optionsRoutes from './routes/options';
 import crypto from 'crypto';
 import { ensureAdminExists } from './utils/init-admin';
@@ -140,6 +141,7 @@ app.use('/api/reports', reportsRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/departments', departmentsRoutes);
 app.use('/api/mail-settings', mailSettingsRoutes);
+app.use('/api/webex-settings', webexSettingsRoutes);
 app.use('/api/options', optionsRoutes);
 
 // Error handling middleware

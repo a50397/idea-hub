@@ -74,10 +74,10 @@
                 persistent-hint
               ></v-combobox>
 
-              <!-- Opt-in to lifecycle notification emails. Only shown when an
-                   admin has enabled outbound mail; defaults OFF (strict opt-in). -->
+              <!-- Opt-in to lifecycle notifications. Only shown when an admin has
+                   enabled at least one notification channel; defaults OFF (strict opt-in). -->
               <v-switch
-                v-if="mailEnabled"
+                v-if="notifyEnabled"
                 :model-value="formData.notifyOnChange"
                 @update:model-value="formData.notifyOnChange = $event === true"
                 color="primary"
@@ -190,12 +190,12 @@ const formData = reactive({
   notifyOnChange: false,
 });
 
-// Whether outbound mail is enabled admin-side; drives the notify toggle's
-// visibility and whether the opt-in is carried in the create payload. Tracks the
-// options store reactively (like MainLayout), so a runtime mail toggle updates it.
-// An options-fetch failure is treated as disabled (the store resets the flag to
-// false; no error surfaced).
-const mailEnabled = computed(() => optionsStore.mailEnabled);
+// Whether any notification channel is enabled admin-side; drives the notify
+// toggle's visibility and whether the opt-in is carried in the create payload.
+// Tracks the options store reactively (like MainLayout), so a runtime channel
+// toggle updates it. An options-fetch failure is treated as disabled (the store
+// resets the flags to false; no error surfaced).
+const notifyEnabled = computed(() => optionsStore.notifyEnabled);
 
 const errors = reactive({
   title: [] as string[],
@@ -272,9 +272,9 @@ async function handleSubmit() {
       departmentId: formData.departmentId!,
       tags: formData.tags,
     };
-    // Only carry the opt-in when the toggle is actually shown (mail enabled);
+    // Only carry the opt-in when the toggle is actually shown (a channel enabled);
     // otherwise the field is omitted entirely and the backend defaults it to false.
-    if (mailEnabled.value) {
+    if (notifyEnabled.value) {
       payload.notifyOnChange = formData.notifyOnChange;
     }
     await ideasApi.create(payload);
@@ -314,10 +314,10 @@ function preselectDefaultDepartment() {
 onMounted(async () => {
   await departmentsStore.fetchAll();
   preselectDefaultDepartment();
-  // The mail-enabled flag is runtime-mutable, so refetch on mount. `mailEnabled` is
-  // a computed over the store, so it tracks this fetch reactively. The store swallows
-  // failures and leaves the flag false, so a failed read simply keeps the notify
-  // toggle hidden (same best-effort semantics as before).
+  // The channel-enabled flags are runtime-mutable, so refetch on mount.
+  // `notifyEnabled` is a computed over the store, so it tracks this fetch reactively.
+  // The store swallows failures and leaves the flags false, so a failed read simply
+  // keeps the notify toggle hidden (same best-effort semantics as before).
   await optionsStore.fetch();
 });
 </script>
