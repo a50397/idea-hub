@@ -547,18 +547,23 @@ describe('Webex settings API', () => {
       expect(Object.keys(response.body)).toEqual(['rooms']);
     });
 
-    test('returns 500 when listWebexRooms unexpectedly throws (route catch)', async () => {
+    test('an unexpected listWebexRooms throw still yields { rooms: [], reason: unknown } at 200', async () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
       // listWebexRooms is contractually never-throw, but if it ever does, the route's
-      // try/catch must convert it to a 500 rather than leak an unhandled rejection.
+      // try/catch must still honour the always-200 contract — the picker sees one
+      // uniform "listing unavailable" shape and falls back to manual entry — rather
+      // than leak an unhandled rejection OR a second { error } failure mode.
       mockedListWebexRooms.mockRejectedValue(new Error('unexpected'));
       const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
       try {
         const response = await agent.get('/api/webex-settings/rooms');
 
-        expect(response.status).toBe(500);
-        expect(response.body).toHaveProperty('error');
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual({ rooms: [], reason: 'unknown' });
+        // The thrown error is logged server-side, never echoed to the client.
+        expect(errorSpy).toHaveBeenCalled();
+        expect(response.body).not.toHaveProperty('error');
       } finally {
         errorSpy.mockRestore();
       }

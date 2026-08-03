@@ -72,8 +72,14 @@ router.get('/rooms', requireRole(Role.ADMIN), async (req, res) => {
       res.json({ rooms: [], reason: result.reason });
     }
   } catch (error) {
+    // listWebexRooms() is documented never-throws, so this is defensive only. It
+    // still answers 200 with the SAME { rooms, reason } shape rather than the house
+    // 500/{ error } fallback used by the routes above: the always-200 contract is
+    // what the picker codes against, and an unexpected exception here is exactly the
+    // "listing unavailable, offer manual entry" case — degrading it into a second
+    // failure mode the FE must handle would buy nothing. The full error is logged.
     console.error('Error listing webex rooms:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.json({ rooms: [], reason: 'unknown' });
   }
 });
 

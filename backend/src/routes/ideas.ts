@@ -7,7 +7,8 @@ import { createIdeaSchema, reviewIdeaSchema, updateIdeaSchema, ideasQuerySchema,
 import { sendMail } from '../utils/mailer';
 import { newIdeaEmail } from '../utils/mail-templates';
 import { getEffectiveMailConfig } from '../config/mail';
-import { sendWebexMessage, getEffectiveWebexConfig } from '../utils/webex';
+import { sendWebexMessage, getEffectiveWebexConfig, WEBEX_SEND_CONCURRENCY } from '../utils/webex';
+import { runBounded } from '../utils/concurrency';
 import { newIdeaWebexMessage } from '../utils/webex-templates';
 import { maybeNotifySubmitter, type NotifiableIdea, type MaybeNotifyArgs } from '../utils/lifecycle-notify';
 
@@ -321,13 +322,24 @@ router.post('/', ideaCreateLimiter as any, requireAuth, async (req, res) => {
           });
 
           // DMs and room posts are independent, best-effort sends (sendWebexMessage
-          // never throws), so a single Promise.all over both is safe — no rejection to
-          // swallow — and every send still runs regardless of the others. Pass the
-          // config we ALREADY read so no send re-reads the settings.
-          await Promise.all([
-            ...uniqueRecipients.map((to) => sendWebexMessage({ toPersonEmail: to, markdown }, webexCfg)),
-            ...uniqueRoomIds.map((roomId) => sendWebexMessage({ roomId, markdown }, webexCfg)),
-          ]);
+          // never throws), so both go through ONE bounded fan-out. runBounded keeps at
+          // most WEBEX_SEND_CONCURRENCY in flight — a maxed-out department (20 DMs + 50
+          // rooms) can no longer burst 70 simultaneous Webex calls and invite a 429 —
+          // while still running EVERY send regardless of what the others do. DMs are
+          // queued ahead of the room posts so directly-addressed people go first. Pass
+          // the config we ALREADY read so no send re-reads the settings.
+          await runBounded(
+            [
+              ...uniqueRecipients.map(
+                (to) => () => sendWebexMessage({ toPersonEmail: to, markdown }, webexCfg)
+              ),
+              ...uniqueRoomIds.map(
+                (roomId) => () => sendWebexMessage({ roomId, markdown }, webexCfg)
+              ),
+            ],
+            WEBEX_SEND_CONCURRENCY,
+            (err) => console.error(`[WEBEX] department notification send threw ideaId=${idea.id}:`, err)
+          );
         } catch (err) {
           console.error(`[WEBEX] department notification failed ideaId=${idea.id}:`, err);
         }

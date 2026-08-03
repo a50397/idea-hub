@@ -501,7 +501,7 @@ IdeaHub has **comprehensive test coverage** across backend, frontend, and end-to
 
 ### Test Coverage Summary
 
-- **Backend**: 651 tests across 18 Jest suites (run against mocked Prisma — no database needed)
+- **Backend**: 664 tests across 19 Jest suites (run against mocked Prisma — no database needed)
 - **Backend integration**: 91 tests across 11 Jest suites against a real MongoDB (`npm run test:integration`)
 - **Frontend**: 520 Vitest tests across 19 files (pages, stores, API client, i18n)
 - **E2E**: Playwright scenarios covering local & SSO login, RBAC, the idea lifecycle, departments, email settings, Webex settings, the per-idea notification opt-in, and i18n
@@ -819,18 +819,6 @@ If frontend can't reach backend:
 1. Check VITE_API_URL in .env
 2. Ensure backend is running
 3. Check browser console for CORS errors
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## License
-
-This project is licensed under the MIT License.
 
 ## Support
 

@@ -84,9 +84,13 @@ jest.mock('../config/mail', () => ({
 // Webex behavior is controlled per-case WITHOUT any environment, DB, or real HTTP.
 // utils/webex-templates is left REAL (pure markdown builders), exactly as
 // utils/mail-templates is left real here.
+// WEBEX_SEND_CONCURRENCY is the real constant, not a mock: the route feeds it to
+// runBounded (utils/concurrency, left REAL) as the fan-out limit, so a missing or
+// bogus value would silently change how many sends the route performs.
 jest.mock('../utils/webex', () => ({
   getEffectiveWebexConfig: jest.fn(),
   sendWebexMessage: jest.fn(),
+  WEBEX_SEND_CONCURRENCY: jest.requireActual('../utils/webex').WEBEX_SEND_CONCURRENCY,
 }));
 
 // Import routes AFTER mocks

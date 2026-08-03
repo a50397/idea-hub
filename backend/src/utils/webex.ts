@@ -244,6 +244,18 @@ export async function sendWebexMessage(
   }
 }
 
+/**
+ * Max Webex sends a single notification fan-out keeps in flight (see
+ * utils/concurrency.ts runBounded). Webex has no bulk "to", so a department
+ * fan-out is one POST per DM recipient PLUS one per room — up to 20 + 50 = 70 for
+ * a maxed-out department (the validation caps). Firing all of them at once bursts
+ * outbound sockets and makes a Webex 429 (`rate_limited`) likelier, and because
+ * delivery is best-effort a throttled notification is simply lost. 5 keeps a
+ * realistic department (a handful of targets) effectively parallel while
+ * flattening the worst case into short waves.
+ */
+export const WEBEX_SEND_CONCURRENCY = 5;
+
 // ---------------------------------------------------------------------------
 // ADMIN diagnostic test-send (POST /api/webex-settings/test).
 //
