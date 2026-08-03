@@ -29,13 +29,15 @@ jest.mock('@prisma/client', () => {
 jest.mock('bcrypt');
 
 // Partial mock of utils/webex: the singleton constant / defaults / record type are
-// kept REAL (the route imports them), but sendTestWebexMessage is mocked so POST
-// /test returns its structured result without touching real HTTP. (Analogous to
-// mail-settings.test.ts mocking utils/mailer's sendTestMail; the difference is that
-// Webex keeps config + sender in one module, so we mock only the one export.)
+// kept REAL (the route imports them), but the two network-touching helpers —
+// sendTestWebexMessage (POST /test) and listWebexRooms (GET /rooms) — are mocked so
+// those routes return their structured results without touching real HTTP.
+// (Analogous to mail-settings.test.ts mocking utils/mailer's sendTestMail; the
+// difference is that Webex keeps config + sender in one module, so we mock only
+// those exports.)
 jest.mock('../utils/webex', () => {
   const actual = jest.requireActual('../utils/webex');
-  return { ...actual, sendTestWebexMessage: jest.fn() };
+  return { ...actual, sendTestWebexMessage: jest.fn(), listWebexRooms: jest.fn() };
 });
 
 // Import routes AFTER mocks. secretbox is REAL so the "set token" path proves
@@ -43,10 +45,11 @@ jest.mock('../utils/webex', () => {
 import bcrypt from 'bcrypt';
 import authRoutes from '../routes/auth';
 import webexSettingsRoutes from '../routes/webex-settings';
-import { sendTestWebexMessage } from '../utils/webex';
+import { sendTestWebexMessage, listWebexRooms } from '../utils/webex';
 import { decrypt } from '../utils/secretbox';
 
 const mockedSendTestWebex = jest.mocked(sendTestWebexMessage);
+const mockedListWebexRooms = jest.mocked(listWebexRooms);
 
 // 64 hex chars == 32 bytes.
 const TEST_KEY = '00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff';
@@ -145,6 +148,7 @@ describe('Webex settings API', () => {
       ['get', '/api/webex-settings', undefined],
       ['put', '/api/webex-settings', validBody()],
       ['post', '/api/webex-settings/test', { to: 'x@example.com' }],
+      ['get', '/api/webex-settings/rooms', undefined],
     ];
 
     for (const [method, path, body] of endpoints) {
@@ -166,9 +170,10 @@ describe('Webex settings API', () => {
           const response = await req;
           expect(response.status).toBe(403);
           expect(response.body).toHaveProperty('error');
-          // A non-admin must never trigger a write or a send.
+          // A non-admin must never trigger a write, a send, or a rooms listing.
           expect(mockPrismaFunctions.webexSettings.upsert).not.toHaveBeenCalled();
           expect(mockedSendTestWebex).not.toHaveBeenCalled();
+          expect(mockedListWebexRooms).not.toHaveBeenCalled();
         });
       }
     }
@@ -474,6 +479,89 @@ describe('Webex settings API', () => {
       expect(response.body.error).toBe('Invalid email address');
       expect(response.body.error).not.toContain('"code"');
       expect(mockedSendTestWebex).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // GET /rooms: returns listWebexRooms()'s outcome, ALWAYS at 200. On success the
+  // body is { rooms }; on ANY failure it is { rooms: [], reason } so the FE can
+  // always fall back to manual room-id entry. The token never appears in either.
+  // -------------------------------------------------------------------------
+  describe('GET /api/webex-settings/rooms', () => {
+    test('ADMIN gets { rooms } from listWebexRooms on success', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      const rooms = [
+        { id: 'R1', title: 'Room One' },
+        { id: 'R2', title: 'Room Two' },
+      ];
+      mockedListWebexRooms.mockResolvedValue({ ok: true, rooms });
+
+      const response = await agent.get('/api/webex-settings/rooms');
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ rooms });
+      expect(mockedListWebexRooms).toHaveBeenCalledTimes(1);
+    });
+
+    test('an empty room list is returned as { rooms: [] } (no reason) at 200', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockedListWebexRooms.mockResolvedValue({ ok: true, rooms: [] });
+
+      const response = await agent.get('/api/webex-settings/rooms');
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ rooms: [] });
+    });
+
+    test('a failed listing yields { rooms: [], reason } at 200 (picker falls back to manual entry)', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockedListWebexRooms.mockResolvedValue({ ok: false, reason: 'invalid_token' });
+
+      const response = await agent.get('/api/webex-settings/rooms');
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ rooms: [], reason: 'invalid_token' });
+    });
+
+    test('a not-configured listing yields { rooms: [], reason: config_error } at 200', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockedListWebexRooms.mockResolvedValue({ ok: false, reason: 'config_error' });
+
+      const response = await agent.get('/api/webex-settings/rooms');
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ rooms: [], reason: 'config_error' });
+    });
+
+    test('the response never carries a token field (only rooms and an optional reason)', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockedListWebexRooms.mockResolvedValue({ ok: true, rooms: [{ id: 'R1', title: 'Room One' }] });
+
+      const response = await agent.get('/api/webex-settings/rooms');
+
+      expect(response.status).toBe(200);
+      expect(response.body).not.toHaveProperty('token');
+      expect(response.body).not.toHaveProperty('botTokenEnc');
+      expect(JSON.stringify(response.body)).not.toContain('Bearer');
+      // Exact shape: nothing beyond rooms leaked in.
+      expect(Object.keys(response.body)).toEqual(['rooms']);
+    });
+
+    test('returns 500 when listWebexRooms unexpectedly throws (route catch)', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      // listWebexRooms is contractually never-throw, but if it ever does, the route's
+      // try/catch must convert it to a 500 rather than leak an unhandled rejection.
+      mockedListWebexRooms.mockRejectedValue(new Error('unexpected'));
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+      try {
+        const response = await agent.get('/api/webex-settings/rooms');
+
+        expect(response.status).toBe(500);
+        expect(response.body).toHaveProperty('error');
+      } finally {
+        errorSpy.mockRestore();
+      }
     });
   });
 });

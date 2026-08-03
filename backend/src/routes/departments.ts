@@ -12,21 +12,22 @@ const departmentOrderBy: Prisma.DepartmentOrderByWithRelationInput[] = [
   { name: 'asc' },
 ];
 
-// notificationEmails is INTERNAL, admin-only data. Project it onto the wire
-// representation ONLY for ADMIN sessions; every other authenticated user receives
-// the same id/name/order/_count/timestamps shape as before this feature. Keeping
-// the authz projection in one place makes the visibility rule easy to audit — so
-// EVERY department-returning path (GET list, create, reorder, update) funnels
-// through this one function. Generic over the department shape so it accepts both
-// the enriched list row (with _count) and a plain create/update result.
-function serializeDepartment<T extends { notificationEmails: string[] }>(
+// notificationEmails AND webexRoomIds are INTERNAL, admin-only data. Project them
+// onto the wire representation ONLY for ADMIN sessions; every other authenticated
+// user receives the same id/name/order/_count/timestamps shape as before these
+// features (neither list). Keeping the authz projection in one place makes the
+// visibility rule easy to audit — so EVERY department-returning path (GET list,
+// create, reorder, update) funnels through this one function. Generic over the
+// department shape so it accepts both the enriched list row (with _count) and a plain
+// create/update result.
+function serializeDepartment<T extends { notificationEmails: string[]; webexRoomIds: string[] }>(
   dept: T,
-  includeNotificationEmails: boolean
-): T | Omit<T, 'notificationEmails'> {
-  if (includeNotificationEmails) {
+  includeAdminFields: boolean
+): T | Omit<T, 'notificationEmails' | 'webexRoomIds'> {
+  if (includeAdminFields) {
     return dept;
   }
-  const { notificationEmails: _omit, ...rest } = dept;
+  const { notificationEmails: _omitEmails, webexRoomIds: _omitRooms, ...rest } = dept;
   return rest;
 }
 
@@ -131,10 +132,11 @@ router.patch('/reorder', requireRole(Role.ADMIN), async (req, res) => {
   }
 });
 
-// Update a department (Admin only): rename and/or set its notification emails.
-// Both are optional, so a rename-only, an emails-only, or a combined update all
-// work. Always allowed, even when the department is referenced by ideas. The
-// response is admin-only, so it always carries notificationEmails.
+// Update a department (Admin only): rename and/or set its notification emails
+// and/or its Webex room ids. All three are optional, so any single-field update or
+// any combination works. Always allowed, even when the department is referenced by
+// ideas. The response is admin-only, so it always carries notificationEmails and
+// webexRoomIds.
 router.patch('/:id', requireRole(Role.ADMIN), async (req, res) => {
   try {
     const idParsed = objectIdParamSchema.safeParse(req.params.id);
@@ -142,15 +144,15 @@ router.patch('/:id', requireRole(Role.ADMIN), async (req, res) => {
       return res.status(400).json({ error: 'Invalid department ID format' });
     }
     const id = idParsed.data;
-    const { name, notificationEmails } = updateDepartmentSchema.parse(req.body);
+    const { name, notificationEmails, webexRoomIds } = updateDepartmentSchema.parse(req.body);
 
-    // Reject an empty update fast: both fields are optional in the schema, so an
+    // Reject an empty update fast: all fields are optional in the schema, so an
     // empty `{}` body (or one of only unknown keys Zod strips) parses OK yet would
     // reach prisma.update with `data: {}`, turning a client mistake into a 500/no-op.
-    if (name === undefined && notificationEmails === undefined) {
+    if (name === undefined && notificationEmails === undefined && webexRoomIds === undefined) {
       return res
         .status(400)
-        .json({ error: 'At least one field to update is required (name or notificationEmails)' });
+        .json({ error: 'At least one field to update is required (name, notificationEmails, or webexRoomIds)' });
     }
 
     const existing = await prisma.department.findUnique({ where: { id } });
@@ -160,11 +162,12 @@ router.patch('/:id', requireRole(Role.ADMIN), async (req, res) => {
 
     const department = await prisma.department.update({
       where: { id },
-      // Prisma skips `undefined` fields, so an absent name or absent
-      // notificationEmails leaves that column untouched. An explicit [] clears.
+      // Prisma skips `undefined` fields, so an absent name / notificationEmails /
+      // webexRoomIds leaves that column untouched. An explicit [] clears the list.
       data: {
         ...(name !== undefined ? { name } : {}),
         ...(notificationEmails !== undefined ? { notificationEmails } : {}),
+        ...(webexRoomIds !== undefined ? { webexRoomIds } : {}),
       },
     });
 

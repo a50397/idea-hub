@@ -178,6 +178,54 @@ describe('Departments API', () => {
       expect(response.status).toBe(200);
       expect(response.body[0]).not.toHaveProperty('notificationEmails');
     });
+
+    // webexRoomIds is internal admin-only data too — the SAME visibility rule as
+    // notificationEmails, projected by the one serializeDepartment function.
+    const withRooms = [
+      {
+        id: 'a',
+        name: 'Všeobecné',
+        order: 0,
+        notificationEmails: ['ops@corp.example'],
+        webexRoomIds: ['ROOM-1', 'ROOM-2'],
+        _count: { ideas: 3 },
+      },
+      { id: 'b', name: 'Marketing', order: 1, notificationEmails: [], webexRoomIds: [], _count: { ideas: 1 } },
+    ];
+
+    test('includes webexRoomIds for an ADMIN session', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockPrismaFunctions.department.findMany.mockResolvedValue(withRooms);
+
+      const response = await agent.get('/api/departments');
+
+      expect(response.status).toBe(200);
+      expect(response.body[0]).toHaveProperty('webexRoomIds', ['ROOM-1', 'ROOM-2']);
+      expect(response.body[1]).toHaveProperty('webexRoomIds', []);
+    });
+
+    test('omits webexRoomIds (and notificationEmails) for a non-admin (USER) session', async () => {
+      const { agent } = await loginAsUser(app, 'USER');
+      mockPrismaFunctions.department.findMany.mockResolvedValue(withRooms);
+
+      const response = await agent.get('/api/departments');
+
+      expect(response.status).toBe(200);
+      expect(response.body[0]).not.toHaveProperty('webexRoomIds');
+      expect(response.body[0]).not.toHaveProperty('notificationEmails');
+      // The rest of the shape is unchanged for non-admins.
+      expect(response.body[0]).toMatchObject({ id: 'a', name: 'Všeobecné', order: 0, _count: { ideas: 3 } });
+    });
+
+    test('omits webexRoomIds for a POWER_USER session', async () => {
+      const { agent } = await loginAsUser(app, 'POWER_USER');
+      mockPrismaFunctions.department.findMany.mockResolvedValue(withRooms);
+
+      const response = await agent.get('/api/departments');
+
+      expect(response.status).toBe(200);
+      expect(response.body[0]).not.toHaveProperty('webexRoomIds');
+    });
   });
 
   describe('role guards on mutations', () => {
@@ -376,7 +424,7 @@ describe('Departments API', () => {
 
       expect(response.status).toBe(400);
       expect(response.body).toEqual({
-        error: 'At least one field to update is required (name or notificationEmails)',
+        error: 'At least one field to update is required (name, notificationEmails, or webexRoomIds)',
       });
       expect(mockPrismaFunctions.department.update).not.toHaveBeenCalled();
       // Fails fast, before the existence lookup.
@@ -500,6 +548,116 @@ describe('Departments API', () => {
       const response = await agent
         .patch(`/api/departments/${VALID_ID}`)
         .send({ notificationEmails: 'ops@corp.example' });
+
+      expect(response.status).toBe(400);
+      expect(mockPrismaFunctions.department.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('PATCH /api/departments/:id — webex room ids', () => {
+    beforeEach(() => {
+      mockPrismaFunctions.department.findUnique.mockResolvedValue({ id: VALID_ID, name: 'Old', order: 0 });
+      mockPrismaFunctions.department.update.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+        Promise.resolve({ id: VALID_ID, name: 'Old', order: 0, notificationEmails: [], webexRoomIds: [], ...data })
+      );
+    });
+
+    test('updates webexRoomIds only, leaving name untouched', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+
+      const response = await agent
+        .patch(`/api/departments/${VALID_ID}`)
+        .send({ webexRoomIds: ['ROOM-a', 'ROOM-b'] });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveProperty('webexRoomIds', ['ROOM-a', 'ROOM-b']);
+      expect(mockPrismaFunctions.department.update).toHaveBeenCalledWith({
+        where: { id: VALID_ID },
+        data: { webexRoomIds: ['ROOM-a', 'ROOM-b'] },
+      });
+    });
+
+    test('updates name and webexRoomIds together (no notificationEmails key in the update data)', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+
+      const response = await agent
+        .patch(`/api/departments/${VALID_ID}`)
+        .send({ name: 'Renamed', webexRoomIds: ['ROOM-x'] });
+
+      expect(response.status).toBe(200);
+      expect(mockPrismaFunctions.department.update).toHaveBeenCalledWith({
+        where: { id: VALID_ID },
+        data: { name: 'Renamed', webexRoomIds: ['ROOM-x'] },
+      });
+    });
+
+    test('updates notificationEmails and webexRoomIds together', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+
+      const response = await agent
+        .patch(`/api/departments/${VALID_ID}`)
+        .send({ notificationEmails: ['ops@corp.example'], webexRoomIds: ['ROOM-x'] });
+
+      expect(response.status).toBe(200);
+      expect(mockPrismaFunctions.department.update).toHaveBeenCalledWith({
+        where: { id: VALID_ID },
+        data: { notificationEmails: ['ops@corp.example'], webexRoomIds: ['ROOM-x'] },
+      });
+    });
+
+    test('trims, drops blank entries, and de-duplicates room ids CASE-SENSITIVELY', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+
+      const response = await agent
+        .patch(`/api/departments/${VALID_ID}`)
+        .send({ webexRoomIds: ['  ROOM-a  ', 'ROOM-a', 'room-a', '   ', 'ROOM-b'] });
+
+      expect(response.status).toBe(200);
+      // 'ROOM-a' collapses its exact repeat; 'room-a' is a DISTINCT room (opaque id);
+      // the whitespace-only entry is dropped.
+      expect(mockPrismaFunctions.department.update).toHaveBeenCalledWith({
+        where: { id: VALID_ID },
+        data: { webexRoomIds: ['ROOM-a', 'room-a', 'ROOM-b'] },
+      });
+    });
+
+    test('accepts an empty array (clears the list)', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+
+      const response = await agent.patch(`/api/departments/${VALID_ID}`).send({ webexRoomIds: [] });
+
+      expect(response.status).toBe(200);
+      expect(mockPrismaFunctions.department.update).toHaveBeenCalledWith({
+        where: { id: VALID_ID },
+        data: { webexRoomIds: [] },
+      });
+    });
+
+    test('rejects more than 50 room ids with 400 and does not update', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      const ids = Array.from({ length: 51 }, (_, i) => `ROOM-${i}`);
+
+      const response = await agent.patch(`/api/departments/${VALID_ID}`).send({ webexRoomIds: ids });
+
+      expect(response.status).toBe(400);
+      expect(mockPrismaFunctions.department.update).not.toHaveBeenCalled();
+    });
+
+    test('rejects a room id longer than 256 chars with 400 and does not update', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+
+      const response = await agent
+        .patch(`/api/departments/${VALID_ID}`)
+        .send({ webexRoomIds: ['a'.repeat(257)] });
+
+      expect(response.status).toBe(400);
+      expect(mockPrismaFunctions.department.update).not.toHaveBeenCalled();
+    });
+
+    test('rejects a non-array webexRoomIds with 400', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+
+      const response = await agent.patch(`/api/departments/${VALID_ID}`).send({ webexRoomIds: 'ROOM-a' });
 
       expect(response.status).toBe(400);
       expect(mockPrismaFunctions.department.update).not.toHaveBeenCalled();

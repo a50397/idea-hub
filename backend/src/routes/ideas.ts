@@ -24,11 +24,14 @@ function notifySubmitter(req: Request, idea: NotifiableIdea, event: MaybeNotifyA
   });
 }
 
-// Dedicated limiter for idea creation. A single POST /api/ideas can fan out up to
-// ~20 department-notification emails carrying a user-controlled subject/body, so
-// this route is a mail amplifier that the general /api limiter alone guards too
-// loosely. Mirrors loginLimiter (routes/auth.ts): same express-rate-limit import,
-// standardHeaders, and house { error } 429 shape.
+// Dedicated limiter for idea creation. A single POST /api/ideas now fans out across
+// BOTH notification channels: up to ~20 department-notification emails (one message to
+// the whole list) PLUS, on Webex, up to ~20 1:1 bot DMs (one per notificationEmails
+// recipient) and up to 50 room/space posts (one per webexRoomIds entry) — roughly ~90
+// user-triggered outbound sends per create, each carrying a user-controlled
+// subject/body. That makes this route a notification amplifier the general /api limiter
+// alone guards too loosely. Mirrors loginLimiter (routes/auth.ts): same
+// express-rate-limit import, standardHeaders, and house { error } 429 shape.
 //
 // CRITICAL skip parity: identical to the general limiter (index.ts) —
 // test || development (NOT the auth limiters, which skip test only) — so the
@@ -36,8 +39,8 @@ function notifySubmitter(req: Request, idea: NotifiableIdea, event: MaybeNotifyA
 // NOT throttled, while production/staging still are.
 const ideaCreateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  // 30 is deliberately generous for legitimate use while capping worst-case mail
-  // amplification (~20 recipients × 30 creates per window). Tunable.
+  // 30 is deliberately generous for legitimate use while capping worst-case
+  // notification amplification (~90 outbound sends × 30 creates per window). Tunable.
   max: 30,
   standardHeaders: true,
   legacyHeaders: false,
@@ -189,12 +192,12 @@ router.post('/', ideaCreateLimiter as any, requireAuth, async (req, res) => {
     const data = createIdeaSchema.parse(req.body);
     const userId = req.session.userId!;
 
-    // Fetch name + notificationEmails alongside the existence check (no second
-    // query): name feeds the notification subject, notificationEmails its
-    // recipients.
+    // Fetch name + notificationEmails + webexRoomIds alongside the existence check
+    // (no second query): name feeds the notification subject/body, notificationEmails
+    // the mail + Webex-DM recipients, and webexRoomIds the Webex room/space posts.
     const department = await prisma.department.findUnique({
       where: { id: data.departmentId },
-      select: { name: true, notificationEmails: true },
+      select: { name: true, notificationEmails: true, webexRoomIds: true },
     });
     if (!department) {
       return res.status(400).json({ error: 'Unknown department' });
@@ -244,6 +247,11 @@ router.post('/', ideaCreateLimiter as any, requireAuth, async (req, res) => {
     // admin-managed mail settings (config/mail.ts) and flows through the template
     // module (utils/mail-templates.ts) transparently.
     const recipients = department.notificationEmails ?? [];
+    const roomIds = department.webexRoomIds ?? [];
+
+    // Mail channel: ONE message to the whole recipient list. Its own fire-and-forget
+    // IIFE, gated on there being at least one email recipient (mail has no room
+    // concept). An empty list sends nothing.
     if (recipients.length > 0) {
       void (async () => {
         try {
@@ -265,14 +273,18 @@ router.post('/', ideaCreateLimiter as any, requireAuth, async (req, res) => {
           console.error(`[MAIL] department notification failed ideaId=${idea.id}:`, err);
         }
       })();
+    }
 
-      // Fire-and-forget Webex department notification — an INDEPENDENT second
-      // channel, in its own IIFE with its own try/catch so a Webex outage never
-      // affects the mail send (or the already-sent 201). Webex has no bulk "to" a
-      // list: every send is a 1:1 bot DM, so we fan out ONE DM per recipient over
-      // the SAME notificationEmails list (an address with no Webex identity simply
-      // fails best-effort in the logs). Guarded on effectiveEnabled so a disabled
-      // channel neither builds the message nor logs a disabled line per recipient.
+    // Fire-and-forget Webex department notification — an INDEPENDENT channel, in its
+    // own IIFE with its own try/catch so a Webex outage never affects the mail send
+    // (or the already-sent 201). Webex targets BOTH the notificationEmails (as 1:1
+    // bot DMs — one per recipient, since Webex has no bulk "to") AND the department's
+    // webexRoomIds (as room/space posts). It fires whenever there is at least one DM
+    // recipient OR at least one room, so a rooms-only department (no
+    // notificationEmails) still gets its room posts. A SINGLE effective-config read
+    // guards and feeds every send, and the SAME rendered markdown goes to every DM
+    // and every room.
+    if (recipients.length > 0 || roomIds.length > 0) {
       void (async () => {
         try {
           const webexCfg = await getEffectiveWebexConfig();
@@ -286,22 +298,36 @@ router.post('/', ideaCreateLimiter as any, requireAuth, async (req, res) => {
             link,
             language: webexCfg.language,
           });
-          // Fan out one 1:1 DM per DISTINCT recipient, in parallel. Dedupe
-          // case-insensitively first (keeping the first-seen original casing) so a
-          // list that repeats an address in different case never double-DMs the same
-          // person. sendWebexMessage never throws, so Promise.all is safe (there is
-          // no rejection to swallow) and each send still runs best-effort. Pass the
-          // config we ALREADY read so no send re-reads the settings.
-          const seen = new Set<string>();
+
+          // DM fan-out: one 1:1 DM per DISTINCT recipient. Dedupe case-insensitively
+          // (keeping the first-seen original casing) so a list that repeats an address
+          // in different case never double-DMs the same person.
+          const seenEmail = new Set<string>();
           const uniqueRecipients = recipients.filter((to) => {
             const key = to.toLowerCase();
-            if (seen.has(key)) return false;
-            seen.add(key);
+            if (seenEmail.has(key)) return false;
+            seenEmail.add(key);
             return true;
           });
-          await Promise.all(
-            uniqueRecipients.map((to) => sendWebexMessage({ toPersonEmail: to, markdown }, webexCfg))
-          );
+
+          // Room fan-out: one post per DISTINCT room. Room ids are OPAQUE, so they are
+          // deduped CASE-SENSITIVELY (exact match — 'ROOM-A' and 'room-a' are distinct
+          // rooms), exactly as validation stored them.
+          const seenRoom = new Set<string>();
+          const uniqueRoomIds = roomIds.filter((roomId) => {
+            if (seenRoom.has(roomId)) return false;
+            seenRoom.add(roomId);
+            return true;
+          });
+
+          // DMs and room posts are independent, best-effort sends (sendWebexMessage
+          // never throws), so a single Promise.all over both is safe — no rejection to
+          // swallow — and every send still runs regardless of the others. Pass the
+          // config we ALREADY read so no send re-reads the settings.
+          await Promise.all([
+            ...uniqueRecipients.map((to) => sendWebexMessage({ toPersonEmail: to, markdown }, webexCfg)),
+            ...uniqueRoomIds.map((roomId) => sendWebexMessage({ roomId, markdown }, webexCfg)),
+          ]);
         } catch (err) {
           console.error(`[WEBEX] department notification failed ideaId=${idea.id}:`, err);
         }
