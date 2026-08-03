@@ -128,6 +128,7 @@ predvolené oddelenie. Počkajte, kým `ps` ukáže všetky služby healthy/runn
 | mongo unhealthy | prvý štart trvá ~40 s; inak `docker logs ideahub-mongodb` |
 | prihlásenie „nedrží" (cookie) | `COOKIE_SECURE=true` vyžaduje funkčné HTTPS; port 80 v balíku automaticky presmerúva na HTTPS |
 | Webex notifikácie nechodia | v UI **Webex settings** musí byť kanál zapnutý a uložený bot token; doručenie je best-effort (aplikáciu nikdy neblokuje) — dôvod hľadajte v logu backendu (riadky `WEBEX`); overte odchádzajúce HTTPS na `webexapis.com` |
+| Webex správy nechodia LEN do jedného priestoru (ostatné funguje) | bot musí byť ČLENOM daného priestoru — pridajte ho cez jeho e-mailovú adresu (`...@webex.bot`); bez členstva Webex API vráti chybu, ktorá sa len zaloguje (riadky `WEBEX`), UI ju nehlási |
 
 ## 8. Prevádzka
 
@@ -144,7 +145,12 @@ predvolené oddelenie. Počkajte, kým `ps` ukáže všetky služby healthy/runn
   podmienky musia platiť súčasne. Pridáva tiež voliteľný **Webex kanál**
   (1:1 správy od bota, rovnaký opt-in mechanizmus popri e-mailoch) — tiež
   aditívne: žiadne nové premenné prostredia, žiadny DB krok; kanál je neaktívny,
-  kým ho admin nenastaví v **Webex settings** (bot token sa ukladá šifrovane).
+  kým ho admin nenastaví v **Webex settings** (bot token sa ukladá šifrovane). Pridáva tiež **Webex priestory (spaces) na
+  úrovni oddelenia** — v **Departments** môže admin každému oddeleniu priradiť
+  Webex priestory (`webexRoomIds`), do ktorých sa popri 1:1 správach posielajú aj
+  upozornenia na nové nápady. Aditívne: žiadne nové premenné prostredia, žiadny DB
+  krok (chýbajúce pole sa pri čítaní správa ako prázdny zoznam). Bota treba do
+  každého vybraného priestoru pridať ako ČLENA, inak sa doň nič nedoručí.
 - **Zálohy zatiaľ nie sú zriadené** (denný `mongodump` + záloha
   `.env.production` je odporúčaná — v riešení mimo tohto runbooku).
 - Notifikácie (SMTP aj Webex) sa konfigurujú za behu v UI (Email settings /
