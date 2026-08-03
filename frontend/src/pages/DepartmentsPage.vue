@@ -113,6 +113,7 @@
               :hint="$t('departments.notificationEmailsHint')"
               persistent-hint
               :error-messages="formErrors.emails"
+              class="mb-4"
             ></v-combobox>
             <!-- Webex spaces: pick from the bot's rooms (item title shown, room id is
                  the stored value) or type a raw room id (free text). return-object=false

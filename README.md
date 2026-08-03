@@ -1,138 +1,138 @@
 # IdeaHub
 
-A modern web application for managing internal improvement ideas, designed for employees to submit, review, approve, execute, and track ideas within an organization.
+Interná webová aplikácia na správu interných zlepšovacích nápadov, určená pre zamestnancov na podávanie, posudzovanie, schvaľovanie, realizáciu a sledovanie nápadov v rámci organizácie.
 
-## Features
+## Funkcie
 
-### Core Functionality
-- **Idea Submission**: Employees can submit improvement ideas with title, description, benefits, effort estimation, tags, and a target department
-- **Review & Approval**: Power users and admins can review, approve, or reject submitted ideas
-- **Idea Execution**: Approved ideas can be claimed and worked on by any user
-- **Progress Steps**: Assignees can log progress notes on in-progress ideas
-- **Completion Tracking**: Users can mark their claimed ideas as completed
-- **Activity Timeline**: Full audit trail of all actions taken on each idea
-- **Status Views**: Dedicated pages for my ideas and for approved, in-progress, and completed ideas
+### Základná funkcionalita
+- **Podávanie nápadov**: Zamestnanci môžu podať zlepšovací nápad s názvom, popisom, prínosmi, odhadom náročnosti, štítkami a cieľovým oddelením
+- **Posúdenie a schválenie**: Pokročilí používatelia a administrátori môžu podané nápady posúdiť, schváliť alebo zamietnuť
+- **Realizácia nápadov**: Schválený nápad si môže prevziať a realizovať ktorýkoľvek používateľ
+- **Kroky priebehu**: Riešiteľ môže k rozpracovanému nápadu zapisovať poznámky o priebehu
+- **Sledovanie dokončenia**: Používateľ môže svoj prevzatý nápad označiť za dokončený
+- **Časová os aktivity**: Úplná auditná stopa všetkých akcií vykonaných nad každým nápadom
+- **Pohľady podľa stavu**: Samostatné stránky pre moje nápady a pre schválené, rozpracované a dokončené nápady
 
-### Dashboard & Analytics
-- Real-time statistics (submitted, approved, in-progress, done, rejected)
-- Idea counts per department
-- Monthly trend charts showing completed ideas over time
-- Average time metrics (submission to approval, approval to completion)
-- Top contributors leaderboard (power users and admins)
-- Regular users see statistics scoped to their own ideas
+### Prehľad a analytika
+- Štatistiky v reálnom čase (podané, schválené, rozpracované, dokončené, zamietnuté)
+- Počty nápadov podľa oddelení
+- Grafy mesačných trendov dokončených nápadov v čase
+- Priemerné časové metriky (od podania po schválenie, od schválenia po dokončenie)
+- Rebríček najaktívnejších prispievateľov (pokročilí používatelia a administrátori)
+- Bežní používatelia vidia štatistiky obmedzené na vlastné nápady
 
 ### Reporting
-- Advanced filtering (status, department, date range, submitter, assignee, tags)
-- Pagination and CSV export functionality for data analysis
-- Comprehensive reporting interface
+- Pokročilé filtrovanie (stav, oddelenie, dátumový rozsah, autor, riešiteľ, štítky)
+- Stránkovanie a export do CSV na ďalšiu analýzu
+- Komplexné reportovacie rozhranie
 
-### Departments (Admin Only)
-- Manage the list of target departments (create, rename, reorder, delete)
-- Per-department notification email addresses and Webex space (room) IDs
+### Oddelenia (len administrátor)
+- Správa zoznamu cieľových oddelení (vytvorenie, premenovanie, zmena poradia, zmazanie)
+- Notifikačné e-mailové adresy a ID Webex priestorov (rooms) pre každé oddelenie
 
-### Notifications (Email & Webex)
-- Two independent, coexisting channels: email (SMTP) and Webex (bot messages); an admin can enable either or both
-- Admin-managed SMTP configuration on the **Email settings** page (server, from address, notification language, optional subject template), stored in the database with the SMTP password encrypted
-- Admin-managed Webex configuration on the **Webex settings** page (bot access token stored encrypted, message language). Per-submitter lifecycle notifications are always private 1:1 bot messages; department new-idea notifications can additionally post to Webex spaces the admin configures per department (the bot must be a member of each space)
-- New-idea notification sent to the target department's notification addresses (email and/or 1:1 Webex message) and to the department's configured Webex spaces, over every enabled channel (best-effort — delivery problems never block the request)
-- Per-idea lifecycle notifications: the submitter can opt in (a toggle on the create form and on the idea's details page, shown only when at least one channel is enabled) to be notified when their idea is approved, rejected, claimed, completed, or gets a progress step. A change the submitter makes themselves never notifies them, and delivery is best-effort like the department notifications
-- Test buttons (test email / test Webex message) to verify each configuration
+### Notifikácie (e-mail a Webex)
+- Dva nezávislé, súbežne fungujúce kanály: e-mail (SMTP) a Webex (správy bota); administrátor môže zapnúť ktorýkoľvek z nich alebo oba
+- Administrátorom spravovaná SMTP konfigurácia na stránke **Nastavenia e-mailu** (server, adresa odosielateľa, jazyk notifikácií, voliteľná šablóna predmetu), uložená v databáze so šifrovaným SMTP heslom
+- Administrátorom spravovaná konfigurácia Webexu na stránke **Nastavenia Webexu** (prístupový token bota uložený šifrovane, jazyk správ). Notifikácie o životnom cykle pre autora sú vždy súkromné 1:1 správy od bota; notifikácie o novom nápade pre oddelenie sa navyše môžu posielať do Webex priestorov, ktoré administrátor priradí jednotlivým oddeleniam (bot musí byť členom každého takého priestoru)
+- Notifikácia o novom nápade sa odosiela na notifikačné adresy cieľového oddelenia (e-mailom a/alebo 1:1 správou vo Webexe) a do Webex priestorov nastavených pre dané oddelenie, a to cez každý zapnutý kanál (best-effort — problémy s doručením nikdy neblokujú požiadavku)
+- Notifikácie o životnom cykle jednotlivého nápadu: autor sa môže prihlásiť na odber (prepínač na formulári na vytvorenie nápadu aj na detaile nápadu, zobrazuje sa len ak je zapnutý aspoň jeden kanál) a dostávať upozornenia, keď je jeho nápad schválený, zamietnutý, prevzatý, dokončený alebo keď k nemu pribudne krok priebehu. Zmena, ktorú vykoná sám autor, mu nikdy notifikáciu nepošle; doručovanie je best-effort rovnako ako pri notifikáciách pre oddelenie
+- Testovacie tlačidlá (testovací e-mail / testovacia správa vo Webexe) na overenie oboch konfigurácií
 
-### Internationalization
-- Bilingual UI — Slovak (default) and English, switchable in the app bar and persisted in the browser
-- Email notifications use the admin-configured language
+### Viacjazyčnosť
+- Dvojjazyčné rozhranie — slovenčina (predvolená) a angličtina, prepínateľné v hornej lište a zapamätané v prehliadači
+- E-mailové notifikácie používajú jazyk nastavený administrátorom
 
-### User Management (Admin Only)
-- Create, edit, and delete users
-- Role-based access control (User, Power User, Admin)
-- User statistics (submitted ideas, assigned ideas)
+### Správa používateľov (len administrátor)
+- Vytváranie, úprava a mazanie používateľov
+- Riadenie prístupu podľa rolí (Používateľ, Pokročilý používateľ, Administrátor)
+- Štatistiky používateľa (podané nápady, pridelené nápady)
 
-### Security & Authentication
-- Session-based authentication with bcrypt password hashing (sessions stored in MongoDB with a 7-day TTL)
-- Optional corporate SSO via OIDC authorization-code flow with PKCE (see [Single Sign-On (SSO)](#single-sign-on-sso))
-- Self-service password change for local accounts
-- Role-based access control (RBAC)
-- CSRF protection via custom header validation
-- Security headers (CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy)
-- Input validation using Zod with ObjectId format enforcement
-- Protection against CSV injection in report exports
-- Session invalidation on role/email changes
-- Graceful server shutdown (SIGTERM/SIGINT)
-- Admin self-protection (cannot delete own account or change own role)
-- Rate limiting on the API and stricter limits on sensitive endpoints (login, password change, SSO, idea submission)
+### Bezpečnosť a autentifikácia
+- Autentifikácia založená na reláciách s hashovaním hesiel cez bcrypt (relácie uložené v MongoDB s 7-dňovým TTL)
+- Voliteľné podnikové SSO cez OIDC authorization-code flow s PKCE (pozri [Jednotné prihlásenie (SSO)](#jednotné-prihlásenie-sso))
+- Samoobslužná zmena hesla pre lokálne kontá
+- Riadenie prístupu podľa rolí (RBAC)
+- Ochrana proti CSRF pomocou overovania vlastnej hlavičky
+- Bezpečnostné hlavičky (CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy)
+- Validácia vstupov pomocou Zod vrátane vynútenia formátu ObjectId
+- Ochrana proti CSV injection pri exportoch reportov
+- Zneplatnenie relácií pri zmene roly alebo e-mailu
+- Korektné ukončenie servera (SIGTERM/SIGINT)
+- Ochrana administrátora pred sebou samým (nemôže zmazať vlastné konto ani si zmeniť rolu)
+- Rate limiting na API a prísnejšie limity na citlivých endpointoch (prihlásenie, zmena hesla, SSO, podanie nápadu)
 
-## Tech Stack
+## Technológie
 
 ### Backend
 - **Runtime**: Node.js 22+
 - **Framework**: Express.js
-- **Database**: MongoDB with Prisma ORM
-- **Authentication**: express-session (MongoDB session store) with bcrypt; openid-client for SSO/OIDC
-- **Email**: Nodemailer with admin-managed SMTP settings
-- **Webex**: Webex REST API (bot 1:1 messages and group-space posts) via native fetch, admin-managed settings
-- **Security**: Helmet, express-rate-limit
-- **Validation**: Zod
-- **Testing**: Jest + Supertest
+- **Databáza**: MongoDB s Prisma ORM
+- **Autentifikácia**: express-session (session store v MongoDB) s bcrypt; openid-client pre SSO/OIDC
+- **E-mail**: Nodemailer s SMTP nastaveniami spravovanými administrátorom
+- **Webex**: Webex REST API (1:1 správy bota a príspevky do skupinových priestorov) cez natívny fetch, nastavenia spravuje administrátor
+- **Bezpečnosť**: Helmet, express-rate-limit
+- **Validácia**: Zod
+- **Testovanie**: Jest + Supertest
 
 ### Frontend
 - **Framework**: Vue 3 (Composition API)
-- **UI Library**: Vuetify 3
-- **State Management**: Pinia
-- **Routing**: Vue Router
-- **Internationalization**: vue-i18n (Slovak & English)
-- **Charts**: Chart.js with vue-chartjs
-- **HTTP Client**: Axios
-- **Build Tool**: Vite
-- **Testing**: Vitest
+- **UI knižnica**: Vuetify 3
+- **Správa stavu**: Pinia
+- **Routovanie**: Vue Router
+- **Viacjazyčnosť**: vue-i18n (slovenčina a angličtina)
+- **Grafy**: Chart.js s vue-chartjs
+- **HTTP klient**: Axios
+- **Build nástroj**: Vite
+- **Testovanie**: Vitest
 
 ### DevOps
-- **Containerization**: Docker & Docker Compose
-- **Reverse Proxy**: Nginx (for frontend in production)
-- **E2E Testing**: Playwright
-- **CI**: GitHub Actions (backend, frontend, and E2E test workflows)
+- **Kontajnerizácia**: Docker a Docker Compose
+- **Reverzný proxy**: Nginx (pre frontend v produkcii)
+- **E2E testovanie**: Playwright
+- **CI**: GitHub Actions (workflow pre backend, frontend a E2E testy)
 
-## Project Structure
+## Štruktúra projektu
 
 ```
 idea-hub/
 ├── backend/                 # Express.js backend
 │   ├── prisma/
-│   │   ├── schema.prisma   # Database schema
-│   │   └── seed.ts         # Database seeding script
+│   │   ├── schema.prisma   # Schéma databázy
+│   │   └── seed.ts         # Skript na naplnenie databázy
 │   ├── src/
-│   │   ├── __tests__/      # Jest unit/route tests (mocked Prisma)
-│   │   ├── __integration__/# Jest integration tests (real MongoDB)
-│   │   ├── config/         # Mail & SSO configuration
-│   │   ├── lib/            # Prisma client
-│   │   ├── middleware/     # Auth & RBAC middleware
-│   │   ├── routes/         # API routes (auth, sso, ideas, users, reports, departments, mail-settings, webex-settings)
-│   │   ├── types/          # TypeScript types
-│   │   ├── utils/          # Validation, mailer & templates, bootstrap, SSO pruning
-│   │   └── index.ts        # Server entry point
+│   │   ├── __tests__/      # Jest unit/route testy (mockovaná Prisma)
+│   │   ├── __integration__/# Jest integračné testy (reálna MongoDB)
+│   │   ├── config/         # Konfigurácia pošty a SSO
+│   │   ├── lib/            # Prisma klient
+│   │   ├── middleware/     # Middleware pre autentifikáciu a RBAC
+│   │   ├── routes/         # API routy (auth, sso, ideas, users, reports, departments, mail-settings, webex-settings)
+│   │   ├── types/          # TypeScript typy
+│   │   ├── utils/          # Validácia, mailer a šablóny, bootstrap, prune SSO používateľov
+│   │   └── index.ts        # Vstupný bod servera
 │   ├── Dockerfile
 │   └── package.json
 ├── frontend/               # Vue 3 frontend
 │   ├── src/
-│   │   ├── __tests__/     # Vitest unit tests
-│   │   ├── api/           # API client modules
-│   │   ├── components/    # Reusable components
-│   │   ├── i18n/          # Locale catalogs (sk, en)
-│   │   ├── layouts/       # Layout components
-│   │   ├── pages/         # Page components
-│   │   ├── plugins/       # Vuetify setup
-│   │   ├── router/        # Vue Router config
+│   │   ├── __tests__/     # Vitest unit testy
+│   │   ├── api/           # Moduly API klienta
+│   │   ├── components/    # Znovupoužiteľné komponenty
+│   │   ├── i18n/          # Jazykové katalógy (sk, en)
+│   │   ├── layouts/       # Komponenty rozloženia
+│   │   ├── pages/         # Komponenty stránok
+│   │   ├── plugins/       # Nastavenie Vuetify
+│   │   ├── router/        # Konfigurácia Vue Router
 │   │   ├── stores/        # Pinia stores
-│   │   ├── styles/        # Global styles
-│   │   ├── types/         # TypeScript types
+│   │   ├── styles/        # Globálne štýly
+│   │   ├── types/         # TypeScript typy
 │   │   ├── App.vue
 │   │   └── main.ts
 │   ├── Dockerfile
 │   ├── nginx.conf
 │   └── package.json
-├── e2e/                    # Playwright E2E tests (start their own servers + mock IdP)
-├── dev/                    # Dev & testing kits (Keycloak SSO kit, mail testing, IAM onboarding)
-├── docs/                   # Deployment runbook & project docs
-├── .github/workflows/      # CI (tests, E2E, PR checks)
+├── e2e/                    # Playwright E2E testy (spúšťajú si vlastné servery + mock IdP)
+├── dev/                    # Vývojárske a testovacie kity (Keycloak SSO kit, testovanie pošty, onboarding IAM)
+├── docs/                   # Runbook na nasadenie a projektová dokumentácia
+├── .github/workflows/      # CI (testy, E2E, PR kontroly)
 ├── playwright.config.ts
 ├── docker-compose.yml
 ├── docker-compose.prod.yml
@@ -140,470 +140,472 @@ idea-hub/
 └── README.md
 ```
 
-## Prerequisites
+## Predpoklady
 
-- **Node.js** 22.12 or higher
-- **npm** or **yarn**
-- **MongoDB** 7.x (or use Docker)
-- **Docker** & **Docker Compose** (for containerized deployment)
+- **Node.js** 22.12 alebo vyšší
+- **npm** alebo **yarn**
+- **MongoDB** 7.x (alebo použite Docker)
+- **Docker** a **Docker Compose** (pre kontajnerizované nasadenie)
 
-## Getting Started
+## Začíname
 
-### Option 1: Docker (Recommended)
+### Možnosť 1: Docker (odporúčané)
 
-This is the easiest way to get started. Docker will handle all dependencies and setup.
+Najjednoduchší spôsob, ako začať. Docker sa postará o všetky závislosti a nastavenie.
 
-1. **Clone the repository**
+1. **Naklonujte repozitár**
    ```bash
    git clone <repository-url>
    cd idea-hub
    ```
 
-2. **Create environment file**
+2. **Vytvorte súbor s premennými prostredia**
    ```bash
    cp .env.example .env
    ```
 
-   Edit `.env` and update values if needed:
+   Upravte `.env` a v prípade potreby zmeňte hodnoty:
    ```env
-   # MongoDB now runs with authentication. docker-compose uses these to create the
-   # mongod root user and to build the backend's credentialed DATABASE_URL.
+   # MongoDB teraz beží s autentifikáciou. docker-compose z týchto hodnôt vytvorí
+   # root používateľa mongod a zostaví DATABASE_URL backendu s prihlasovacími údajmi.
    MONGO_ROOT_USER=root
    MONGO_ROOT_PASSWORD=example-dev-password
-   # For a host-run backend (VS Code debug) DATABASE_URL points at localhost; inside
-   # docker-compose the backend reaches Mongo at host `mongodb` and the credentialed
-   # URL is composed from MONGO_ROOT_USER/MONGO_ROOT_PASSWORD automatically.
+   # Pri backende bežiacom na hostiteľovi (debug vo VS Code) DATABASE_URL smeruje na
+   # localhost; vnútri docker-compose backend pristupuje k Mongu na hoste `mongodb`
+   # a URL s prihlasovacími údajmi sa automaticky zostaví z
+   # MONGO_ROOT_USER/MONGO_ROOT_PASSWORD.
    DATABASE_URL="mongodb://root:example-dev-password@localhost:27017/ideahub?replicaSet=rs0&authSource=admin&directConnection=true"
    SESSION_SECRET="your-super-secret-session-key-change-in-production"
-   # Required because NODE_ENV=production below: AES-256-GCM key that encrypts the
-   # admin-set SMTP password. The backend fails fast at boot without it, and
-   # `docker compose up` stops immediately if it's unset. Generate with the command
-   # in the security note below. (Host-run dev with NODE_ENV=development instead
-   # generates an ephemeral key.)
+   # Povinné, pretože nižšie je NODE_ENV=production: kľúč AES-256-GCM, ktorým sa
+   # šifruje SMTP heslo nastavené administrátorom. Bez neho backend pri štarte
+   # okamžite zlyhá a `docker compose up` sa hneď zastaví. Vygenerujte ho príkazom
+   # v bezpečnostnej poznámke nižšie. (Vývoj na hostiteľovi s NODE_ENV=development
+   # si namiesto toho vygeneruje dočasný kľúč.)
    MAIL_SETTINGS_KEY="your-64-hex-char-key-change-in-production"
    NODE_ENV="production"
    BACKEND_PORT=3001
    VITE_API_URL="http://localhost:3001"
    ```
 
-   > **Security — before ANY shared or production deployment:**
-   > - **Generate a strong `SESSION_SECRET`** (never ship the placeholder above):
+   > **Bezpečnosť — pred AKÝMKOĽVEK zdieľaným alebo produkčným nasadením:**
+   > - **Vygenerujte silný `SESSION_SECRET`** (nikdy nenasadzujte zástupnú hodnotu vyššie):
    >   ```bash
    >   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
    >   ```
-   > - **Generate a `MAIL_SETTINGS_KEY`** the same way (64 hex chars). It is
-   >   **required outside development** — the backend refuses to boot without it and
-   >   both compose files fail-fast if it's unset. It encrypts the SMTP password and
-   >   the Webex bot token an admin later sets on the **Email settings** / **Webex
-   >   settings** pages; keep it stable, or previously saved secrets become
-   >   undecryptable.
-   > - **Set `ADMIN_EMAIL` / `ADMIN_PASSWORD` to unique, non-default values.** The
-   >   bootstrap admin is created on first run from these; use a long, random
-   >   password (12+ characters — the app enforces a 12-char minimum for
-   >   admin-managed passwords).
-   > - The placeholder values here and the demo accounts below are **for local
-   >   development only**.
+   > - **Vygenerujte `MAIL_SETTINGS_KEY`** rovnakým spôsobom (64 hex znakov). Je
+   >   **povinný mimo vývojového prostredia** — backend bez neho odmietne
+   >   naštartovať a oba compose súbory okamžite zlyhajú, ak nie je nastavený.
+   >   Šifruje SMTP heslo a token Webex bota, ktoré administrátor neskôr nastaví na
+   >   stránkach **Nastavenia e-mailu** / **Nastavenia Webexu**; nemeňte ho, inak sa
+   >   predtým uložené tajomstvá stanú nedešifrovateľnými.
+   > - **Nastavte `ADMIN_EMAIL` / `ADMIN_PASSWORD` na jedinečné, neprednastavené
+   >   hodnoty.** Pri prvom spustení sa z nich vytvorí úvodný administrátor;
+   >   použite dlhé, náhodné heslo (12+ znakov — aplikácia vynucuje minimálne
+   >   12 znakov pre heslá spravované administrátorom).
+   > - Zástupné hodnoty tu a demo kontá nižšie sú **len pre lokálny vývoj**.
 
-3. **Build and start containers**
+3. **Zostavte a spustite kontajnery**
    ```bash
    docker-compose up -d
    ```
 
-   > **MongoDB authentication (one-time upgrade step).** Mongo now runs as an
-   > authenticated replica set (an internal keyFile is generated automatically into
-   > a named volume on first boot). Auth is only established on a **fresh** data
-   > volume, so if you are **upgrading an existing deployment** whose Mongo volume
-   > predates this change, recreate the volume **once**:
+   > **Autentifikácia MongoDB (jednorazový krok pri aktualizácii).** Mongo teraz
+   > beží ako replica set s autentifikáciou (interný keyFile sa pri prvom štarte
+   > automaticky vygeneruje do pomenovaného volume). Autentifikácia sa nastaví len
+   > na **čistom** dátovom volume, takže ak **aktualizujete existujúce nasadenie**,
+   > ktorého Mongo volume vznikol pred touto zmenou, volume raz **znovu vytvorte**:
    > ```bash
    > docker compose down -v && docker compose up -d
    > ```
-   > `down -v` **erases all Mongo data in that volume** — intended here because the
-   > pre-auth volume must be rebuilt. Fresh clones need no extra step.
+   > `down -v` **zmaže všetky dáta Monga v danom volume** — tu je to zámer, pretože
+   > volume bez autentifikácie treba postaviť nanovo. Pri čerstvom klone netreba
+   > nič navyše.
 
-4. **Seed the database** (first time only)
+4. **Naplňte databázu** (len prvýkrát)
    ```bash
    docker-compose exec backend npm run prisma:seed
    ```
 
-5. **Access the application**
+5. **Otvorte aplikáciu**
    - Frontend: http://localhost
    - Backend API: http://localhost:3001
    - MongoDB: localhost:27017
 
-6. **Login with demo accounts** *(seeded by `prisma:seed` — LOCAL DEVELOPMENT ONLY)*
-   - **Admin**: admin@ideahub.com / admin123
-   - **Power User**: power@ideahub.com / power123
-   - **Users**: john@ideahub.com, jane@ideahub.com, bob@ideahub.com / user123
+6. **Prihláste sa demo kontami** *(vytvorí ich `prisma:seed` — LEN PRE LOKÁLNY VÝVOJ)*
+   - **Administrátor**: admin@ideahub.com / admin123
+   - **Pokročilý používateľ**: power@ideahub.com / power123
+   - **Používatelia**: john@ideahub.com, jane@ideahub.com, bob@ideahub.com / user123
 
-   The seed also creates two departments (Všeobecné, Marketing) and sample ideas in every status.
+   Seed vytvorí aj dve oddelenia (Všeobecné, Marketing) a ukážkové nápady vo všetkých stavoch.
 
-   > **Warning:** These are well-known default credentials created by the seed
-   > script. Never run `prisma:seed` against a shared or production database, and
-   > change any default admin credentials before exposing the app.
+   > **Upozornenie:** Ide o všeobecne známe predvolené prihlasovacie údaje, ktoré
+   > vytvára seed skript. Nikdy nespúšťajte `prisma:seed` proti zdieľanej alebo
+   > produkčnej databáze a pred sprístupnením aplikácie zmeňte všetky predvolené
+   > administrátorské údaje.
 
-### Option 2: Local Development
+### Možnosť 2: Lokálny vývoj
 
-For active development without Docker.
+Pre aktívny vývoj bez Dockeru.
 
-#### Backend Setup
+#### Nastavenie backendu
 
-1. **Install dependencies**
+1. **Nainštalujte závislosti**
    ```bash
    cd backend
    npm install
    ```
 
-2. **Set up environment**
+2. **Nastavte prostredie**
    ```bash
    cp ../.env.example ../.env
    ```
 
-   Update `DATABASE_URL` to point to your local MongoDB:
+   Upravte `DATABASE_URL` tak, aby smeroval na vašu lokálnu MongoDB:
    ```env
    DATABASE_URL="mongodb://localhost:27017/ideahub"
    ```
 
-3. **Generate Prisma Client**
+3. **Vygenerujte Prisma klienta**
    ```bash
    npm run prisma:generate
    ```
 
-4. **Push database schema**
+4. **Nahrajte schému do databázy**
    ```bash
    npx prisma db push
    ```
 
-5. **Seed the database**
+5. **Naplňte databázu**
    ```bash
    npm run prisma:seed
    ```
 
-6. **Start development server**
+6. **Spustite vývojový server**
    ```bash
    npm run dev
    ```
 
-   Backend will run on http://localhost:3001
+   Backend pobeží na http://localhost:3001
 
-#### Frontend Setup
+#### Nastavenie frontendu
 
-1. **Install dependencies**
+1. **Nainštalujte závislosti**
    ```bash
    cd frontend
    npm install
    ```
 
-2. **Start development server**
+2. **Spustite vývojový server**
    ```bash
    npm run dev
    ```
 
-   Frontend will run on http://localhost:5173
+   Frontend pobeží na http://localhost:5173
 
-## Available Scripts
+## Dostupné skripty
 
-### Root Level
+### Koreň repozitára
 
 ```bash
-npm run dev              # Start backend and frontend in dev mode (concurrently)
-npm run build            # Build backend and frontend
-npm run test             # Run backend + frontend unit tests
-npm run test:backend     # Backend tests only
-npm run test:frontend    # Frontend tests only
-npm run test:e2e         # Playwright E2E suite (starts its own servers)
-npm run prisma:generate  # Generate Prisma Client
-npm run prisma:seed      # Seed database with test data
-npm run docker:build     # Build Docker images
-npm run docker:up        # Start Docker containers
-npm run docker:down      # Stop Docker containers
-npm run docker:logs      # Tail Docker container logs
+npm run dev              # Spustí backend aj frontend vo vývojovom režime (concurrently)
+npm run build            # Zostaví backend aj frontend
+npm run test             # Spustí unit testy backendu + frontendu
+npm run test:backend     # Len testy backendu
+npm run test:frontend    # Len testy frontendu
+npm run test:e2e         # Playwright E2E sada (spúšťa si vlastné servery)
+npm run prisma:generate  # Vygeneruje Prisma klienta
+npm run prisma:seed      # Naplní databázu testovacími dátami
+npm run docker:build     # Zostaví Docker obrazy
+npm run docker:up        # Spustí Docker kontajnery
+npm run docker:down      # Zastaví Docker kontajnery
+npm run docker:logs      # Sleduje logy Docker kontajnerov
 ```
 
 ### Backend
 
 ```bash
-npm run dev              # Start development server with hot reload
-npm run build            # Compile TypeScript to JavaScript
-npm run start            # Start production server
-npm run test             # Run Jest unit/route tests (no database needed)
-npm run test:integration # Run integration tests (requires a running MongoDB)
-npm run prisma:generate  # Generate Prisma Client
-npm run prisma:migrate   # Run database migrations
-npm run prisma:seed      # Seed database with test data
-npm run prisma:studio    # Open Prisma Studio (database GUI)
+npm run dev              # Spustí vývojový server s hot reload
+npm run build            # Skompiluje TypeScript do JavaScriptu
+npm run start            # Spustí produkčný server
+npm run test             # Spustí Jest unit/route testy (databáza netreba)
+npm run test:integration # Spustí integračné testy (vyžaduje bežiacu MongoDB)
+npm run prisma:generate  # Vygeneruje Prisma klienta
+npm run prisma:migrate   # Spustí migrácie databázy
+npm run prisma:seed      # Naplní databázu testovacími dátami
+npm run prisma:studio    # Otvorí Prisma Studio (GUI databázy)
 ```
 
 ### Frontend
 
 ```bash
-npm run dev              # Start Vite dev server
-npm run build            # Type-check and build for production
-npm run preview          # Preview production build
-npm run test             # Run Vitest unit tests
-npm run test:watch       # Vitest in watch mode
+npm run dev              # Spustí Vite vývojový server
+npm run build            # Skontroluje typy a zostaví produkčný build
+npm run preview          # Náhľad produkčného buildu
+npm run test             # Spustí Vitest unit testy
+npm run test:watch       # Vitest v režime watch
 ```
 
-## API Documentation
+## Dokumentácia API
 
-### Authentication Endpoints
+### Endpointy autentifikácie
 
-- `GET /api/auth/config` - Public: whether SSO is enabled (`{ ssoEnabled }`)
-- `POST /api/auth/login` - Login with email and password (local accounts only)
-- `POST /api/auth/logout` - Logout current user (SSO sessions may return a `redirectTo` for RP-initiated logout)
-- `POST /api/auth/change-password` - Change own password (local accounts only)
-- `GET /api/auth/me` - Get current user info
-- `GET /api/auth/sso/login` - Begin OIDC login (redirects to the corporate IAM)
-- `GET /api/auth/sso/callback` - OIDC redirect URI; completes login and sets the session
+- `GET /api/auth/config` – Verejné: či je SSO zapnuté (`{ ssoEnabled }`)
+- `POST /api/auth/login` – Prihlásenie e-mailom a heslom (len lokálne kontá)
+- `POST /api/auth/logout` – Odhlásenie aktuálneho používateľa (pri SSO reláciách môže vrátiť `redirectTo` pre RP-initiated logout)
+- `POST /api/auth/change-password` – Zmena vlastného hesla (len lokálne kontá)
+- `GET /api/auth/me` – Informácie o prihlásenom používateľovi
+- `GET /api/auth/sso/login` – Začiatok OIDC prihlásenia (presmeruje na podnikový IAM)
+- `GET /api/auth/sso/callback` – OIDC redirect URI; dokončí prihlásenie a nastaví reláciu
 
-### Options Endpoint
+### Endpoint options
 
-- `GET /api/options` - Authenticated: consolidated runtime UI flags for the app, as `{ mailEnabled, webexEnabled, ssoShowLogout }` (any logged-in user). `mailEnabled` / `webexEnabled` (channel effectively enabled) together drive the per-idea notify toggle — it appears when at least one is true; `ssoShowLogout` (`SSO_SHOW_LOGOUT`) re-exposes the in-app logout button for SSO users. Exposes only these booleans — no admin configuration.
+- `GET /api/options` – Pre prihlásených: zjednotené runtime príznaky UI v tvare `{ mailEnabled, webexEnabled, ssoShowLogout }` (ktorýkoľvek prihlásený používateľ). `mailEnabled` / `webexEnabled` (kanál je efektívne zapnutý) spolu riadia prepínač notifikácií pri nápade — zobrazí sa, ak je aspoň jeden `true`; `ssoShowLogout` (`SSO_SHOW_LOGOUT`) opäť sprístupní tlačidlo odhlásenia pre SSO používateľov. Vracia iba tieto booleovské hodnoty — žiadnu administrátorskú konfiguráciu.
 
-### Ideas Endpoints
+### Endpointy nápadov
 
-- `GET /api/ideas` - Get all ideas (with filters and pagination)
-- `GET /api/ideas/:id` - Get single idea with events and progress steps
-- `POST /api/ideas` - Create new idea (emails the target department when mail is configured)
-- `PATCH /api/ideas/:id` - Update idea (submitter only, while SUBMITTED)
-- `PATCH /api/ideas/:id/approve` - Approve idea (Power User/Admin)
-- `PATCH /api/ideas/:id/reject` - Reject idea (Power User/Admin)
-- `PATCH /api/ideas/:id/claim` - Claim and start working on idea
-- `PATCH /api/ideas/:id/complete` - Mark idea as completed (assignee only)
-- `PATCH /api/ideas/:id/notify` - Toggle the submitter's lifecycle-email opt-in (submitter only, any status)
-- `POST /api/ideas/:id/steps` - Add progress step to in-progress idea (assignee only)
-- `DELETE /api/ideas/:id` - Delete idea (Admin only)
+- `GET /api/ideas` – Zoznam všetkých nápadov (s filtrami a stránkovaním)
+- `GET /api/ideas/:id` – Jeden nápad vrátane udalostí a krokov priebehu
+- `POST /api/ideas` – Vytvorenie nového nápadu (pri nastavenej pošte odošle e-mail cieľovému oddeleniu)
+- `PATCH /api/ideas/:id` – Úprava nápadu (len autor, kým je v stave SUBMITTED)
+- `PATCH /api/ideas/:id/approve` – Schválenie nápadu (Pokročilý používateľ/Administrátor)
+- `PATCH /api/ideas/:id/reject` – Zamietnutie nápadu (Pokročilý používateľ/Administrátor)
+- `PATCH /api/ideas/:id/claim` – Prevzatie nápadu a začiatok práce na ňom
+- `PATCH /api/ideas/:id/complete` – Označenie nápadu za dokončený (len riešiteľ)
+- `PATCH /api/ideas/:id/notify` – Prepnutie odberu notifikácií o životnom cykle pre autora (len autor, v ľubovoľnom stave)
+- `POST /api/ideas/:id/steps` – Pridanie kroku priebehu k rozpracovanému nápadu (len riešiteľ)
+- `DELETE /api/ideas/:id` – Zmazanie nápadu (len administrátor)
 
-### Reports Endpoints
+### Endpointy reportov
 
-- `GET /api/reports/summary` - Dashboard summary statistics (regular users: own ideas only)
-- `GET /api/reports/by-department` - Idea counts per department (regular users: own ideas only)
-- `GET /api/reports/monthly-trend` - Monthly completion trend (regular users: own ideas only)
-- `GET /api/reports/top-contributors` - Top contributors (Power User/Admin)
-- `GET /api/reports/filtered` - Filtered ideas with pagination (with CSV export)
+- `GET /api/reports/summary` – Súhrnné štatistiky pre prehľad (bežní používatelia: len vlastné nápady)
+- `GET /api/reports/by-department` – Počty nápadov podľa oddelení (bežní používatelia: len vlastné nápady)
+- `GET /api/reports/monthly-trend` – Mesačný trend dokončených nápadov (bežní používatelia: len vlastné nápady)
+- `GET /api/reports/top-contributors` – Najaktívnejší prispievatelia (Pokročilý používateľ/Administrátor)
+- `GET /api/reports/filtered` – Filtrované nápady so stránkovaním (vrátane exportu do CSV)
 
-### Departments Endpoints
+### Endpointy oddelení
 
-- `GET /api/departments` - List departments (notification emails and Webex space IDs visible to admins only)
-- `POST /api/departments` - Create department (Admin only)
-- `PATCH /api/departments/reorder` - Reorder departments (Admin only)
-- `PATCH /api/departments/:id` - Update department name / notification emails / Webex space IDs (Admin only)
-- `DELETE /api/departments/:id` - Delete department (Admin only; refused for the last department or one that has ideas)
+- `GET /api/departments` – Zoznam oddelení (notifikačné e-maily a ID Webex priestorov vidia len administrátori)
+- `POST /api/departments` – Vytvorenie oddelenia (len administrátor)
+- `PATCH /api/departments/reorder` – Zmena poradia oddelení (len administrátor)
+- `PATCH /api/departments/:id` – Úprava názvu / notifikačných e-mailov / ID Webex priestorov oddelenia (len administrátor)
+- `DELETE /api/departments/:id` – Zmazanie oddelenia (len administrátor; odmietnuté pri poslednom oddelení alebo pri oddelení, ktoré má nápady)
 
-### Email Settings Endpoints (Admin Only)
+### Endpointy nastavení e-mailu (len administrátor)
 
-- `GET /api/mail-settings` - Get SMTP configuration (the password is never returned)
-- `PUT /api/mail-settings` - Save SMTP configuration (password stored encrypted)
-- `POST /api/mail-settings/test` - Send a test email using the saved configuration
+- `GET /api/mail-settings` – Získanie SMTP konfigurácie (heslo sa nikdy nevracia)
+- `PUT /api/mail-settings` – Uloženie SMTP konfigurácie (heslo sa ukladá šifrovane)
+- `POST /api/mail-settings/test` – Odoslanie testovacieho e-mailu podľa uloženej konfigurácie
 
-### Webex Settings Endpoints (Admin Only)
+### Endpointy nastavení Webexu (len administrátor)
 
-- `GET /api/webex-settings` - Get Webex configuration (the bot token is never returned)
-- `PUT /api/webex-settings` - Save Webex configuration (bot token stored encrypted)
-- `POST /api/webex-settings/test` - Send a test Webex message using the saved configuration
-- `GET /api/webex-settings/rooms` - List the bot's Webex spaces (id + title) for the department space picker; returns an empty list with a reason code when Webex is disabled or unreachable
+- `GET /api/webex-settings` – Získanie konfigurácie Webexu (token bota sa nikdy nevracia)
+- `PUT /api/webex-settings` – Uloženie konfigurácie Webexu (token bota sa ukladá šifrovane)
+- `POST /api/webex-settings/test` – Odoslanie testovacej správy vo Webexe podľa uloženej konfigurácie
+- `GET /api/webex-settings/rooms` – Zoznam Webex priestorov bota (id + názov) pre výber priestorov oddelenia; ak je Webex vypnutý alebo nedostupný, vráti prázdny zoznam s kódom dôvodu
 
-### Users Endpoints (Admin Only)
+### Endpointy používateľov (len administrátor)
 
-- `GET /api/users` - Get all users
-- `GET /api/users/:id` - Get single user
-- `POST /api/users` - Create new user
-- `PATCH /api/users/:id` - Update user (cannot change own role; SSO-managed users cannot be edited)
-- `DELETE /api/users/:id` - Delete user (cannot delete self, SSO-managed users, or users with ideas)
+- `GET /api/users` – Zoznam všetkých používateľov
+- `GET /api/users/:id` – Jeden používateľ
+- `POST /api/users` – Vytvorenie nového používateľa
+- `PATCH /api/users/:id` – Úprava používateľa (nemožno si zmeniť vlastnú rolu; SSO používateľov nemožno upravovať)
+- `DELETE /api/users/:id` – Zmazanie používateľa (nemožno zmazať seba, SSO používateľov ani používateľov s nápadmi)
 
-### Miscellaneous
+### Ostatné
 
-- `GET /health` - Liveness check (`{ status: "ok", timestamp }`)
+- `GET /health` – Kontrola dostupnosti (`{ status: "ok", timestamp }`)
 
-## User Roles & Permissions
+## Role a oprávnenia
 
 ### USER
-- Submit new ideas
-- View all ideas (global list and own ideas)
-- Claim approved ideas for execution
-- Log progress steps and mark claimed ideas as completed
-- Dashboard and reports scoped to own ideas
+- Podávanie nových nápadov
+- Zobrazenie všetkých nápadov (globálny zoznam aj vlastné nápady)
+- Prevzatie schválených nápadov na realizáciu
+- Zapisovanie krokov priebehu a označenie prevzatých nápadov za dokončené
+- Prehľad a reporty obmedzené na vlastné nápady
 
 ### POWER_USER
-- All USER permissions
-- Access to review queue
-- Approve or reject submitted ideas
-- Organization-wide dashboard, reports, and top-contributors view
+- Všetky oprávnenia roly USER
+- Prístup do fronty na posúdenie
+- Schvaľovanie alebo zamietanie podaných nápadov
+- Prehľad, reporty a rebríček prispievateľov za celú organizáciu
 
 ### ADMIN
-- All POWER_USER permissions
-- Manage users (create, edit, delete, change roles)
-- Manage departments, their notification emails, and Webex spaces
-- Configure email (SMTP) and Webex notification settings
-- Delete ideas
+- Všetky oprávnenia roly POWER_USER
+- Správa používateľov (vytváranie, úprava, mazanie, zmena rolí)
+- Správa oddelení, ich notifikačných e-mailov a Webex priestorov
+- Konfigurácia notifikácií cez e-mail (SMTP) a Webex
+- Mazanie nápadov
 
-## Database Schema
+## Schéma databázy
 
-### User Model
-- `id`: Unique identifier
-- `name`: User's full name
-- `email`: Unique email address
-- `passwordHash`: Bcrypt hashed password (absent for SSO-managed users)
+### Model User
+- `id`: Jedinečný identifikátor
+- `name`: Celé meno používateľa
+- `email`: Jedinečná e-mailová adresa
+- `passwordHash`: Heslo hashované cez bcrypt (u SSO používateľov chýba)
 - `role`: USER | POWER_USER | ADMIN
 - `authProvider`: LOCAL | SSO
-- `ssoSub`: OIDC subject identifier (SSO users)
-- `department`: Department/org unit synced from the IdP (SSO users)
-- `createdAt`, `updatedAt`: Timestamps
+- `ssoSub`: OIDC identifikátor subjektu (SSO používatelia)
+- `department`: Oddelenie/organizačná jednotka synchronizovaná z IdP (SSO používatelia)
+- `createdAt`, `updatedAt`: Časové značky
 
-### Idea Model
-- `id`: Unique identifier
-- `title`: Idea title (5-120 chars)
-- `description`: Detailed description
-- `benefits`: Expected benefits
-- `effort`: Effort estimation (< 1 day, 1-3 days, > 3 days)
+### Model Idea
+- `id`: Jedinečný identifikátor
+- `title`: Názov nápadu (5–120 znakov)
+- `description`: Podrobný popis
+- `benefits`: Očakávané prínosy
+- `effort`: Odhad náročnosti (< 1 deň, 1–3 dni, > 3 dni)
 - `status`: SUBMITTED | APPROVED | IN_PROGRESS | DONE | REJECTED
-- `tags`: Array of tag strings
-- `departmentId`: Target department
-- `submitterId`: User who submitted
-- `approverId`: User who approved (nullable)
-- `assigneeId`: User working on it (nullable)
-- `notifyOnChange`: Submitter opt-in to lifecycle-change email (nullable Boolean; `null` on pre-feature ideas, backfilled to `false` at boot)
-- `submittedAt`, `approvedAt`, `startedAt`, `completedAt`, `rejectedAt`: Timestamps
+- `tags`: Pole štítkov
+- `departmentId`: Cieľové oddelenie
+- `submitterId`: Používateľ, ktorý nápad podal
+- `approverId`: Používateľ, ktorý nápad schválil (môže byť prázdne)
+- `assigneeId`: Používateľ, ktorý nápad rieši (môže byť prázdne)
+- `notifyOnChange`: Odber notifikácií o zmenách životného cyklu zo strany autora (nullable Boolean; `null` pri nápadoch spred tejto funkcie, pri štarte sa doplní na `false`)
+- `submittedAt`, `approvedAt`, `startedAt`, `completedAt`, `rejectedAt`: Časové značky
 
-### Department Model
-- `id`: Unique identifier
-- `name`: Unique department name
-- `order`: Display order
-- `notificationEmails`: Addresses notified about new ideas targeting this department
-- `webexRoomIds`: Webex space (room) IDs that new-idea notifications for this department are posted to
+### Model Department
+- `id`: Jedinečný identifikátor
+- `name`: Jedinečný názov oddelenia
+- `order`: Poradie zobrazenia
+- `notificationEmails`: Adresy, ktoré dostávajú upozornenia na nové nápady smerované tomuto oddeleniu
+- `webexRoomIds`: ID Webex priestorov (rooms), do ktorých sa posielajú upozornenia na nové nápady pre toto oddelenie
 
-### IdeaEvent Model
-- `id`: Unique identifier
-- `ideaId`: Related idea
+### Model IdeaEvent
+- `id`: Jedinečný identifikátor
+- `ideaId`: Súvisiaci nápad
 - `type`: SUBMITTED | APPROVED | REJECTED | CLAIMED | STARTED | COMPLETED | UPDATED | CHANGE_REQUESTED
-- `byUserId`: User who performed action
-- `timestamp`: When event occurred
-- `note`: Optional note/comment
+- `byUserId`: Používateľ, ktorý akciu vykonal
+- `timestamp`: Kedy udalosť nastala
+- `note`: Voliteľná poznámka/komentár
 
-### IdeaStep Model
-- `id`: Unique identifier
-- `ideaId`: Related idea
-- `text`: Progress note
-- `createdAt`: Timestamp
+### Model IdeaStep
+- `id`: Jedinečný identifikátor
+- `ideaId`: Súvisiaci nápad
+- `text`: Poznámka o priebehu
+- `createdAt`: Časová značka
 
-### MailSettings Model (singleton)
-- SMTP `host`, `port`, `secure`, `username`, and the password stored encrypted (AES-256-GCM)
-- `from` address, notification `language` (en/sk), optional `subjectTemplate`
-- `enabled`: Master switch for outbound mail
+### Model MailSettings (singleton)
+- SMTP `host`, `port`, `secure`, `username` a heslo uložené šifrovane (AES-256-GCM)
+- Adresa `from`, jazyk notifikácií `language` (en/sk), voliteľná `subjectTemplate`
+- `enabled`: Hlavný vypínač odchádzajúcej pošty
 
-### WebexSettings Model (singleton)
-- Webex bot access token stored encrypted (AES-256-GCM)
-- Message `language` (en/sk)
-- `enabled`: Master switch for Webex notifications
+### Model WebexSettings (singleton)
+- Prístupový token Webex bota uložený šifrovane (AES-256-GCM)
+- Jazyk správ `language` (en/sk)
+- `enabled`: Hlavný vypínač notifikácií cez Webex
 
-## Testing
+## Testovanie
 
-IdeaHub has **comprehensive test coverage** across backend, frontend, and end-to-end suites.
+IdeaHub má **komplexné pokrytie testami** naprieč backendom, frontendom a end-to-end sadami.
 
-### Test Coverage Summary
+### Súhrn pokrytia testami
 
-- **Backend**: 664 tests across 19 Jest suites (run against mocked Prisma — no database needed)
-- **Backend integration**: 91 tests across 11 Jest suites against a real MongoDB (`npm run test:integration`)
-- **Frontend**: 520 Vitest tests across 19 files (pages, stores, API client, i18n)
-- **E2E**: Playwright scenarios covering local & SSO login, RBAC, the idea lifecycle, departments, email settings, Webex settings, the per-idea notification opt-in, and i18n
+- **Backend**: 664 testov v 19 Jest sadách (bežia proti mockovanej Prisme — databáza nie je potrebná)
+- **Backend integračné**: 91 testov v 11 Jest sadách proti reálnej MongoDB (`npm run test:integration`)
+- **Frontend**: 520 Vitest testov v 19 súboroch (stránky, stores, API klient, i18n)
+- **E2E**: Playwright scenáre pokrývajúce lokálne a SSO prihlásenie, RBAC, životný cyklus nápadu, oddelenia, nastavenia e-mailu, nastavenia Webexu, odber notifikácií pri nápade a i18n
 
-**What's Tested:**
-- ✅ Authentication, sessions & password change
-- ✅ SSO/OIDC flow (login, callback, provisioning, break-glass)
-- ✅ Ideas CRUD & workflow transitions
-- ✅ Departments CRUD, reordering & notification emails
-- ✅ Email settings, mail templates (new-idea & lifecycle) & mailer behavior
-- ✅ Webex settings, message templates (markdown escaping) & sender behavior
-- ✅ Reports & analytics (including role scoping)
-- ✅ User management & RBAC enforcement
-- ✅ Validation schemas & error handling
-- ✅ Frontend pages, stores & i18n catalogs
+**Čo je otestované:**
+- ✅ Autentifikácia, relácie a zmena hesla
+- ✅ SSO/OIDC flow (prihlásenie, callback, provisioning, break-glass)
+- ✅ CRUD nápadov a prechody v pracovnom postupe
+- ✅ CRUD oddelení, zmena poradia a notifikačné e-maily
+- ✅ Nastavenia e-mailu, e-mailové šablóny (nový nápad a životný cyklus) a správanie mailera
+- ✅ Nastavenia Webexu, šablóny správ (escapovanie markdownu) a správanie odosielateľa
+- ✅ Reporty a analytika (vrátane obmedzenia podľa roly)
+- ✅ Správa používateľov a vynucovanie RBAC
+- ✅ Validačné schémy a spracovanie chýb
+- ✅ Stránky frontendu, stores a i18n katalógy
 
-### Run Backend Tests
+### Spustenie testov backendu
 
 ```bash
 cd backend
-npm test                       # unit/route suites (no database needed)
-npm run test:integration       # integration suites (requires a running MongoDB)
-npm test -- --coverage         # coverage report
-npm test -- sso.test.ts        # single suite
-npm test -- --watch            # watch mode
+npm test                       # unit/route sady (databáza netreba)
+npm run test:integration       # integračné sady (vyžadujú bežiacu MongoDB)
+npm test -- --coverage         # report pokrytia
+npm test -- sso.test.ts        # jedna sada
+npm test -- --watch            # režim watch
 ```
 
-### Run Frontend Tests
+### Spustenie testov frontendu
 
 ```bash
 cd frontend
-npm test                       # Vitest, single run
-npm run test:watch             # watch mode
+npm test                       # Vitest, jedno spustenie
+npm run test:watch             # režim watch
 ```
 
-### Run E2E Tests
+### Spustenie E2E testov
 
 ```bash
 npm run test:e2e
 ```
 
-Playwright starts its own backend, frontend, and mock identity provider — ports 3001, 5173, and 8099 must be free.
+Playwright si spustí vlastný backend, frontend aj mock poskytovateľa identity — porty 3001, 5173 a 8099 musia byť voľné.
 
-### Continuous Integration
+### Kontinuálna integrácia
 
-GitHub Actions (`.github/workflows/`) runs the backend, frontend, and E2E suites plus PR checks on pushes and pull requests.
+GitHub Actions (`.github/workflows/`) spúšťa sady backendu, frontendu a E2E plus PR kontroly pri pushoch a pull requestoch.
 
-## Production Deployment
+## Produkčné nasadenie
 
-A step-by-step production runbook (Slovak) is available in [docs/DEPLOY.md](docs/DEPLOY.md).
+Podrobný produkčný runbook (po slovensky) nájdete v [docs/DEPLOY.md](docs/DEPLOY.md).
 
-### Using Docker Compose (Recommended)
+### Pomocou Docker Compose (odporúčané)
 
-1. **Update environment variables**
+1. **Nastavte premenné prostredia**
    ```bash
    cp .env.example .env
    ```
 
-   Set production values:
+   Nastavte produkčné hodnoty:
    ```env
    NODE_ENV=production
    SESSION_SECRET=<your-secure-random-secret>
-   MAIL_SETTINGS_KEY=<your-secure-random-key>   # 64 hex chars; required outside dev — both compose files fail fast if unset
+   MAIL_SETTINGS_KEY=<your-secure-random-key>   # 64 hex znakov; povinné mimo vývoja — oba compose súbory bez neho okamžite zlyhajú
    ADMIN_EMAIL=admin@yourdomain.com
    ADMIN_PASSWORD=<strong-admin-password>
-   COOKIE_SECURE=true   # Set to true when behind HTTPS
+   COOKIE_SECURE=true   # Nastavte na true pri prevádzke za HTTPS
    ```
 
-2. **Build and deploy**
+2. **Zostavte a nasaďte**
    ```bash
    docker compose -f docker-compose.prod.yml up -d --build
    ```
 
-   For local Docker (HTTP):
+   Pre lokálny Docker (HTTP):
    ```bash
    docker compose up -d --build
    ```
 
-3. **Access the application**
-   - Application: http://localhost (via nginx)
-   - Default admin: configured via `ADMIN_EMAIL` / `ADMIN_PASSWORD` in .env
+3. **Otvorte aplikáciu**
+   - Aplikácia: http://localhost (cez nginx)
+   - Predvolený administrátor: nastavený cez `ADMIN_EMAIL` / `ADMIN_PASSWORD` v .env
 
-### Environment Variables
+### Premenné prostredia
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `MONGO_ROOT_USER` / `MONGO_ROOT_PASSWORD` | MongoDB root credentials — docker-compose creates the mongod user from them and composes the backend's credentialed `DATABASE_URL` | Required |
-| `DATABASE_URL` | Credentialed MongoDB connection string (see `.env.example` for the exact form) | Required |
-| `SESSION_SECRET` | Secret for signing session cookies | Required outside development |
-| `NODE_ENV` | `development` for a host-run backend; `production` for any Docker deploy | `production` |
-| `BACKEND_PORT` | Backend server port | `3001` |
-| `COOKIE_SECURE` | Set `Secure` flag on cookies and switch session-cookie `SameSite` from `Lax` to `Strict` (requires HTTPS) | `false` |
-| `ADMIN_EMAIL` | Bootstrap admin email — the first admin is created from these on first run | Required |
-| `ADMIN_PASSWORD` | Bootstrap admin password | Required |
-| `ADMIN_NAME` | Default admin display name | `Admin` |
-| `FRONTEND_URL` | Frontend origin; used for CORS and the SSO post-login redirect | `http://localhost:5173` |
-| `VITE_API_URL` | Frontend API base URL (build-time) | `/api` (Docker), `http://localhost:3001` (dev) |
-| `MAIL_SETTINGS_KEY` | AES-256-GCM key that encrypts the stored SMTP password and the Webex bot token. 32 bytes: 64 hex chars (preferred) or base64 decoding to 32 bytes. Required outside development — the backend fails fast at boot if missing (like `SESSION_SECRET`). Everything else about the notification channels (SMTP server, from address, language, subject template, password; Webex token and language) is admin-managed at runtime on the **Email settings** / **Webex settings** pages and stored in the database | Required in production |
+| Premenná | Popis | Predvolená hodnota |
+|----------|-------|--------------------|
+| `MONGO_ROOT_USER` / `MONGO_ROOT_PASSWORD` | Root prihlasovacie údaje MongoDB — docker-compose z nich vytvorí používateľa mongod a zostaví `DATABASE_URL` backendu s prihlasovacími údajmi | Povinné |
+| `DATABASE_URL` | Pripojovací reťazec MongoDB s prihlasovacími údajmi (presný tvar pozri v `.env.example`) | Povinné |
+| `SESSION_SECRET` | Tajomstvo na podpisovanie cookies relácie | Povinné mimo vývoja |
+| `NODE_ENV` | `development` pre backend bežiaci na hostiteľovi; `production` pre akékoľvek nasadenie v Dockeri | `production` |
+| `BACKEND_PORT` | Port backend servera | `3001` |
+| `COOKIE_SECURE` | Nastaví príznak `Secure` na cookies a prepne `SameSite` cookie relácie z `Lax` na `Strict` (vyžaduje HTTPS) | `false` |
+| `ADMIN_EMAIL` | E-mail úvodného administrátora — pri prvom spustení sa z týchto hodnôt vytvorí prvý administrátor | Povinné |
+| `ADMIN_PASSWORD` | Heslo úvodného administrátora | Povinné |
+| `ADMIN_NAME` | Predvolené zobrazované meno administrátora | `Admin` |
+| `FRONTEND_URL` | Origin frontendu; používa sa pre CORS a pre presmerovanie po SSO prihlásení | `http://localhost:5173` |
+| `VITE_API_URL` | Základná URL API pre frontend (build-time) | `/api` (Docker), `http://localhost:3001` (vývoj) |
+| `MAIL_SETTINGS_KEY` | Kľúč AES-256-GCM, ktorým sa šifruje uložené SMTP heslo a token Webex bota. 32 bajtov: 64 hex znakov (preferované) alebo base64 dekódovateľné na 32 bajtov. Povinné mimo vývoja — backend bez neho pri štarte okamžite zlyhá (rovnako ako pri `SESSION_SECRET`). Všetko ostatné okolo notifikačných kanálov (SMTP server, adresa odosielateľa, jazyk, šablóna predmetu, heslo; token a jazyk Webexu) spravuje administrátor za behu na stránkach **Nastavenia e-mailu** / **Nastavenia Webexu** a ukladá sa to do databázy | Povinné v produkcii |
 
-See [Single Sign-On (SSO)](#single-sign-on-sso) for the `SSO_*` and `BREAK_GLASS_EMAILS` variables, and [dev/MAIL-TESTING.md](dev/MAIL-TESTING.md) for the mail dev/testing story.
+Premenné `SSO_*` a `BREAK_GLASS_EMAILS` nájdete v časti [Jednotné prihlásenie (SSO)](#jednotné-prihlásenie-sso) a postup pre vývoj/testovanie pošty v [dev/MAIL-TESTING.md](dev/MAIL-TESTING.md).
 
-### Manual Deployment
+### Manuálne nasadenie
 
 1. **Backend**
    ```bash
@@ -621,215 +623,221 @@ See [Single Sign-On (SSO)](#single-sign-on-sso) for the `SSO_*` and `BREAK_GLASS
    cd frontend
    npm ci
    npm run build
-   # Serve dist/ folder with nginx or similar
+   # Priečinok dist/ obslúžte cez nginx alebo podobný server
    ```
 
-## Security Considerations
+## Bezpečnostné aspekty
 
-- **Passwords**: All passwords are hashed using bcrypt with 10 salt rounds
-- **Sessions**: httpOnly cookies backed by a MongoDB session store with a 7-day TTL; `Secure` and `SameSite` follow `COOKIE_SECURE`
-- **CSRF**: Custom `X-Requested-With` header required on all state-changing API requests
-- **Input Validation**: All inputs validated using Zod schemas; URL params validated as MongoDB ObjectIds
-- **RBAC**: Role-based access control on all protected routes
-- **CSV Injection**: Report exports sanitize fields to prevent formula injection
-- **Security Headers**: CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy via nginx and Helmet
-- **Rate Limiting**: General API limit (300 req/15min, active in production) with stricter per-endpoint limits: login 10, password change 5, SSO login 30, and idea submission 30 per 15 minutes
-- **SMTP Password & Webex Bot Token**: Stored AES-256-GCM-encrypted with `MAIL_SETTINGS_KEY` and never returned by the API
-- **Error Handling**: Internal server errors return generic messages to prevent information leakage
-- **Session Invalidation**: Sessions are invalidated when user role or email is changed by admin
-- **Admin Protection**: Admins cannot delete their own account or change their own role
-- **Graceful Shutdown**: Server handles SIGTERM/SIGINT for clean disconnection
+- **Heslá**: Všetky heslá sú hashované cez bcrypt s 10 kolami soli
+- **Relácie**: httpOnly cookies podložené session store v MongoDB so 7-dňovým TTL; `Secure` a `SameSite` sa riadia hodnotou `COOKIE_SECURE`
+- **CSRF**: Pri všetkých API požiadavkách meniacich stav sa vyžaduje vlastná hlavička `X-Requested-With`
+- **Validácia vstupov**: Všetky vstupy sa validujú cez Zod schémy; parametre URL sa overujú ako MongoDB ObjectId
+- **RBAC**: Riadenie prístupu podľa rolí na všetkých chránených routách
+- **CSV injection**: Exporty reportov sanitizujú polia, aby zabránili injection cez vzorce
+- **Bezpečnostné hlavičky**: CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy cez nginx a Helmet
+- **Rate limiting**: Všeobecný limit API (300 požiadaviek/15 min, aktívny v produkcii) s prísnejšími limitmi pre jednotlivé endpointy: prihlásenie 10, zmena hesla 5, SSO prihlásenie 30 a podanie nápadu 30 za 15 minút
+- **SMTP heslo a token Webex bota**: Uložené šifrovane cez AES-256-GCM kľúčom `MAIL_SETTINGS_KEY` a API ich nikdy nevracia
+- **Spracovanie chýb**: Interné chyby servera vracajú všeobecné správy, aby neunikali informácie
+- **Zneplatnenie relácií**: Relácie sa zneplatnia, keď administrátor zmení rolu alebo e-mail používateľa
+- **Ochrana administrátora**: Administrátori nemôžu zmazať vlastné konto ani si zmeniť vlastnú rolu
+- **Korektné ukončenie**: Server spracúva SIGTERM/SIGINT pre čisté odpojenie
 
-## Single Sign-On (SSO)
+## Jednotné prihlásenie (SSO)
 
-IdeaHub can delegate authentication to a corporate identity provider (IAM) over
-**OpenID Connect** using the **authorization-code flow with PKCE**. SSO is
-**disabled by default** and is enabled per-deployment with `SSO_ENABLED=true`.
+IdeaHub môže delegovať autentifikáciu na podnikového poskytovateľa identity (IAM)
+cez **OpenID Connect** pomocou **authorization-code flow s PKCE**. SSO je
+**predvolene vypnuté** a zapína sa pre konkrétne nasadenie cez `SSO_ENABLED=true`.
 
-### Running with and without SSO
+### Prevádzka s SSO aj bez neho
 
-SSO is **entirely optional** — the `SSO_*` variables are read only when
-`SSO_ENABLED=true`. The whole block below can be ignored for a classic
-password-only deployment.
+SSO je **úplne voliteľné** — premenné `SSO_*` sa čítajú len vtedy, keď je
+`SSO_ENABLED=true`. Pri klasickom nasadení len s heslami možno celý tento blok
+ignorovať.
 
-**Without SSO (default).** With `SSO_ENABLED` unset or `"false"`, IdeaHub behaves
-classically: **email + password login only**. The first admin is bootstrapped
-from `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `ADMIN_NAME` on first run, and admins
-create/manage users through the user API. **No other `SSO_*` variable is needed.**
+**Bez SSO (predvolene).** Ak `SSO_ENABLED` nie je nastavené alebo je `"false"`,
+IdeaHub sa správa klasicky: **prihlásenie len e-mailom a heslom**. Prvý
+administrátor sa pri prvom spustení vytvorí z `ADMIN_EMAIL` / `ADMIN_PASSWORD` /
+`ADMIN_NAME` a administrátori spravujú používateľov cez používateľské API.
+**Žiadna ďalšia premenná `SSO_*` nie je potrebná.**
 
-**With SSO (`SSO_ENABLED=true`).** Also set the **required** variables
-`SSO_ISSUER_URL`, `SSO_CLIENT_ID`, `SSO_CLIENT_SECRET`, `SSO_REDIRECT_URI`. The
-remaining variables (`SSO_SCOPE`, `SSO_ROLES_CLAIM`, `SSO_ORG_CLAIM`,
+**S SSO (`SSO_ENABLED=true`).** Nastavte aj **povinné** premenné
+`SSO_ISSUER_URL`, `SSO_CLIENT_ID`, `SSO_CLIENT_SECRET`, `SSO_REDIRECT_URI`.
+Ostatné premenné (`SSO_SCOPE`, `SSO_ROLES_CLAIM`, `SSO_ORG_CLAIM`,
 `SSO_EMAIL_CLAIM`, `SSO_NAME_CLAIM`, `SSO_ROLE_MAP`,
-`SSO_POST_LOGOUT_REDIRECT_URI`, `BREAK_GLASS_EMAILS`) are **optional and have
-defaults** — see the [Configuration](#configuration) table below for each.
+`SSO_POST_LOGOUT_REDIRECT_URI`, `BREAK_GLASS_EMAILS`) sú **voliteľné a majú
+predvolené hodnoty** — každú z nich nájdete v tabuľke
+[Konfigurácia](#konfigurácia) nižšie.
 
-**Required in both modes:** `FRONTEND_URL` must be set correctly (it drives CORS
-and, under SSO, the post-login / logout redirect targets). The MongoDB
-credentials (`MONGO_ROOT_USER` / `MONGO_ROOT_PASSWORD` and the credentialed
-`DATABASE_URL`) are likewise required in both modes — database authentication is
-orthogonal to SSO.
+**Povinné v oboch režimoch:** `FRONTEND_URL` musí byť nastavená správne (riadi
+CORS a pri SSO aj ciele presmerovania po prihlásení/odhlásení). Prihlasovacie
+údaje MongoDB (`MONGO_ROOT_USER` / `MONGO_ROOT_PASSWORD` a `DATABASE_URL`
+s údajmi) sú tiež povinné v oboch režimoch — autentifikácia databázy je od SSO
+nezávislá.
 
-**Behavior deltas when SSO is on:**
+**Rozdiely v správaní pri zapnutom SSO:**
 
-- The login page shows a primary **"Sign in with SSO"** button; the local
-  email/password form is hidden behind a **"Use a local account"** toggle.
-- SSO users are **just-in-time provisioned**, and their **role and department are
-  re-synced from the ID-token claims on every login** (the IAM is the source of
-  truth).
-- SSO users have **no logout button and no "Change Password"** navigation in the
-  app — those sessions are **IAM-owned** (logout is RP-initiated at the IdP;
-  passwords live in the IAM). Set `SSO_SHOW_LOGOUT=true` to re-expose the
-  logout button for SSO users; it then performs RP-initiated logout at the IdP.
-- Admins **cannot edit SSO-managed users** (name / email / role / password) via
-  the user API.
-- **Break-glass** local accounts (`BREAK_GLASS_EMAILS`, default `[ADMIN_EMAIL]`)
-  always keep password login and can **never** be converted to SSO, so an IAM
-  outage can never lock every administrator out.
+- Prihlasovacia stránka zobrazuje hlavné tlačidlo **„Sign in with SSO"**; lokálny
+  formulár s e-mailom a heslom je skrytý za prepínačom **„Use a local account"**.
+- SSO používatelia sa vytvárajú **just-in-time** a ich **rola a oddelenie sa pri
+  každom prihlásení znovu synchronizujú z claimov ID tokenu** (zdrojom pravdy je
+  IAM).
+- SSO používatelia nemajú v aplikácii **tlačidlo odhlásenia ani položku „Change
+  Password"** — tieto relácie **vlastní IAM** (odhlásenie je RP-initiated na
+  strane IdP, heslá sú v IAM). Nastavením `SSO_SHOW_LOGOUT=true` sa tlačidlo
+  odhlásenia pre SSO používateľov znovu zobrazí a vykoná RP-initiated logout
+  na IdP.
+- Administrátori **nemôžu cez používateľské API upravovať SSO používateľov**
+  (meno / e-mail / rola / heslo).
+- **Break-glass** lokálne kontá (`BREAK_GLASS_EMAILS`, predvolene
+  `[ADMIN_EMAIL]`) si vždy zachovávajú prihlásenie heslom a **nikdy** ich nemožno
+  previesť na SSO, takže výpadok IAM nemôže uzamknúť prístup všetkým
+  administrátorom.
 
-**Testing & onboarding (linked, not duplicated):**
+**Testovanie a onboarding (odkazy, nie duplicita):**
 
-- Local, click-through SSO testing with a preconfigured Keycloak kit:
+- Lokálne, preklikateľné testovanie SSO s predpripraveným Keycloak kitom:
   [dev/SSO-TESTING.md](dev/SSO-TESTING.md).
-- Production IAM onboarding and what to request from the security team:
+- Produkčný onboarding IAM a čo si vyžiadať od bezpečnostného tímu:
   [dev/IAM-REQUEST.md](dev/IAM-REQUEST.md).
 
-### How it works
+### Ako to funguje
 
-1. The frontend calls `GET /api/auth/config` and shows a "Sign in with SSO"
-   button when `ssoEnabled` is `true`.
-2. `GET /api/auth/sso/login` performs OIDC discovery against the issuer,
-   generates `state`, `nonce`, and a PKCE `code_verifier`/`code_challenge`, and
-   redirects the browser to the IAM authorization endpoint.
-3. The OIDC transaction (`state`/`nonce`/`code_verifier`) is stored in a
-   dedicated, HMAC-signed, `SameSite=Lax` cookie (`sso_txn`) scoped to
-   `/api/auth/sso`. This is required because the main session cookie is
-   `SameSite=Strict` and is not sent on the cross-site redirect back from the
-   IAM. The cookie is signed with `SESSION_SECRET` and expires after 10 minutes.
-4. `GET /api/auth/sso/callback` verifies the transaction cookie, exchanges the
-   code (validating `state`, `nonce`, and PKCE), then reads the user's claims:
-   the ID-token claims are **merged with the userinfo response** when the
-   issuer advertises a userinfo endpoint (ID-token values win on conflict —
-   they are signature-verified; a userinfo failure fails the login rather than
-   proceeding with partial claims). This supports IdPs whose ID tokens carry
-   only `sub` and release profile/role claims solely via userinfo. The user is
-   then **just-in-time provisioned** or updated and a fresh session starts.
-   Any failure redirects to `${FRONTEND_URL}/login?error=sso_failed` with no
-   detail leaked to the browser. The session additionally retains the ID token
-   (server-side only) for use as `id_token_hint` at logout.
-5. `POST /api/auth/logout` first destroys the local session and clears its
-   cookie. For SSO sessions it then performs **RP-initiated logout**: it responds
-   with `{ message, redirectTo }`, where `redirectTo` is the issuer's
-   `end_session_endpoint` composed with `id_token_hint` and
-   `post_logout_redirect_uri` (`SSO_POST_LOGOUT_REDIRECT_URI`). The frontend does
-   a full-page navigation to it, so the IAM also ends its session and the next
-   "Sign in with SSO" re-prompts for credentials. If SSO is disabled, the session
-   was local, the issuer advertises no `end_session_endpoint`, or discovery
-   fails, logout stays purely local (no `redirectTo`) — the local logout has
-   already succeeded, so IdP logout is best-effort and never blocks it. The ID
-   token is never logged and never sent to the browser except inside `redirectTo`.
+1. Frontend zavolá `GET /api/auth/config` a pri `ssoEnabled` = `true` zobrazí
+   tlačidlo „Sign in with SSO".
+2. `GET /api/auth/sso/login` vykoná OIDC discovery voči issuerovi, vygeneruje
+   `state`, `nonce` a PKCE `code_verifier`/`code_challenge` a presmeruje
+   prehliadač na autorizačný endpoint IAM.
+3. OIDC transakcia (`state`/`nonce`/`code_verifier`) sa uloží do samostatnej,
+   HMAC-podpísanej cookie `sso_txn` s `SameSite=Lax`, obmedzenej na cestu
+   `/api/auth/sso`. Je to nutné, pretože hlavná cookie relácie má
+   `SameSite=Strict` a pri cross-site presmerovaní späť z IAM sa neposiela.
+   Cookie je podpísaná cez `SESSION_SECRET` a expiruje po 10 minútach.
+4. `GET /api/auth/sso/callback` overí transakčnú cookie, vymení kód (s validáciou
+   `state`, `nonce` a PKCE) a potom načíta claimy používateľa: claimy z ID tokenu
+   sa **zlúčia s odpoveďou userinfo**, ak issuer inzeruje userinfo endpoint (pri
+   konflikte vyhrávajú hodnoty z ID tokenu — tie majú overený podpis; zlyhanie
+   userinfo znamená zlyhanie prihlásenia, nie pokračovanie s neúplnými claimami).
+   Podporuje to IdP, ktorých ID tokeny nesú iba `sub` a profilové/rolové claimy
+   vydávajú výhradne cez userinfo. Používateľ sa následne vytvorí
+   **just-in-time** alebo aktualizuje a začne nová relácia. Akékoľvek zlyhanie
+   presmeruje na `${FRONTEND_URL}/login?error=sso_failed` bez toho, aby sa do
+   prehliadača dostali podrobnosti. Relácia si navyše ponecháva ID token (len na
+   strane servera) na použitie ako `id_token_hint` pri odhlásení.
+5. `POST /api/auth/logout` najprv zruší lokálnu reláciu a vymaže jej cookie. Pri
+   SSO reláciách potom vykoná **RP-initiated logout**: odpovie
+   `{ message, redirectTo }`, kde `redirectTo` je `end_session_endpoint` issuera
+   doplnený o `id_token_hint` a `post_logout_redirect_uri`
+   (`SSO_POST_LOGOUT_REDIRECT_URI`). Frontend naň vykoná plnú navigáciu stránky,
+   takže aj IAM ukončí svoju reláciu a ďalšie „Sign in with SSO" si opäť vyžiada
+   prihlasovacie údaje. Ak je SSO vypnuté, relácia bola lokálna, issuer neinzeruje
+   `end_session_endpoint` alebo zlyhá discovery, odhlásenie zostane čisto lokálne
+   (bez `redirectTo`) — lokálne odhlásenie už prebehlo úspešne, takže odhlásenie
+   na IdP je best-effort a nikdy ho neblokuje. ID token sa nikdy neloguje a do
+   prehliadača sa nedostane inak než vnútri `redirectTo`.
 
-Identity is keyed on the ID-token `sub` claim. If no user matches the `sub` but
-a local account with the same email exists, that account is **linked** to SSO
-(its local password is removed). Otherwise a new SSO user is created. On every
-SSO login the user's name, role, and department are re-provisioned from the IdP
-(the IAM is the source of truth), so SSO-managed users cannot be edited locally
-via the admin user API.
+Identita je naviazaná na claim `sub` z ID tokenu. Ak žiadny používateľ nezodpovedá
+danému `sub`, ale existuje lokálne konto s rovnakým e-mailom, toto konto sa
+**prepojí** so SSO (jeho lokálne heslo sa odstráni). Inak sa vytvorí nový SSO
+používateľ. Pri každom SSO prihlásení sa meno, rola a oddelenie používateľa znovu
+načítajú z IdP (zdrojom pravdy je IAM), takže SSO používateľov nemožno lokálne
+upravovať cez administrátorské používateľské API.
 
-### Break-glass local login
+### Break-glass lokálne prihlásenie
 
-Local password login always remains available for the accounts listed in
-`BREAK_GLASS_EMAILS` (defaults to `[ADMIN_EMAIL]`). Those emails are **refused**
-if they attempt to log in through SSO — this guarantees an IdP outage or
-misconfiguration can never lock every administrator out. Keep at least one
-break-glass admin with a strong local password.
+Lokálne prihlásenie heslom zostáva vždy dostupné pre kontá uvedené v
+`BREAK_GLASS_EMAILS` (predvolene `[ADMIN_EMAIL]`). Tieto e-maily sú pri pokuse
+o prihlásenie cez SSO **odmietnuté** — to zaručuje, že výpadok alebo chybná
+konfigurácia IdP nikdy neuzamkne prístup všetkým administrátorom. Ponechajte si
+aspoň jedno break-glass administrátorské konto so silným lokálnym heslom.
 
-### Configuration
+### Konfigurácia
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `SSO_ENABLED` | Master switch (`true` to enable SSO) | `false` |
-| `SSO_ISSUER_URL` | OIDC issuer URL (discovery base) | — |
-| `SSO_CLIENT_ID` | Client ID issued by the IAM | — |
-| `SSO_CLIENT_SECRET` | Client secret issued by the IAM | — |
+| Premenná | Popis | Predvolená hodnota |
+|----------|-------|--------------------|
+| `SSO_ENABLED` | Hlavný vypínač (`true` zapne SSO) | `false` |
+| `SSO_ISSUER_URL` | URL OIDC issuera (základ pre discovery) | — |
+| `SSO_CLIENT_ID` | Client ID vydané zo strany IAM | — |
+| `SSO_CLIENT_SECRET` | Client secret vydaný zo strany IAM | — |
 | `SSO_REDIRECT_URI` | Callback URI — `{BASE_URL}/api/auth/sso/callback` | — |
-| `SSO_POST_LOGOUT_REDIRECT_URI` | Where the IAM returns the browser after RP-initiated logout (must be registered with the IAM) | `${FRONTEND_URL}/login` |
-| `SSO_SHOW_LOGOUT` | Show the in-app logout button for SSO users (triggers RP-initiated logout) | `false` |
-| `SSO_SCOPE` | Requested scopes | `openid profile email` |
-| `SSO_ROLES_CLAIM` | Claim holding IAM roles (ID token or userinfo; e.g. `diam:roles`) | `roles` |
-| `SSO_ORG_CLAIM` | Claim holding org/department (ID token or userinfo) | `org` |
-| `SSO_EMAIL_CLAIM` | Claim holding email (ID token or userinfo) | `email` |
-| `SSO_NAME_CLAIM` | Claim holding display name (ID token or userinfo) | `name` |
-| `SSO_ROLE_MAP` | `iam-role:APP_ROLE,...` mapping (app role ∈ `USER`/`POWER_USER`/`ADMIN`) | — |
-| `BREAK_GLASS_EMAILS` | Emails forbidden from SSO (csv, lowercased) | `[ADMIN_EMAIL]` |
-| `SSO_PRUNE_INTERVAL_HOURS` | Hours between prunes of orphaned SSO users (no session, no ideas, no events) | `24` |
+| `SSO_POST_LOGOUT_REDIRECT_URI` | Kam IAM vráti prehliadač po RP-initiated logoute (musí byť registrované v IAM) | `${FRONTEND_URL}/login` |
+| `SSO_SHOW_LOGOUT` | Zobraziť tlačidlo odhlásenia v aplikácii pre SSO používateľov (spustí RP-initiated logout) | `false` |
+| `SSO_SCOPE` | Požadované scopes | `openid profile email` |
+| `SSO_ROLES_CLAIM` | Claim obsahujúci roly z IAM (v ID tokene alebo userinfo; napr. `diam:roles`) | `roles` |
+| `SSO_ORG_CLAIM` | Claim obsahujúci organizáciu/oddelenie (ID token alebo userinfo) | `org` |
+| `SSO_EMAIL_CLAIM` | Claim obsahujúci e-mail (ID token alebo userinfo) | `email` |
+| `SSO_NAME_CLAIM` | Claim obsahujúci zobrazované meno (ID token alebo userinfo) | `name` |
+| `SSO_ROLE_MAP` | Mapovanie `iam-role:APP_ROLE,...` (rola aplikácie ∈ `USER`/`POWER_USER`/`ADMIN`) | — |
+| `BREAK_GLASS_EMAILS` | E-maily, ktorým je SSO zakázané (csv, malými písmenami) | `[ADMIN_EMAIL]` |
+| `SSO_PRUNE_INTERVAL_HOURS` | Počet hodín medzi čistkami osirených SSO používateľov (bez relácie, bez nápadov, bez udalostí) | `24` |
 
-Role mapping keys are matched case-insensitively and the **highest-privilege**
-match wins; an IdP role with no mapping resolves to `USER`. Example:
+Kľúče mapovania rolí sa porovnávajú bez ohľadu na veľkosť písmen a vyhráva zhoda
+s **najvyššími oprávneniami**; rola z IdP bez mapovania sa vyhodnotí ako `USER`.
+Príklad:
 
 ```env
 SSO_ROLE_MAP="idea-hub-admins:ADMIN,idea-hub-reviewers:POWER_USER,idea-hub-users:USER"
 ```
 
-### IAM client registration request
+### Požiadavka na registráciu klienta v IAM
 
-Provide the following to your IAM / identity team when requesting an OIDC client:
+Pri žiadosti o OIDC klienta poskytnite svojmu IAM / identity tímu nasledovné:
 
-- **Application name**: IdeaHub
-- **Flow / grant type**: Authorization Code with PKCE (`response_type=code`)
+- **Názov aplikácie**: IdeaHub
+- **Flow / typ grantu**: Authorization Code s PKCE (`response_type=code`)
 - **Redirect URI**: `{BASE_URL}/api/auth/sso/callback`
-  (e.g. `https://ideahub.example.com/api/auth/sso/callback`)
+  (napr. `https://ideahub.example.com/api/auth/sso/callback`)
 - **Scopes**: `openid profile email`
-- **Required claims** (in the ID token or the userinfo response):
-  - `sub` — stable unique subject identifier (used as the SSO key; must be in
-    the ID token)
-  - `email` — user email
-  - `name` — display name
-  - `roles` — group/role names to map to app roles (e.g. `idea-hub-admins`,
-    `idea-hub-reviewers`, `idea-hub-users` — must match `SSO_ROLE_MAP`)
-  - `org` — organizational unit / department (optional)
-- **Return**: `client_id` and `client_secret` for the `SSO_*` variables above.
+- **Požadované claimy** (v ID tokene alebo v odpovedi userinfo):
+  - `sub` — stabilný jedinečný identifikátor subjektu (používa sa ako kľúč pre
+    SSO; musí byť v ID tokene)
+  - `email` — e-mail používateľa
+  - `name` — zobrazované meno
+  - `roles` — názvy skupín/rolí na mapovanie na roly aplikácie (napr.
+    `idea-hub-admins`, `idea-hub-reviewers`, `idea-hub-users` — musia
+    zodpovedať `SSO_ROLE_MAP`)
+  - `org` — organizačná jednotka / oddelenie (voliteľné)
+- **Vrátiť**: `client_id` a `client_secret` pre premenné `SSO_*` uvedené vyššie.
 
-## Troubleshooting
+## Riešenie problémov
 
-### MongoDB Connection Issues
+### Problémy s pripojením k MongoDB
 
-If you see "MongoNetworkError" or connection refused:
-1. Ensure MongoDB is running: `docker-compose ps`
-2. Check MongoDB logs: `docker-compose logs mongodb`
-3. Verify DATABASE_URL in .env
+Ak vidíte „MongoNetworkError" alebo odmietnuté pripojenie:
+1. Overte, či MongoDB beží: `docker-compose ps`
+2. Skontrolujte logy MongoDB: `docker-compose logs mongodb`
+3. Overte `DATABASE_URL` v `.env`
 
-### Port Already in Use
+### Port je už obsadený
 
-If ports 80, 3001, or 27017 are in use:
-1. Stop conflicting services
-2. Or change ports in docker-compose.yml and .env
+Ak sú porty 80, 3001 alebo 27017 obsadené:
+1. Zastavte kolidujúce služby
+2. Alebo zmeňte porty v `docker-compose.yml` a `.env`
 
-### Prisma Client Issues
+### Problémy s Prisma klientom
 
-If you see "Prisma Client not generated":
+Ak vidíte „Prisma Client not generated":
 ```bash
 cd backend
 npm run prisma:generate
 ```
 
-### Frontend API Connection
+### Spojenie frontendu s API
 
-If frontend can't reach backend:
-1. Check VITE_API_URL in .env
-2. Ensure backend is running
-3. Check browser console for CORS errors
+Ak sa frontend nevie spojiť s backendom:
+1. Skontrolujte `VITE_API_URL` v `.env`
+2. Overte, či backend beží
+3. Skontrolujte konzolu prehliadača na chyby CORS
 
-## Support
+## Podpora
 
-For issues and questions:
-- Create an issue in the repository
-- Check existing documentation
-- Review API endpoint examples
+Pri problémoch a otázkach:
+- Vytvorte issue v repozitári
+- Prezrite si existujúcu dokumentáciu
+- Pozrite si príklady API endpointov
 
-## Acknowledgments
+## Poďakovanie
 
-- Built with Vue 3, Vuetify, Express, and Prisma
-- Chart.js for analytics visualization
-- MongoDB for flexible data storage
-- Docker for containerization
+- Postavené na Vue 3, Vuetify, Express a Prisma
+- Chart.js na vizualizáciu analytiky
+- MongoDB na flexibilné ukladanie dát
+- Docker na kontajnerizáciu
