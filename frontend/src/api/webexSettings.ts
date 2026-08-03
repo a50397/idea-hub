@@ -32,6 +32,24 @@ export type WebexFailureReason =
 
 export type WebexTestResult = { ok: true } | { ok: false; reason: WebexFailureReason };
 
+// A room/space the Webex bot belongs to, as returned by GET /api/webex-settings/rooms.
+// The `id` is opaque (the roomId used when posting); `title` is the human label shown
+// in the department room picker. NEVER carries the bot token.
+export interface WebexRoom {
+  id: string;
+  title: string;
+}
+
+// The /rooms response. The endpoint ALWAYS answers 200: on success `rooms` is the
+// listing and `reason` is absent; on ANY failure (Webex disabled, unreachable, token
+// rejected) `rooms` is [] and `reason` is a FIXED WebexFailureReason category. So the
+// admin UI can render the picker when rooms load yet always fall back to manual
+// room-id entry. The bot token is NEVER part of this shape.
+export interface WebexRoomsResponse {
+  rooms: WebexRoom[];
+  reason?: WebexFailureReason;
+}
+
 export const webexSettingsApi = {
   get: async (): Promise<WebexSettings> => {
     const response = await client.get('/webex-settings');
@@ -48,6 +66,15 @@ export const webexSettingsApi = {
   // reason category). The reason NEVER contains any secret-bearing text.
   sendTest: async (to: string): Promise<WebexTestResult> => {
     const response = await client.post('/webex-settings/test', { to });
+    return response.data;
+  },
+
+  // List the rooms/spaces the bot belongs to, powering the department room picker.
+  // Always resolves 200 with { rooms } (success) or { rooms: [], reason } (failure);
+  // the caller renders the picker when rooms load and always also allows manual
+  // room-id entry. NEVER returns the bot token.
+  getRooms: async (): Promise<WebexRoomsResponse> => {
+    const response = await client.get('/webex-settings/rooms');
     return response.data;
   },
 };

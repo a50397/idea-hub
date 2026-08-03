@@ -138,6 +138,17 @@ describe('departments store', () => {
       expect(mockedApi.update).toHaveBeenCalledWith('a', { notificationEmails: ['ops@corp.example'] });
     });
 
+    it('forwards a webexRoomIds-only payload', async () => {
+      mockedApi.update.mockResolvedValueOnce(dept('a', 'A', 0));
+      mockedApi.getAll.mockResolvedValueOnce([dept('a', 'A', 0)]);
+      const store = useDepartmentsStore();
+
+      const ok = await store.update('a', { webexRoomIds: ['room-a', 'room-b'] });
+
+      expect(ok).toBe(true);
+      expect(mockedApi.update).toHaveBeenCalledWith('a', { webexRoomIds: ['room-a', 'room-b'] });
+    });
+
     it('captures a 409 duplicate name error', async () => {
       mockedApi.update.mockRejectedValueOnce({
         response: { data: { error: 'A department with this name already exists' } },
