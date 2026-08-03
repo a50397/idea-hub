@@ -292,3 +292,95 @@ describe('department notification emails (real DB)', () => {
     expect(await prisma.idea.count({ where: { submitterId: submitter.id } })).toBe(1);
   });
 });
+
+describe('department webex room ids (real DB)', () => {
+  // The missing-field proof for webexRoomIds, mirroring notificationEmails above:
+  // pre-existing department documents predate the field. Raw-insert a department
+  // WITHOUT it and prove what Prisma does on read — for a missing scalar LIST the
+  // Mongo connector returns [] (unlike a missing scalar ObjectId, which it cannot
+  // even match). Reads return [] rather than crashing, so NO $runCommandRaw backfill
+  // is required (same story as notificationEmails).
+  test('a department document missing webexRoomIds reads back as [] via Prisma', async () => {
+    await prisma.$runCommandRaw({
+      insert: 'departments',
+      documents: [
+        {
+          name: 'Legacy No Rooms',
+          order: 88,
+          // notificationEmails is supplied so this doc isolates the webexRoomIds gap;
+          // createdAt/updatedAt are required by Prisma on read.
+          notificationEmails: [],
+          createdAt: { $date: '2026-01-01T00:00:00.000Z' },
+          updatedAt: { $date: '2026-01-01T00:00:00.000Z' },
+        },
+      ],
+    });
+
+    // findFirst/findMany read paths must not crash and must yield [].
+    const one = await prisma.department.findFirst({ where: { name: 'Legacy No Rooms' } });
+    expect(one).not.toBeNull();
+    expect(one!.webexRoomIds).toEqual([]);
+
+    const many = await prisma.department.findMany();
+    const legacy = many.find((d) => d.name === 'Legacy No Rooms');
+    expect(legacy!.webexRoomIds).toEqual([]);
+
+    // And the PATCH route can populate the previously-absent field.
+    const admin = await loggedInAdmin();
+    const res = await withCsrf(admin.patch(`/api/departments/${one!.id}`)).send({
+      webexRoomIds: ['ROOM-alpha'],
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.webexRoomIds).toEqual(['ROOM-alpha']);
+
+    const after = await prisma.department.findUnique({ where: { id: one!.id } });
+    expect(after!.webexRoomIds).toEqual(['ROOM-alpha']);
+  });
+
+  test('webex room ids round-trip through PATCH (case-sensitive dedupe) and are admin-visible on GET', async () => {
+    const admin = await loggedInAdmin();
+    const dept = await prisma.department.create({ data: { name: 'Rooms Persisted', order: 5 } });
+
+    const set = await withCsrf(admin.patch(`/api/departments/${dept.id}`)).send({
+      webexRoomIds: ['  ROOM-a  ', 'ROOM-a', 'room-a', '   ', 'ROOM-b'],
+    });
+    expect(set.status).toBe(200);
+    // Trimmed, blank dropped, exact-dup collapsed; 'room-a' kept as a DISTINCT room
+    // (opaque ids compared case-sensitively).
+    expect(set.body.webexRoomIds).toEqual(['ROOM-a', 'room-a', 'ROOM-b']);
+
+    // Persisted at the DB layer.
+    const stored = await prisma.department.findUnique({ where: { id: dept.id } });
+    expect(stored!.webexRoomIds).toEqual(['ROOM-a', 'room-a', 'ROOM-b']);
+
+    // Admin GET surfaces them.
+    const list = await admin.get('/api/departments');
+    const row = list.body.find((d: { id: string }) => d.id === dept.id);
+    expect(row.webexRoomIds).toEqual(['ROOM-a', 'room-a', 'ROOM-b']);
+
+    // An empty array clears the list.
+    const cleared = await withCsrf(admin.patch(`/api/departments/${dept.id}`)).send({
+      webexRoomIds: [],
+    });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.webexRoomIds).toEqual([]);
+  });
+
+  test('a non-admin GET never exposes webexRoomIds', async () => {
+    const admin = await loggedInAdmin();
+    const dept = await prisma.department.create({ data: { name: 'Secret Rooms', order: 6 } });
+    await withCsrf(admin.patch(`/api/departments/${dept.id}`)).send({
+      webexRoomIds: ['ROOM-confidential'],
+    });
+
+    await createUser({ email: 'plainrooms@dep.test', password: 'usersecret1', role: Role.USER });
+    const user = newAgent();
+    await loginAs(user, 'plainrooms@dep.test', 'usersecret1');
+
+    const list = await user.get('/api/departments');
+    expect(list.status).toBe(200);
+    for (const row of list.body) {
+      expect(row).not.toHaveProperty('webexRoomIds');
+    }
+  });
+});

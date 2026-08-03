@@ -20,8 +20,10 @@ import {
   getEffectiveWebexConfig,
   sendWebexMessage,
   sendTestWebexMessage,
+  listWebexRooms,
   type EffectiveWebexConfig,
   type WebexFailureReason,
+  type SendWebexOptions,
 } from '../utils/webex';
 import { encrypt } from '../utils/secretbox';
 
@@ -74,6 +76,23 @@ function response(init: { ok: boolean; status: number; body?: string }): Respons
     ok: init.ok,
     status: init.status,
     text: async () => init.body ?? '',
+  } as unknown as Response;
+}
+
+/**
+ * A Response-like object honoring `json()`, which the rooms-listing parse path reads
+ * (unlike the message-send path, which reads only `text()` on a 400). When `json` is
+ * omitted, `json()` rejects — modeling a non-JSON body the parser must tolerate.
+ */
+function roomsResponse(init: { ok: boolean; status: number; json?: unknown }): Response {
+  return {
+    ok: init.ok,
+    status: init.status,
+    json: async () => {
+      if (init.json === undefined) throw new Error('not json');
+      return init.json;
+    },
+    text: async () => '',
   } as unknown as Response;
 }
 
@@ -274,6 +293,60 @@ describe('sendWebexMessage (enabled)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// sendWebexMessage() — room/space target (roomId instead of toPersonEmail)
+//
+// The SAME POST /v1/messages endpoint, but the body carries `roomId` (a space post)
+// instead of `toPersonEmail` (a 1:1 DM), and every log line names `room=<id>`. The
+// token is never in the body or any log line.
+// ---------------------------------------------------------------------------
+describe('sendWebexMessage (room target)', () => {
+  beforeEach(() => {
+    findUnique.mockResolvedValue(doc({ enabled: true, botTokenEnc: encrypt('bot-token-xyz') }));
+  });
+
+  it('POSTs a room message whose body carries roomId/markdown (NOT toPersonEmail)', async () => {
+    fetchMock.mockResolvedValue(response({ ok: true, status: 200 }));
+
+    await expect(
+      sendWebexMessage({ roomId: 'ROOM-123', markdown: '**hi**' })
+    ).resolves.toBe(true);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(`${DEFAULT_BASE}/v1/messages`);
+    expect(init.method).toBe('POST');
+    expect(init.headers.Authorization).toBe('Bearer bot-token-xyz');
+    const body = JSON.parse(init.body);
+    // The target is a room post: roomId is present and toPersonEmail is absent.
+    expect(body).toEqual({ roomId: 'ROOM-123', markdown: '**hi**' });
+    expect(body).not.toHaveProperty('toPersonEmail');
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('logs the room target (room=<id>) — never the token — on a non-ok response', async () => {
+    fetchMock.mockResolvedValue(response({ ok: false, status: 502 }));
+
+    await expect(
+      sendWebexMessage({ roomId: 'ROOM-err', markdown: 'hi' })
+    ).resolves.toBe(false);
+
+    expect(errorSpy).toHaveBeenCalledWith('[WEBEX] send failed room=ROOM-err status=502');
+    for (const call of errorSpy.mock.calls) {
+      expect(JSON.stringify(call)).not.toContain('bot-token-xyz');
+    }
+  });
+
+  it('disabled: logs a room= disabled line, resolves true, and never calls fetch', async () => {
+    findUnique.mockResolvedValue(null);
+    await expect(
+      sendWebexMessage({ roomId: 'ROOM-off', markdown: 'hi' })
+    ).resolves.toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith('[WEBEX disabled] room=ROOM-off');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // sendWebexMessage() — settings read failure (DB down): best-effort false
 // ---------------------------------------------------------------------------
 describe('sendWebexMessage (settings read failure)', () => {
@@ -289,6 +362,26 @@ describe('sendWebexMessage (settings read failure)', () => {
       expect.stringContaining('[WEBEX] settings read failed'),
       expect.anything()
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sendWebexMessage() — no-target defensive guard
+//
+// The SendWebexOptions discriminated union should make this unreachable from typed
+// callers, but a caller reaching PAST the types (neither field) must NEVER cause an
+// empty recipient to be POSTed: bail with false, log, and touch no settings read /
+// network call.
+// ---------------------------------------------------------------------------
+describe('sendWebexMessage (no target)', () => {
+  it('returns false, logs, and never reads settings or calls fetch when neither target is present', async () => {
+    await expect(
+      sendWebexMessage({ markdown: 'hi' } as unknown as SendWebexOptions)
+    ).resolves.toBe(false);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(findUnique).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith('[WEBEX] send called with no target');
   });
 });
 
@@ -508,5 +601,191 @@ describe('sendTestWebexMessage (SECURITY: no secret / body leaks into the result
     for (const call of errorSpy.mock.calls) {
       expect(JSON.stringify(call)).not.toContain(SENTINEL_TOKEN);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listWebexRooms() — the admin room picker's data source.
+//
+// Mirrors sendTestWebexMessage's discipline: a single effective-config read, a
+// never-throw contract, and on failure a FIXED WebexFailureReason (via the same
+// mapping the test-send uses). SECURITY: the bot token is the Bearer credential only
+// and is NEVER part of the returned value (neither the rooms nor the reason carry it).
+// ---------------------------------------------------------------------------
+describe('listWebexRooms', () => {
+  it('returns { ok: false, config_error } and calls no fetch when disabled (no document)', async () => {
+    findUnique.mockResolvedValue(null);
+    await expect(listWebexRooms()).resolves.toEqual({ ok: false, reason: 'config_error' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('returns config_error (no fetch) when the settings read throws', async () => {
+    findUnique.mockRejectedValue(new Error('mongo unreachable'));
+    await expect(listWebexRooms()).resolves.toEqual({ ok: false, reason: 'config_error' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[WEBEX] rooms settings read failed'),
+      expect.anything()
+    );
+  });
+
+  describe('enabled', () => {
+    beforeEach(() => {
+      findUnique.mockResolvedValue(doc({ enabled: true, botTokenEnc: encrypt('bot-token-xyz') }));
+    });
+
+    it('GETs /v1/rooms with Bearer auth + timeout and maps items to { id, title } (other fields ignored)', async () => {
+      fetchMock.mockResolvedValue(
+        roomsResponse({
+          ok: true,
+          status: 200,
+          json: {
+            items: [
+              { id: 'R1', title: 'Room One', type: 'group', extra: 'ignored' },
+              { id: 'R2', title: 'Room Two' },
+            ],
+          },
+        })
+      );
+
+      const result = await listWebexRooms();
+      expect(result).toEqual({
+        ok: true,
+        rooms: [
+          { id: 'R1', title: 'Room One' },
+          { id: 'R2', title: 'Room Two' },
+        ],
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0];
+      // The picker query pins the listing to group spaces in one large page.
+      expect(url).toBe(`${DEFAULT_BASE}/v1/rooms?type=group&max=1000`);
+      expect(url).toContain('type=group');
+      expect(url).toContain('max=');
+      expect(init.method).toBe('GET');
+      expect(init.headers.Authorization).toBe('Bearer bot-token-xyz');
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+    });
+
+    it('honors a WEBEX_API_BASE_URL override (trailing slash trimmed)', async () => {
+      process.env.WEBEX_API_BASE_URL = 'https://webex.proxy.internal/';
+      fetchMock.mockResolvedValue(roomsResponse({ ok: true, status: 200, json: { items: [] } }));
+
+      await expect(listWebexRooms()).resolves.toEqual({ ok: true, rooms: [] });
+      expect(fetchMock.mock.calls[0][0]).toBe('https://webex.proxy.internal/v1/rooms?type=group&max=1000');
+    });
+
+    it('skips items with a missing / empty / non-string id (keeps only well-formed rooms)', async () => {
+      fetchMock.mockResolvedValue(
+        roomsResponse({
+          ok: true,
+          status: 200,
+          json: {
+            items: [
+              { title: 'no id at all' },
+              { id: '', title: 'empty id' },
+              { id: 123, title: 'non-string id' },
+              { id: 'R9', title: 'Keep me' },
+            ],
+          },
+        })
+      );
+      await expect(listWebexRooms()).resolves.toEqual({ ok: true, rooms: [{ id: 'R9', title: 'Keep me' }] });
+    });
+
+    it('falls back to the id as the title when a room has no usable title', async () => {
+      fetchMock.mockResolvedValue(
+        roomsResponse({
+          ok: true,
+          status: 200,
+          json: {
+            items: [
+              { id: 'R1' }, // title missing
+              { id: 'R2', title: '' }, // title empty
+              { id: 'R3', title: 42 }, // title non-string
+              { id: 'R4', title: 'Has Title' },
+            ],
+          },
+        })
+      );
+      await expect(listWebexRooms()).resolves.toEqual({
+        ok: true,
+        rooms: [
+          { id: 'R1', title: 'R1' },
+          { id: 'R2', title: 'R2' },
+          { id: 'R3', title: 'R3' },
+          { id: 'R4', title: 'Has Title' },
+        ],
+      });
+    });
+
+    // ------- non-OK failure mapping (rooms-specific, NOT the message-send mapper) -------
+    it('maps a 401 to { ok: false, invalid_token }', async () => {
+      fetchMock.mockResolvedValue(response({ ok: false, status: 401 }));
+      await expect(listWebexRooms()).resolves.toEqual({ ok: false, reason: 'invalid_token' });
+    });
+
+    it('maps a 429 to { ok: false, rate_limited }', async () => {
+      fetchMock.mockResolvedValue(response({ ok: false, status: 429 }));
+      await expect(listWebexRooms()).resolves.toEqual({ ok: false, reason: 'rate_limited' });
+    });
+
+    it('maps a 404 to { ok: false, unknown } (a listing has NO recipient — never recipient_not_found)', async () => {
+      fetchMock.mockResolvedValue(response({ ok: false, status: 404 }));
+      const result = await listWebexRooms();
+      expect(result).toEqual({ ok: false, reason: 'unknown' });
+      // Regression guard: the rooms mapper must NOT reuse the message-send 404 bucket.
+      expect(result).not.toEqual({ ok: false, reason: 'recipient_not_found' });
+    });
+
+    it('maps a 400 to { ok: false, unknown } (no body sniff for a listing)', async () => {
+      fetchMock.mockResolvedValue(response({ ok: false, status: 400, body: 'person email not found' }));
+      await expect(listWebexRooms()).resolves.toEqual({ ok: false, reason: 'unknown' });
+    });
+
+    it('maps a fetch network error (TypeError) to { ok: false, connection_failed }', async () => {
+      fetchMock.mockRejectedValue(new TypeError('fetch failed'));
+      await expect(listWebexRooms()).resolves.toEqual({ ok: false, reason: 'connection_failed' });
+    });
+
+    // ------- parse failure vs. genuine empty listing (2xx) -------
+    it('maps a non-JSON 2xx body to { ok: false, unknown } (parse failure, NOT zero rooms)', async () => {
+      fetchMock.mockResolvedValue(roomsResponse({ ok: true, status: 200 })); // json() rejects
+      await expect(listWebexRooms()).resolves.toEqual({ ok: false, reason: 'unknown' });
+    });
+
+    it('maps a 2xx body whose items is not an array to { ok: false, unknown }', async () => {
+      fetchMock.mockResolvedValue(roomsResponse({ ok: true, status: 200, json: {} }));
+      await expect(listWebexRooms()).resolves.toEqual({ ok: false, reason: 'unknown' });
+
+      fetchMock.mockResolvedValue(roomsResponse({ ok: true, status: 200, json: { items: null } }));
+      await expect(listWebexRooms()).resolves.toEqual({ ok: false, reason: 'unknown' });
+    });
+
+    it('maps a genuine empty listing (items: []) to { ok: true, rooms: [] }', async () => {
+      fetchMock.mockResolvedValue(roomsResponse({ ok: true, status: 200, json: { items: [] } }));
+      await expect(listWebexRooms()).resolves.toEqual({ ok: true, rooms: [] });
+    });
+
+    it('never returns the bot token in the result (success OR failure)', async () => {
+      const SENTINEL = 'S3NTINEL-ROOMS-TOKEN-do-not-leak';
+      findUnique.mockResolvedValue(doc({ enabled: true, botTokenEnc: encrypt(SENTINEL) }));
+
+      fetchMock.mockResolvedValue(
+        roomsResponse({ ok: true, status: 200, json: { items: [{ id: 'R1', title: 'Room One' }] } })
+      );
+      const okResult = await listWebexRooms();
+      expect(okResult).toEqual({ ok: true, rooms: [{ id: 'R1', title: 'Room One' }] });
+      expect(JSON.stringify(okResult)).not.toContain(SENTINEL);
+
+      fetchMock.mockResolvedValue(response({ ok: false, status: 401 }));
+      const failResult = await listWebexRooms();
+      expect(JSON.stringify(failResult)).not.toContain(SENTINEL);
+      // No log line carries the decrypted token either.
+      for (const call of errorSpy.mock.calls) {
+        expect(JSON.stringify(call)).not.toContain(SENTINEL);
+      }
+    });
   });
 });

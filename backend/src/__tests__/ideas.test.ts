@@ -84,9 +84,13 @@ jest.mock('../config/mail', () => ({
 // Webex behavior is controlled per-case WITHOUT any environment, DB, or real HTTP.
 // utils/webex-templates is left REAL (pure markdown builders), exactly as
 // utils/mail-templates is left real here.
+// WEBEX_SEND_CONCURRENCY is the real constant, not a mock: the route feeds it to
+// runBounded (utils/concurrency, left REAL) as the fan-out limit, so a missing or
+// bogus value would silently change how many sends the route performs.
 jest.mock('../utils/webex', () => ({
   getEffectiveWebexConfig: jest.fn(),
   sendWebexMessage: jest.fn(),
+  WEBEX_SEND_CONCURRENCY: jest.requireActual('../utils/webex').WEBEX_SEND_CONCURRENCY,
 }));
 
 // Import routes AFTER mocks
@@ -102,6 +106,13 @@ const mockedSendMail = jest.mocked(sendMail);
 const mockedGetConfig = jest.mocked(getEffectiveMailConfig);
 const mockedSendWebex = jest.mocked(sendWebexMessage);
 const mockedGetWebexConfig = jest.mocked(getEffectiveWebexConfig);
+
+// SendWebexOptions is a discriminated union ({ toPersonEmail } | { roomId }); these
+// tests assert on whichever target field a given call used, so read a captured first
+// arg through a permissive inspection shape exposing both optional fields.
+type WebexSendArg = { toPersonEmail?: string; roomId?: string; markdown: string };
+const webexArg = (call: number): WebexSendArg =>
+  mockedSendWebex.mock.calls[call][0] as WebexSendArg;
 
 // The department notification is fire-and-forget: it runs in an async IIFE AFTER
 // the 201 is sent (it awaits the settings read, then the send). Flush the
@@ -761,9 +772,9 @@ describe('Ideas API', () => {
       expect(response.status).toBe(201);
       // Exactly one DM per recipient, in order.
       expect(mockedSendWebex).toHaveBeenCalledTimes(2);
-      expect(mockedSendWebex.mock.calls[0][0].toPersonEmail).toBe('ops@corp.example');
-      expect(mockedSendWebex.mock.calls[1][0].toPersonEmail).toBe('lead@corp.example');
-      const md = mockedSendWebex.mock.calls[0][0].markdown;
+      expect(webexArg(0).toPersonEmail).toBe('ops@corp.example');
+      expect(webexArg(1).toPersonEmail).toBe('lead@corp.example');
+      const md = webexArg(0).markdown;
       expect(md).toContain('Marketing');
       expect(md).toContain('Notify the department please');
       expect(md).toContain('/ideas/aaaaaaaaaaaaaaaaaaaaa001');
@@ -771,7 +782,7 @@ describe('Ideas API', () => {
       expect(md).toContain('A'.repeat(200));
       expect(md).not.toContain('A'.repeat(201));
       // Both recipients get the SAME rendered body.
-      expect(mockedSendWebex.mock.calls[1][0].markdown).toBe(md);
+      expect(webexArg(1).markdown).toBe(md);
     });
 
     test('reads the webex config exactly ONCE and hands it to every send (single read)', async () => {
@@ -801,7 +812,7 @@ describe('Ideas API', () => {
       await flushAsync();
 
       expect(response.status).toBe(201);
-      const md = mockedSendWebex.mock.calls[0][0].markdown;
+      const md = webexArg(0).markdown;
       expect(md).toContain('Pre oddelenie');
       expect(md).toContain('Zobraziť nápad');
       expect(md).not.toContain('A new idea has been submitted');
@@ -889,8 +900,192 @@ describe('Ideas API', () => {
 
       expect(response.status).toBe(201);
       expect(mockedSendWebex).toHaveBeenCalledTimes(2);
-      expect(mockedSendWebex.mock.calls[0][0].toPersonEmail).toBe('Ops@Corp.Example');
-      expect(mockedSendWebex.mock.calls[1][0].toPersonEmail).toBe('lead@corp.example');
+      expect(webexArg(0).toPersonEmail).toBe('Ops@Corp.Example');
+      expect(webexArg(1).toPersonEmail).toBe('lead@corp.example');
+    });
+  });
+
+  // Webex ROOM/SPACE posts: the create handler ALSO posts the same new-idea markdown
+  // to each of the department's webexRoomIds (via sendWebexMessage({ roomId })),
+  // deduped CASE-SENSITIVELY, in parallel with — and independent of — the DM fan-out
+  // and the mail send, reusing the SINGLE effective-config read. utils/webex is
+  // mocked (config + sender); utils/webex-templates is real, so the markdown is
+  // genuinely exercised.
+  describe('POST /api/ideas — department notification (Webex room posts)', () => {
+    const createdIdea = {
+      id: 'aaaaaaaaaaaaaaaaaaaaa001',
+      title: 'Notify the department please',
+      description: 'A'.repeat(250), // exercises the ~200-char preview truncation
+      benefits: 'Great benefits that are well described',
+      effort: 'ONE_TO_THREE_DAYS',
+      status: 'SUBMITTED',
+      tags: [],
+      submitterId: 'user123',
+      submitter: { id: 'user123', name: 'Test User', email: 'test@example.com' },
+      department: { id: DEPT_ID, name: 'Marketing' },
+      submittedAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    function validBody() {
+      return {
+        title: 'Notify the department please',
+        description: 'A'.repeat(250),
+        benefits: 'Great benefits that are well described',
+        effort: 'ONE_TO_THREE_DAYS',
+        departmentId: DEPT_ID,
+      };
+    }
+
+    beforeEach(() => {
+      // Mail present but inert (independent channel); Webex ON by default.
+      mockedSendMail.mockReset();
+      mockedSendMail.mockResolvedValue(true);
+      mockedGetConfig.mockReset();
+      mockedGetConfig.mockResolvedValue({ language: 'en', subjectTemplate: '' } as any);
+      mockedSendWebex.mockReset();
+      mockedSendWebex.mockResolvedValue(true);
+      mockedGetWebexConfig.mockReset();
+      mockedGetWebexConfig.mockResolvedValue({ effectiveEnabled: true, language: 'en' } as any);
+      mockPrismaFunctions.idea.create.mockResolvedValue(createdIdea);
+      mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
+    });
+
+    test('posts one room message per unique room with the idea markdown (rooms-only department, no email DMs)', async () => {
+      const { agent } = await loginAsUser(app);
+      // A rooms-only department: no notificationEmails -> no mail, no DMs — yet the
+      // room posts still fire (the Webex block is NOT gated on there being emails).
+      mockPrismaFunctions.department.findUnique.mockResolvedValue({
+        id: DEPT_ID,
+        name: 'Marketing',
+        notificationEmails: [],
+        webexRoomIds: ['ROOM-alpha', 'ROOM-beta'],
+      });
+
+      const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
+
+      expect(response.status).toBe(201);
+      // One post per room, in order; each targets a roomId (never a toPersonEmail).
+      expect(mockedSendWebex).toHaveBeenCalledTimes(2);
+      expect(webexArg(0).roomId).toBe('ROOM-alpha');
+      expect(webexArg(1).roomId).toBe('ROOM-beta');
+      expect(webexArg(0).toPersonEmail).toBeUndefined();
+      const md = webexArg(0).markdown;
+      expect(md).toContain('Marketing');
+      expect(md).toContain('Notify the department please');
+      expect(md).toContain('/ideas/aaaaaaaaaaaaaaaaaaaaa001');
+      expect(md).toContain('A'.repeat(200));
+      expect(md).not.toContain('A'.repeat(201));
+      // Both rooms get the SAME rendered body.
+      expect(webexArg(1).markdown).toBe(md);
+      // No mail (no recipients).
+      expect(mockedSendMail).not.toHaveBeenCalled();
+    });
+
+    test('dedupes room ids CASE-SENSITIVELY: one post per unique room, distinct casings both kept', async () => {
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue({
+        id: DEPT_ID,
+        name: 'Marketing',
+        notificationEmails: [],
+        webexRoomIds: ['ROOM-a', 'ROOM-a', 'room-a'],
+      });
+
+      const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
+
+      expect(response.status).toBe(201);
+      // The exact repeat collapses; 'room-a' is a DISTINCT room (opaque id).
+      expect(mockedSendWebex).toHaveBeenCalledTimes(2);
+      expect(webexArg(0).roomId).toBe('ROOM-a');
+      expect(webexArg(1).roomId).toBe('room-a');
+    });
+
+    test('a department with BOTH emails and rooms: DMs first, then room posts, mail once — single config read', async () => {
+      const cfg = { effectiveEnabled: true, language: 'en' } as any;
+      mockedGetWebexConfig.mockReset();
+      mockedGetWebexConfig.mockResolvedValue(cfg);
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue({
+        id: DEPT_ID,
+        name: 'Marketing',
+        notificationEmails: ['ops@corp.example'],
+        webexRoomIds: ['ROOM-x'],
+      });
+
+      const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
+
+      expect(response.status).toBe(201);
+      // The webex config is read exactly ONCE and handed to BOTH the DM and the room send.
+      expect(mockedGetWebexConfig).toHaveBeenCalledTimes(1);
+      expect(mockedSendWebex).toHaveBeenCalledTimes(2);
+      // DM(s) first, then room post(s).
+      expect(webexArg(0).toPersonEmail).toBe('ops@corp.example');
+      expect(webexArg(0).roomId).toBeUndefined();
+      expect(webexArg(1).roomId).toBe('ROOM-x');
+      expect(webexArg(1).toPersonEmail).toBeUndefined();
+      expect(mockedSendWebex.mock.calls[0][1]).toBe(cfg);
+      expect(mockedSendWebex.mock.calls[1][1]).toBe(cfg);
+      // Mail is independent and still goes out once to the whole recipient list.
+      expect(mockedSendMail).toHaveBeenCalledTimes(1);
+      expect(mockedSendMail.mock.calls[0][0].to).toEqual(['ops@corp.example']);
+    });
+
+    test('does NOT post to any room when Webex is not effectively enabled', async () => {
+      mockedGetWebexConfig.mockResolvedValue({ effectiveEnabled: false, language: 'sk' } as any);
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue({
+        id: DEPT_ID,
+        name: 'Marketing',
+        notificationEmails: [],
+        webexRoomIds: ['ROOM-alpha'],
+      });
+
+      const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
+
+      expect(response.status).toBe(201);
+      expect(mockedSendWebex).not.toHaveBeenCalled();
+    });
+
+    test('a department with no rooms AND no emails posts nothing and never reads the webex config', async () => {
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue({
+        id: DEPT_ID,
+        name: 'Marketing',
+        notificationEmails: [],
+        webexRoomIds: [],
+      });
+
+      const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
+
+      expect(response.status).toBe(201);
+      expect(mockedSendWebex).not.toHaveBeenCalled();
+      // The whole Webex IIFE is skipped (no recipients, no rooms) — no config read.
+      expect(mockedGetWebexConfig).not.toHaveBeenCalled();
+      expect(mockedSendMail).not.toHaveBeenCalled();
+    });
+
+    test('returns 201 and still attempts every room when a room post rejects (best-effort/never-throw)', async () => {
+      mockedSendWebex.mockReset();
+      mockedSendWebex.mockRejectedValueOnce(new Error('unexpected webex blow-up')).mockResolvedValue(true);
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.department.findUnique.mockResolvedValue({
+        id: DEPT_ID,
+        name: 'Marketing',
+        notificationEmails: [],
+        webexRoomIds: ['ROOM-alpha', 'ROOM-beta'],
+      });
+
+      const response = await agent.post('/api/ideas').send(validBody());
+      await flushAsync();
+
+      expect(response.status).toBe(201);
+      expect(mockedSendWebex).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -1874,8 +2069,8 @@ describe('Ideas API', () => {
         const response = await approve();
         expect(response.status).toBe(200);
         expect(mockedSendWebex).toHaveBeenCalledTimes(1);
-        expect(mockedSendWebex.mock.calls[0][0].toPersonEmail).toBe(SUBMITTER.email);
-        expect(mockedSendWebex.mock.calls[0][0].markdown).toContain(TITLE);
+        expect(webexArg(0).toPersonEmail).toBe(SUBMITTER.email);
+        expect(webexArg(0).markdown).toContain(TITLE);
         expect(mockedSendMail).not.toHaveBeenCalled();
       });
 

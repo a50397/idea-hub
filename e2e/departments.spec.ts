@@ -144,6 +144,40 @@ test('admin sets a department notification email and it persists', async ({ page
   await expect(reopened.getByText(email)).toBeVisible();
 });
 
+test('admin sets a department Webex space (room ID) manually and it persists', async ({ page }) => {
+  const ts = Date.now();
+  const name = `E2E-webexroom-${ts}`;
+  const roomId = `Y2lzY29zcGFyazovL3VzL1JPT00-${ts}`;
+
+  await gotoDepartments(page);
+
+  // Fresh, unreferenced department so this test never collides with the others.
+  await createDepartment(page, name);
+  await expect(deptRow(page, name)).toBeVisible();
+
+  // Open Edit → the Webex-spaces combobox. The e2e backend black-holes the Webex
+  // API (support/config.ts), so GET /webex-settings/rooms returns an empty list and
+  // this exercises the MANUAL room-ID fallback (type + Enter commits a chip),
+  // mirroring the notification-email flow above.
+  await deptRow(page, name).locator('button:has(.mdi-pencil)').click();
+  const d = dialog(page, 'Edit Department');
+  await expect(d).toBeVisible();
+  const combo = d.locator('.v-input', { hasText: 'Webex spaces' });
+  const comboInput = combo.locator('input');
+  await comboInput.click();
+  await comboInput.pressSequentially(roomId);
+  await comboInput.press('Enter');
+  await expect(combo.getByText(roomId)).toBeVisible();
+  await d.getByRole('button', { name: 'Update', exact: true }).click();
+  await expect(d).toBeHidden();
+
+  // Reopen the Edit dialog → the room ID persisted and renders as a chip.
+  await deptRow(page, name).locator('button:has(.mdi-pencil)').click();
+  const reopened = dialog(page, 'Edit Department');
+  await expect(reopened).toBeVisible();
+  await expect(reopened.getByText(roomId)).toBeVisible();
+});
+
 test('deleting a referenced department is blocked', async ({ page }) => {
   await gotoDepartments(page);
 

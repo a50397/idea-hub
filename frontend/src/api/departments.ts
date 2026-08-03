@@ -12,11 +12,12 @@ export const departmentsApi = {
     return response.data;
   },
 
-  // Update a department's name and/or notification emails. Both fields are
-  // optional, so a rename-only or emails-only update each send just that key.
+  // Update a department's name and/or notification emails and/or Webex room ids.
+  // Every field is optional, so a rename-only (or emails-only, or rooms-only) update
+  // sends just that key; an explicit [] clears the corresponding list.
   update: async (
     id: string,
-    payload: { name?: string; notificationEmails?: string[] }
+    payload: { name?: string; notificationEmails?: string[]; webexRoomIds?: string[] }
   ): Promise<Department> => {
     const response = await client.patch(`/departments/${id}`, payload);
     return response.data;

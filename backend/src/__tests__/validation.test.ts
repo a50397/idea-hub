@@ -342,6 +342,93 @@ describe('Validation Schemas', () => {
     });
   });
 
+  describe('updateDepartmentSchema — webexRoomIds trim / drop-blank / case-sensitive dedupe / bounds', () => {
+    test('trims each id, drops blank entries, and removes EXACT duplicates, preserving order', () => {
+      const result = updateDepartmentSchema.safeParse({
+        webexRoomIds: ['  ROOM-a  ', 'ROOM-a', '   ', 'ROOM-b', 'ROOM-a'],
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        // '  ROOM-a  ' -> 'ROOM-a'; the exact repeats collapse; the whitespace-only
+        // entry is dropped; order is preserved.
+        expect(result.data.webexRoomIds).toEqual(['ROOM-a', 'ROOM-b']);
+      }
+    });
+
+    test('treats different-case ids as DISTINCT rooms (opaque ids, compared case-SENSITIVELY)', () => {
+      const result = updateDepartmentSchema.safeParse({ webexRoomIds: ['ROOM-a', 'room-a'] });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        // Unlike the case-insensitive email dedupe, room ids are opaque: 'ROOM-a' and
+        // 'room-a' are two different rooms and both are kept.
+        expect(result.data.webexRoomIds).toEqual(['ROOM-a', 'room-a']);
+      }
+    });
+
+    test('leaves distinct ids (and an empty array) untouched', () => {
+      const distinct = updateDepartmentSchema.safeParse({ webexRoomIds: ['R1', 'R2', 'R3'] });
+      expect(distinct.success).toBe(true);
+      if (distinct.success) {
+        expect(distinct.data.webexRoomIds).toEqual(['R1', 'R2', 'R3']);
+      }
+      const empty = updateDepartmentSchema.safeParse({ webexRoomIds: [] });
+      expect(empty.success).toBe(true);
+      if (empty.success) {
+        expect(empty.data.webexRoomIds).toEqual([]);
+      }
+    });
+
+    test('rejects more than 50 room ids and accepts exactly 50', () => {
+      const overCap = Array.from({ length: 51 }, (_, i) => `ROOM-${i}`);
+      expect(updateDepartmentSchema.safeParse({ webexRoomIds: overCap }).success).toBe(false);
+      const atCap = Array.from({ length: 50 }, (_, i) => `ROOM-${i}`);
+      expect(updateDepartmentSchema.safeParse({ webexRoomIds: atCap }).success).toBe(true);
+    });
+
+    test('rejects a room id longer than 256 characters and accepts exactly 256', () => {
+      expect(updateDepartmentSchema.safeParse({ webexRoomIds: ['a'.repeat(257)] }).success).toBe(false);
+      expect(updateDepartmentSchema.safeParse({ webexRoomIds: ['a'.repeat(256)] }).success).toBe(true);
+    });
+
+    test('rejects a non-array webexRoomIds', () => {
+      expect(updateDepartmentSchema.safeParse({ webexRoomIds: 'ROOM-a' }).success).toBe(false);
+    });
+
+    test('leaves an omitted webexRoomIds undefined (optional; the leave-untouched signal)', () => {
+      const result = updateDepartmentSchema.safeParse({ name: 'Marketing' });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.webexRoomIds).toBeUndefined();
+      }
+    });
+
+    test('rejects an id containing internal whitespace or a control character', () => {
+      // Room ids are opaque, NON-whitespace tokens. An embedded space, newline, or
+      // control char is rejected outright — a newline could otherwise forge [WEBEX] log
+      // lines, and any such char signals a malformed paste. Leading/trailing whitespace
+      // is still trimmed (covered above), so these use INTERNAL characters that survive
+      // the trim. Built via String.fromCharCode so no raw control byte lives in source.
+      const space = ' ';
+      const newline = String.fromCharCode(10); // \n — the log-forging vector
+      const nul = String.fromCharCode(0); // NUL — a C0 control char
+      const del = String.fromCharCode(127); // DEL
+      for (const bad of [`room${space}id`, `room${newline}id`, `room${nul}id`, `room${del}id`]) {
+        expect(updateDepartmentSchema.safeParse({ webexRoomIds: [bad] }).success).toBe(false);
+      }
+    });
+
+    test('accepts a normal base64url-ish opaque id (letters, digits, - and _)', () => {
+      // A realistic Webex room id is base64(url)-shaped; '-' and '_' are legitimate and
+      // must NOT be rejected by the whitespace/control-char refinement.
+      const id = 'Y2lzY29zcGFyazovL3VzL1JPT00vabc-123_XYZ';
+      const result = updateDepartmentSchema.safeParse({ webexRoomIds: [id] });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.webexRoomIds).toEqual([id]);
+      }
+    });
+  });
+
   describe('updateWebexSettingsSchema — bot token trim/reject/keep/wipe', () => {
     test('trims surrounding whitespace from a real token before it is stored', () => {
       const result = updateWebexSettingsSchema.safeParse({

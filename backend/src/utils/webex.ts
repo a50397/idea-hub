@@ -1,10 +1,13 @@
 // Webex notification channel: config read + best-effort sender.
 //
-// A second, INDEPENDENT notification channel alongside mail. Every Webex send is
-// a 1:1 bot direct message via `POST {base}/v1/messages` with `toPersonEmail`
-// (no rooms/spaces). Like the mailer this module keeps a narrow, never-throw
-// contract so callers can fire-and-forget from inside a request handler and a
-// Webex outage can never fail the user's request nor affect the mail channel.
+// A second, INDEPENDENT notification channel alongside mail. A Webex send targets
+// EITHER a person (a 1:1 bot direct message, `toPersonEmail`) OR a room/space
+// (`roomId`) via the same `POST {base}/v1/messages` endpoint — never both. Like the
+// mailer this module keeps a narrow, never-throw contract so callers can
+// fire-and-forget from inside a request handler and a Webex outage can never fail
+// the user's request nor affect the mail channel. `listWebexRooms` (a GET on
+// `/v1/rooms`) lets an admin pick a room the bot belongs to; it shares the same
+// never-throw + fixed-reason discipline and NEVER returns the token.
 //
 //   - Config lives in the database (admin-managed WebexSettings singleton, the
 //     same shape/semantics as MailSettings). getEffectiveWebexConfig reads it PER
@@ -136,42 +139,76 @@ export async function getEffectiveWebexConfig(): Promise<EffectiveWebexConfig> {
   };
 }
 
-export interface SendWebexOptions {
-  /** The recipient's email; Webex resolves it to the 1:1 bot DM person. */
-  toPersonEmail: string;
-  /** The message body (Webex markdown). */
-  markdown: string;
-}
+/**
+ * Options for a single Webex send. A DISCRIMINATED UNION so EXACTLY ONE target is
+ * present at the type level: a Webex message targets a person (1:1 bot DM,
+ * `toPersonEmail`) OR a room/space (`roomId`) — never both and never neither — via the
+ * same POST /v1/messages endpoint. `markdown` (the Webex-markdown body) is required in
+ * both arms. The recipient email is resolved by Webex to the 1:1 bot DM person; room
+ * ids are OPAQUE strings and the bot must be a member of the room. (sendWebexMessage
+ * still defends at runtime against a caller that reaches past these types with neither
+ * field — see its no-target guard.)
+ */
+export type SendWebexOptions =
+  | { toPersonEmail: string; markdown: string }
+  | { roomId: string; markdown: string };
 
-// POST the 1:1 message. Isolated so sendWebexMessage and sendTestWebexMessage
-// exercise the identical request (URL, Bearer auth, JSON body, ~10s timeout). The
-// AbortSignal.timeout timer is unref'd by Node, so a pending send never keeps the
-// process alive.
-function postWebexMessage(token: string, toPersonEmail: string, markdown: string): Promise<Response> {
+// A single Webex message targets EITHER a person (1:1 bot DM, toPersonEmail) OR a
+// room/space (roomId) — never both — via the same POST /v1/messages endpoint.
+type WebexMessageTarget = { toPersonEmail: string } | { roomId: string };
+
+// POST the message. Isolated so sendWebexMessage and sendTestWebexMessage exercise
+// the identical request (URL, Bearer auth, JSON body, ~10s timeout). The body is
+// `{ roomId, markdown }` for a room target and `{ toPersonEmail, markdown }` for a
+// person target — the target object is spread in verbatim. The AbortSignal.timeout
+// timer is unref'd by Node, so a pending send never keeps the process alive.
+function postWebexMessage(token: string, target: WebexMessageTarget, markdown: string): Promise<Response> {
   return fetch(`${webexApiBaseUrl()}/v1/messages`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ toPersonEmail, markdown }),
+    body: JSON.stringify({ ...target, markdown }),
     signal: AbortSignal.timeout(WEBEX_TIMEOUT_MS),
   });
 }
 
 /**
- * Best-effort 1:1 Webex bot DM. NEVER throws/rejects: resolves true on success OR
- * when the channel is not effectively enabled (log-only, no network call), and
- * false on any read/transport/HTTP failure (logged, swallowed). The optional
- * `cfgOverride` lets a caller that already read the effective config (e.g. to
- * build the template) pass it through so the settings are not read a second time —
- * exactly the mailer's single-read optimization. The bot token is never logged.
+ * Best-effort Webex send to a person (1:1 bot DM) OR a room/space — whichever the
+ * options name. NEVER throws/rejects: resolves true on success OR when the channel is
+ * not effectively enabled (log-only, no network call), and false on any
+ * read/transport/HTTP failure (logged, swallowed). The optional `cfgOverride` lets a
+ * caller that already read the effective config (e.g. to build the template) pass it
+ * through so the settings are not read a second time — exactly the mailer's
+ * single-read optimization. Every log line names the TARGET (`room=<id>` vs
+ * `to=<email>`); the bot token is never logged.
  */
 export async function sendWebexMessage(
   options: SendWebexOptions,
   cfgOverride?: EffectiveWebexConfig
 ): Promise<boolean> {
-  const to = options.toPersonEmail;
+  // Read each possible target field defensively: the discriminated union should make a
+  // present key carry a real value, but a caller reaching PAST the types could arrive
+  // with neither key (or a present key holding `undefined`).
+  const roomId = 'roomId' in options ? options.roomId : undefined;
+  const toPersonEmail = 'toPersonEmail' in options ? options.toPersonEmail : undefined;
+
+  // No-target guard (defensive — the union should prevent it): NEVER POST an empty
+  // recipient. Bail before any settings read or network call, returning false to match
+  // the best-effort failure contract (the disabled/log-only path returns true).
+  if (roomId === undefined && toPersonEmail === undefined) {
+    console.error('[WEBEX] send called with no target');
+    return false;
+  }
+
+  // Resolve the target: a roomId (space) when given, else the toPersonEmail (1:1 DM).
+  // `label` is the log descriptor — `room=<id>` for a room, `to=<email>` for a DM — so
+  // every log line reflects the target WITHOUT ever carrying the token. The guard above
+  // guarantees exactly one of the two is defined here.
+  const target: WebexMessageTarget =
+    roomId !== undefined ? { roomId } : { toPersonEmail: toPersonEmail! };
+  const label = 'roomId' in target ? `room=${target.roomId}` : `to=${target.toPersonEmail}`;
 
   let cfg: EffectiveWebexConfig;
   if (cfgOverride !== undefined) {
@@ -180,7 +217,7 @@ export async function sendWebexMessage(
     try {
       cfg = await getEffectiveWebexConfig();
     } catch (err) {
-      console.error(`[WEBEX] settings read failed to=${to}:`, err);
+      console.error(`[WEBEX] settings read failed ${label}:`, err);
       return false;
     }
   }
@@ -188,24 +225,36 @@ export async function sendWebexMessage(
   if (!cfg.effectiveEnabled) {
     warnIfUndecryptableToken(cfg);
     // Disabled / tokenless / undecryptable-token: never open a socket. Dev story.
-    console.log(`[WEBEX disabled] to=${to}`);
+    console.log(`[WEBEX disabled] ${label}`);
     return true;
   }
 
   try {
-    const res = await postWebexMessage(cfg.token, to, options.markdown);
+    const res = await postWebexMessage(cfg.token, target, options.markdown);
     if (!res.ok) {
       // Best-effort: log the status category only (no body, no token) and swallow.
-      console.error(`[WEBEX] send failed to=${to} status=${res.status}`);
+      console.error(`[WEBEX] send failed ${label} status=${res.status}`);
       return false;
     }
     return true;
   } catch (err) {
     const code = fetchCauseCode(err);
-    console.error(`[WEBEX] send failed to=${to}${code ? ` cause=${code}` : ''}:`, err);
+    console.error(`[WEBEX] send failed ${label}${code ? ` cause=${code}` : ''}:`, err);
     return false;
   }
 }
+
+/**
+ * Max Webex sends a single notification fan-out keeps in flight (see
+ * utils/concurrency.ts runBounded). Webex has no bulk "to", so a department
+ * fan-out is one POST per DM recipient PLUS one per room — up to 20 + 50 = 70 for
+ * a maxed-out department (the validation caps). Firing all of them at once bursts
+ * outbound sockets and makes a Webex 429 (`rate_limited`) likelier, and because
+ * delivery is best-effort a throttled notification is simply lost. 5 keeps a
+ * realistic department (a handful of targets) effectively parallel while
+ * flattening the worst case into short waves.
+ */
+export const WEBEX_SEND_CONCURRENCY = 5;
 
 // ---------------------------------------------------------------------------
 // ADMIN diagnostic test-send (POST /api/webex-settings/test).
@@ -386,7 +435,7 @@ export async function sendTestWebexMessage(to: string): Promise<WebexTestResult>
   }
 
   try {
-    const res = await postWebexMessage(cfg.token, to, TEST_MESSAGE_MARKDOWN);
+    const res = await postWebexMessage(cfg.token, { toPersonEmail: to }, TEST_MESSAGE_MARKDOWN);
     if (res.ok) return { ok: true };
     const reason = await mapWebexResponseFailure(res);
     console.error(`[WEBEX] test send failed to=${to} status=${res.status}`);
@@ -394,6 +443,142 @@ export async function sendTestWebexMessage(to: string): Promise<WebexTestResult>
   } catch (err) {
     const code = fetchCauseCode(err);
     console.error(`[WEBEX] test send failed to=${to}${code ? ` cause=${code}` : ''}:`, err);
+    return { ok: false, reason: mapWebexThrownFailure(err) };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// List the rooms/spaces the bot belongs to (GET /api/webex-settings/rooms).
+//
+// Powers the admin's room picker: the FE renders the returned rooms and always also
+// offers manual entry of a room id. Mirrors sendTestWebexMessage's discipline — a
+// single effective-config read, a ~10s AbortSignal, never-throw, and on failure a
+// FIXED WebexFailureReason category (an HTTP non-OK via the rooms-specific
+// mapWebexRoomsFailure below, a thrown transport error via the shared
+// mapWebexThrownFailure) so the full error stays in the server log. SECURITY: the bot
+// token is the Bearer credential only; it is NEVER placed in the returned value
+// (neither the rooms nor the reason carry it).
+// ---------------------------------------------------------------------------
+
+/** The minimal room shape the picker needs — mapped from a Webex `items[]` entry. */
+export interface WebexRoom {
+  id: string;
+  title: string;
+}
+
+/**
+ * Structured outcome of a rooms listing. `{ ok: true, rooms }` on success;
+ * `{ ok: false, reason }` (a FIXED category) when the channel is not effectively
+ * enabled (config_error, no network call) or the GET fails. NEVER carries the token.
+ */
+export type WebexRoomsResult =
+  | { ok: true; rooms: WebexRoom[] }
+  | { ok: false; reason: WebexFailureReason };
+
+// GET the bot's rooms. Isolated (like postWebexMessage) so the URL, Bearer auth and
+// ~10s timeout live in one place. Unref'd AbortSignal timer, so a pending fetch never
+// keeps the process alive.
+//
+// The query pins the listing to what the picker needs: `type=group` returns only group
+// SPACES (excluding the bot's 1:1 `direct` rooms, which are not pickable targets), and
+// `max=1000` pulls a bot in many spaces back in a SINGLE page. There is deliberately NO
+// Link-header pagination here, so a bot in >1000 group spaces is truncated to the first
+// 1000 — an accepted limit for an admin room picker.
+function getWebexRooms(token: string): Promise<Response> {
+  return fetch(`${webexApiBaseUrl()}/v1/rooms?type=group&max=1000`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    signal: AbortSignal.timeout(WEBEX_TIMEOUT_MS),
+  });
+}
+
+// Map a successful Webex /v1/rooms body to WebexRoom[] — or NULL when the body could
+// not be parsed as a room listing (a non-JSON body, or an `items` that is missing / not
+// an array). NULL means "couldn't parse" and the caller maps it to a failure; it is
+// DISTINCT from a genuine empty listing (`items: []` -> [], an OK zero-room result), so
+// the FE can tell a real empty list apart from a fetch that returned junk. Never throws.
+// Within a valid listing an item with a missing/empty/non-string `id` is SKIPPED, and an
+// item whose `title` is missing/empty/non-string falls back to its `id` as the label so
+// the picker always has something to render. Only `id` and `title` are carried through —
+// every other field is ignored, and the token is not part of the body at all.
+async function parseWebexRooms(res: Response): Promise<WebexRoom[] | null> {
+  let payload: unknown;
+  try {
+    payload = await res.json();
+  } catch {
+    return null; // body was not JSON — a parse failure, NOT a zero-room listing
+  }
+  const items = (payload as { items?: unknown } | null)?.items;
+  if (!Array.isArray(items)) return null; // `items` missing / not an array — parse failure
+  const rooms: WebexRoom[] = [];
+  for (const item of items) {
+    const id = (item as { id?: unknown } | null)?.id;
+    if (typeof id !== 'string' || id.length === 0) continue;
+    const rawTitle = (item as { title?: unknown } | null)?.title;
+    // A titleless (or empty/non-string-title) room falls back to its id as the label.
+    rooms.push({ id, title: typeof rawTitle === 'string' && rawTitle.length > 0 ? rawTitle : id });
+  }
+  return rooms;
+}
+
+// Map a non-OK Webex /v1/rooms Response to ONE fixed reason category. UNLIKE the
+// message-send mapper (mapWebexResponseFailure), a LISTING has no recipient, so there is
+// NO 404->recipient_not_found and NO 400-body keyword sniff: 401/403 -> the Bearer
+// credential was rejected (invalid_token), 429 -> rate_limited, and ANY other non-OK
+// status -> unknown. Synchronous (no body read): the response body never influences the
+// category and never reaches the client — only the fixed code is returned.
+function mapWebexRoomsFailure(res: Response): WebexFailureReason {
+  if (res.status === 401 || res.status === 403) return 'invalid_token';
+  if (res.status === 429) return 'rate_limited';
+  return 'unknown';
+}
+
+/**
+ * Best-effort listing of the rooms the bot is a member of. NEVER throws.
+ *
+ *   - settings read throws / disabled / tokenless -> { ok: false, config_error }
+ *     (NO network call — config_error covers "not configured")
+ *   - GET succeeds (2xx), body parses             -> { ok: true, rooms }
+ *   - GET succeeds (2xx) but body is unparseable  -> { ok: false, unknown }
+ *     (non-JSON, or `items` missing/not an array — distinct from a genuine empty list)
+ *   - GET returns non-OK / throws                 -> { ok: false, <mapped> }
+ *
+ * The full error is logged server-side; the caller only ever receives rooms or a
+ * fixed reason category. The token is NEVER included in the result.
+ */
+export async function listWebexRooms(): Promise<WebexRoomsResult> {
+  let cfg: EffectiveWebexConfig;
+  try {
+    cfg = await getEffectiveWebexConfig();
+  } catch (err) {
+    console.error('[WEBEX] rooms settings read failed:', err);
+    return { ok: false, reason: 'config_error' };
+  }
+
+  if (!cfg.effectiveEnabled) {
+    warnIfUndecryptableToken(cfg);
+    // Disabled / tokenless / undecryptable-token: never open a socket.
+    console.log('[WEBEX disabled] rooms');
+    return { ok: false, reason: 'config_error' };
+  }
+
+  try {
+    const res = await getWebexRooms(cfg.token);
+    if (!res.ok) {
+      const reason = mapWebexRoomsFailure(res);
+      console.error(`[WEBEX] rooms fetch failed status=${res.status}`);
+      return { ok: false, reason };
+    }
+    // A 2xx whose body could not be parsed (parseWebexRooms -> null) is NOT an empty
+    // listing — surface it as a failure so the FE can distinguish junk from zero rooms.
+    const rooms = await parseWebexRooms(res);
+    if (rooms === null) return { ok: false, reason: 'unknown' };
+    return { ok: true, rooms };
+  } catch (err) {
+    const code = fetchCauseCode(err);
+    console.error(`[WEBEX] rooms fetch failed${code ? ` cause=${code}` : ''}:`, err);
     return { ok: false, reason: mapWebexThrownFailure(err) };
   }
 }

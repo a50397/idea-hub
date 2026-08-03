@@ -78,6 +78,10 @@ export interface Department {
   // Admin-managed notification recipients. Present ONLY in ADMIN responses; the
   // backend omits it entirely for non-admin sessions, hence optional.
   notificationEmails?: string[];
+  // Admin-managed Webex space (room) ids that new-idea notifications are posted to.
+  // Like notificationEmails, present ONLY in ADMIN responses (the backend omits it
+  // for non-admin sessions), hence optional.
+  webexRoomIds?: string[];
   _count?: {
     ideas: number;
   };

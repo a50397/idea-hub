@@ -28,13 +28,13 @@ A modern web application for managing internal improvement ideas, designed for e
 
 ### Departments (Admin Only)
 - Manage the list of target departments (create, rename, reorder, delete)
-- Per-department notification email addresses
+- Per-department notification email addresses and Webex space (room) IDs
 
 ### Notifications (Email & Webex)
-- Two independent, coexisting channels: email (SMTP) and Webex (1:1 bot messages); an admin can enable either or both
+- Two independent, coexisting channels: email (SMTP) and Webex (bot messages); an admin can enable either or both
 - Admin-managed SMTP configuration on the **Email settings** page (server, from address, notification language, optional subject template), stored in the database with the SMTP password encrypted
-- Admin-managed Webex configuration on the **Webex settings** page (bot access token stored encrypted, message language); every Webex notification is a direct bot message addressed by the recipient's email — no shared spaces
-- New-idea notification sent to the target department's notification addresses over every enabled channel (best-effort — delivery problems never block the request)
+- Admin-managed Webex configuration on the **Webex settings** page (bot access token stored encrypted, message language). Per-submitter lifecycle notifications are always private 1:1 bot messages; department new-idea notifications can additionally post to Webex spaces the admin configures per department (the bot must be a member of each space)
+- New-idea notification sent to the target department's notification addresses (email and/or 1:1 Webex message) and to the department's configured Webex spaces, over every enabled channel (best-effort — delivery problems never block the request)
 - Per-idea lifecycle notifications: the submitter can opt in (a toggle on the create form and on the idea's details page, shown only when at least one channel is enabled) to be notified when their idea is approved, rejected, claimed, completed, or gets a progress step. A change the submitter makes themselves never notifies them, and delivery is best-effort like the department notifications
 - Test buttons (test email / test Webex message) to verify each configuration
 
@@ -69,7 +69,7 @@ A modern web application for managing internal improvement ideas, designed for e
 - **Database**: MongoDB with Prisma ORM
 - **Authentication**: express-session (MongoDB session store) with bcrypt; openid-client for SSO/OIDC
 - **Email**: Nodemailer with admin-managed SMTP settings
-- **Webex**: Webex REST API (bot 1:1 messages) via native fetch, admin-managed settings
+- **Webex**: Webex REST API (bot 1:1 messages and group-space posts) via native fetch, admin-managed settings
 - **Security**: Helmet, express-rate-limit
 - **Validation**: Zod
 - **Testing**: Jest + Supertest
@@ -383,10 +383,10 @@ npm run test:watch       # Vitest in watch mode
 
 ### Departments Endpoints
 
-- `GET /api/departments` - List departments (notification emails visible to admins only)
+- `GET /api/departments` - List departments (notification emails and Webex space IDs visible to admins only)
 - `POST /api/departments` - Create department (Admin only)
 - `PATCH /api/departments/reorder` - Reorder departments (Admin only)
-- `PATCH /api/departments/:id` - Update department name / notification emails (Admin only)
+- `PATCH /api/departments/:id` - Update department name / notification emails / Webex space IDs (Admin only)
 - `DELETE /api/departments/:id` - Delete department (Admin only; refused for the last department or one that has ideas)
 
 ### Email Settings Endpoints (Admin Only)
@@ -400,6 +400,7 @@ npm run test:watch       # Vitest in watch mode
 - `GET /api/webex-settings` - Get Webex configuration (the bot token is never returned)
 - `PUT /api/webex-settings` - Save Webex configuration (bot token stored encrypted)
 - `POST /api/webex-settings/test` - Send a test Webex message using the saved configuration
+- `GET /api/webex-settings/rooms` - List the bot's Webex spaces (id + title) for the department space picker; returns an empty list with a reason code when Webex is disabled or unreachable
 
 ### Users Endpoints (Admin Only)
 
@@ -431,7 +432,7 @@ npm run test:watch       # Vitest in watch mode
 ### ADMIN
 - All POWER_USER permissions
 - Manage users (create, edit, delete, change roles)
-- Manage departments and their notification emails
+- Manage departments, their notification emails, and Webex spaces
 - Configure email (SMTP) and Webex notification settings
 - Delete ideas
 
@@ -468,6 +469,7 @@ npm run test:watch       # Vitest in watch mode
 - `name`: Unique department name
 - `order`: Display order
 - `notificationEmails`: Addresses notified about new ideas targeting this department
+- `webexRoomIds`: Webex space (room) IDs that new-idea notifications for this department are posted to
 
 ### IdeaEvent Model
 - `id`: Unique identifier
@@ -499,9 +501,9 @@ IdeaHub has **comprehensive test coverage** across backend, frontend, and end-to
 
 ### Test Coverage Summary
 
-- **Backend**: 580 tests across 18 Jest suites (run against mocked Prisma — no database needed)
-- **Backend integration**: separate Jest suite against a real MongoDB (`npm run test:integration`)
-- **Frontend**: 480 Vitest tests across 18 files (pages, stores, API client, i18n)
+- **Backend**: 664 tests across 19 Jest suites (run against mocked Prisma — no database needed)
+- **Backend integration**: 91 tests across 11 Jest suites against a real MongoDB (`npm run test:integration`)
+- **Frontend**: 520 Vitest tests across 19 files (pages, stores, API client, i18n)
 - **E2E**: Playwright scenarios covering local & SSO login, RBAC, the idea lifecycle, departments, email settings, Webex settings, the per-idea notification opt-in, and i18n
 
 **What's Tested:**
@@ -817,18 +819,6 @@ If frontend can't reach backend:
 1. Check VITE_API_URL in .env
 2. Ensure backend is running
 3. Check browser console for CORS errors
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## License
-
-This project is licensed under the MIT License.
 
 ## Support
 

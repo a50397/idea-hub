@@ -23,7 +23,20 @@ console.log(
 
 const { default: i18n } = await import('../src/i18n');
 
-const PROBES = ['common.appName', 'nav.dashboard', 'dashboard.title', 'auth.signInWithSso'];
+const PROBES = [
+  'common.appName',
+  'nav.dashboard',
+  'dashboard.title',
+  'auth.signInWithSso',
+  // Webex-spaces department control keys (added with feat/webex-dept-spaces).
+  'departments.webexRoomIds',
+  'departments.webexRoomIdsHint',
+  'departments.webexRoomIdsUnavailable',
+  'departments.webexRoomsEmpty',
+  'departments.webexRoomsLoading',
+  'departments.tooManyWebexRoomIds',
+  'departments.webexRoomIdTooLong',
+];
 let failed = false;
 
 for (const locale of ['en', 'sk'] as const) {

@@ -136,6 +136,18 @@ model Department {
   // backfill is required.
   notificationEmails String[]
 
+  // Admin-managed Webex SPACE (room) targets. On idea creation the same best-effort
+  // new-idea Webex message posted to the notificationEmails as 1:1 bot DMs is ALSO
+  // posted to each of these rooms (POST /v1/messages with roomId; the bot must be a
+  // member). Like notificationEmails this is INTERNAL admin-only data: GET
+  // /api/departments projects it ONLY for ADMIN sessions.
+  //
+  // Same missing-field semantics as notificationEmails above: a scalar list, so the
+  // Mongo connector reads a legacy document that lacks the field as an empty list —
+  // no boot backfill (proven by the departments integration test that raw-inserts a
+  // department without the field and reads it back as []).
+  webexRoomIds String[]
+
   // Relations
   ideas Idea[]
 
@@ -206,8 +218,11 @@ model MailSettings {
 // `singleton` key ?? in-code defaults; a save upserts the one document), and a
 // second, independent notification CHANNEL alongside mail: an idea's single
 // `notifyOnChange` opt-in fires every effectively-enabled channel, and each
-// channel is best-effort so one failing never affects the other. All Webex sends
-// are 1:1 bot DMs (POST /v1/messages with toPersonEmail) — no rooms/spaces.
+// channel is best-effort so one failing never affects the other. A Webex send
+// targets EITHER a person (1:1 bot DM, toPersonEmail) OR a room/space (roomId) via
+// the same POST /v1/messages endpoint: lifecycle events DM the submitter, and a new
+// idea both DMs a department's notificationEmails and posts to its webexRoomIds
+// (see Department.webexRoomIds and routes/ideas.ts).
 //
 // SECURITY: `botTokenEnc` holds the Webex bot access token encrypted with the
 // SAME AES-256-GCM secretbox (utils/secretbox.ts, keyed by MAIL_SETTINGS_KEY) as

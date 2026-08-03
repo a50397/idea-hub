@@ -185,6 +185,12 @@ describe('translation coverage for components', () => {
       'users.deleteUser', 'users.name', 'users.email', 'users.password',
       'users.role', 'users.nameRequired', 'users.emailRequired',
     ],
+    DepartmentsPage: [
+      'departments.title', 'departments.notificationEmails', 'departments.notificationEmailsHint',
+      'departments.webexRoomIds', 'departments.webexRoomIdsHint',
+      'departments.webexRoomIdsUnavailable', 'departments.tooManyWebexRoomIds',
+      'departments.webexRoomIdTooLong',
+    ],
     MyIdeasPage: [
       'myIdeas.title', 'myIdeas.subtitle', 'myIdeas.filterByStatus', 'myIdeas.noIdeas',
       'status.submitted', 'status.approved', 'status.inProgress', 'status.done', 'status.rejected',

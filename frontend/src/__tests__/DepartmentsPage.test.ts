@@ -16,10 +16,28 @@ vi.mock('../api/departments', () => ({
   },
 }));
 
+// The page loads the bot's Webex rooms (for the room picker) on mount, so stub the
+// webex api too — it must never hit axios.
+vi.mock('../api/webexSettings', () => ({
+  webexSettingsApi: {
+    getRooms: vi.fn(),
+  },
+}));
+
 import { departmentsApi } from '../api/departments';
 const mockedApi = vi.mocked(departmentsApi);
 
-function dept(id: string, name: string, order: number, ideas = 0, notificationEmails?: string[]): Department {
+import { webexSettingsApi } from '../api/webexSettings';
+const mockedWebexApi = vi.mocked(webexSettingsApi);
+
+function dept(
+  id: string,
+  name: string,
+  order: number,
+  ideas = 0,
+  notificationEmails?: string[],
+  webexRoomIds?: string[]
+): Department {
   return {
     id,
     name,
@@ -27,6 +45,7 @@ function dept(id: string, name: string, order: number, ideas = 0, notificationEm
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     ...(notificationEmails ? { notificationEmails } : {}),
+    ...(webexRoomIds ? { webexRoomIds } : {}),
     _count: { ideas },
   };
 }
@@ -71,12 +90,26 @@ function setEditName(wrapper: VueWrapper, value: string) {
   field!.vm.$emit('update:modelValue', value);
 }
 
+// The edit dialog now has TWO comboboxes (emails + Webex spaces); target each by its
+// label so the helpers are independent of declaration order.
 function editCombobox(wrapper: VueWrapper) {
-  return wrapper.findComponent({ name: 'VCombobox' });
+  return wrapper
+    .findAllComponents({ name: 'VCombobox' })
+    .find((c) => String(c.props('label') ?? '').includes('Notification'))!;
+}
+
+function roomCombobox(wrapper: VueWrapper) {
+  return wrapper
+    .findAllComponents({ name: 'VCombobox' })
+    .find((c) => String(c.props('label') ?? '').includes('Webex'))!;
 }
 
 function setEditEmails(wrapper: VueWrapper, value: string[]) {
   editCombobox(wrapper).vm.$emit('update:modelValue', value);
+}
+
+function setEditRoomIds(wrapper: VueWrapper, value: string[]) {
+  roomCombobox(wrapper).vm.$emit('update:modelValue', value);
 }
 
 // The combobox's real <input>. A native keydown is used (below) so the event can
@@ -111,10 +144,17 @@ function pressEnter(input: HTMLInputElement, isComposing = false): KeyboardEvent
 }
 
 describe('DepartmentsPage', () => {
+  // Two bot rooms are available by default; tests that need a load failure override this.
+  const rooms = [
+    { id: 'room-a', title: 'Team A Space' },
+    { id: 'room-b', title: 'Team B Space' },
+  ];
+
   beforeEach(() => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
     mockedApi.getAll.mockResolvedValue(unsorted);
+    mockedWebexApi.getRooms.mockResolvedValue({ rooms });
   });
 
   it('loads departments on mount and renders them sorted by order with ideas counts', async () => {
@@ -180,9 +220,11 @@ describe('DepartmentsPage', () => {
     await dialogButton(wrapper, 'Update')!.trigger('click');
     await flushPromises();
 
+    // The save always carries every managed list; this department has no rooms set.
     expect(mockedApi.update).toHaveBeenCalledWith('alpha', {
       name: 'Renamed',
       notificationEmails: ['ops@corp.example', 'lead@corp.example'],
+      webexRoomIds: [],
     });
   });
 
@@ -212,7 +254,286 @@ describe('DepartmentsPage', () => {
     expect(mockedApi.update).toHaveBeenCalledWith('alpha', {
       name: 'Alpha',
       notificationEmails: ['keep@corp.example'],
+      webexRoomIds: [],
     });
+  });
+
+  it('renders the Webex-spaces combobox and refreshes the bot rooms each time an editor opens', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    // Rooms are fetched once on mount...
+    expect(mockedWebexApi.getRooms).toHaveBeenCalledTimes(1);
+
+    await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+    await flushPromises();
+
+    // Each room maps title -> shown label, id -> stored value; the normal hint shows.
+    expect(roomCombobox(wrapper).props('items')).toEqual([
+      { title: 'Team A Space', value: 'room-a' },
+      { title: 'Team B Space', value: 'room-b' },
+    ]);
+    expect(roomCombobox(wrapper).props('hint')).toBe('Select a space or enter a room ID');
+
+    // ...and refreshed on every edit-open so a space the bot was just added to appears
+    // without a full page reload.
+    expect(mockedWebexApi.getRooms).toHaveBeenCalledTimes(2);
+    await rowButtons(wrapper, 'mdi-pencil')[1].trigger('click');
+    await flushPromises();
+    expect(mockedWebexApi.getRooms).toHaveBeenCalledTimes(3);
+  });
+
+  it('lets the admin pick a room and type a manual id, saving the resulting webexRoomIds', async () => {
+    mockedApi.update.mockResolvedValueOnce(dept('alpha', 'Alpha', 0));
+    const wrapper = mountPage();
+    await flushPromises();
+
+    await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+    await flushPromises();
+
+    // return-object=false means a picked room contributes its id and a typed id its raw
+    // text — both arrive as plain id strings in the model.
+    setEditRoomIds(wrapper, ['room-a', 'MANUAL-ROOM-ID']);
+    await flushPromises();
+
+    expect(roomCombobox(wrapper).props('modelValue')).toEqual(['room-a', 'MANUAL-ROOM-ID']);
+
+    await dialogButton(wrapper, 'Update')!.trigger('click');
+    await flushPromises();
+
+    expect(mockedApi.update).toHaveBeenCalledWith('alpha', {
+      name: 'Alpha',
+      notificationEmails: [],
+      webexRoomIds: ['room-a', 'MANUAL-ROOM-ID'],
+    });
+  });
+
+  it('pre-fills the edit dialog with existing webex room ids and can remove one', async () => {
+    mockedApi.getAll.mockResolvedValue([
+      dept('alpha', 'Alpha', 0, 0, undefined, ['room-a', 'room-b']),
+    ]);
+    mockedApi.update.mockResolvedValueOnce(dept('alpha', 'Alpha', 0));
+    const wrapper = mountPage();
+    await flushPromises();
+
+    await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+    await flushPromises();
+
+    // The combobox is pre-populated from the department's stored room ids.
+    expect(roomCombobox(wrapper).props('modelValue')).toEqual(['room-a', 'room-b']);
+
+    setEditRoomIds(wrapper, ['room-b']);
+    await flushPromises();
+    await dialogButton(wrapper, 'Update')!.trigger('click');
+    await flushPromises();
+
+    expect(mockedApi.update).toHaveBeenCalledWith('alpha', {
+      name: 'Alpha',
+      notificationEmails: [],
+      webexRoomIds: ['room-b'],
+    });
+  });
+
+  it('still allows manual room-id entry and shows a hint when the bot rooms cannot be loaded', async () => {
+    // Webex off / unreachable: empty list plus a fixed reason category. Persistent so the
+    // refresh fired when the edit dialog opens also reports the failure.
+    mockedWebexApi.getRooms.mockResolvedValue({ rooms: [], reason: 'config_error' });
+    mockedApi.update.mockResolvedValueOnce(dept('alpha', 'Alpha', 0));
+    const wrapper = mountPage();
+    await flushPromises();
+
+    await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+    await flushPromises();
+
+    // No pickable rooms, and the hint switches to explain manual entry (no token/error).
+    expect(roomCombobox(wrapper).props('items')).toEqual([]);
+    expect(roomCombobox(wrapper).props('hint')).toBe(
+      "Couldn't load Webex spaces — you can still enter a room ID manually"
+    );
+
+    // Typing a raw id still works and saves.
+    setEditRoomIds(wrapper, ['MANUAL-ONLY']);
+    await flushPromises();
+    await dialogButton(wrapper, 'Update')!.trigger('click');
+    await flushPromises();
+
+    expect(mockedApi.update).toHaveBeenCalledWith('alpha', {
+      name: 'Alpha',
+      notificationEmails: [],
+      webexRoomIds: ['MANUAL-ONLY'],
+    });
+  });
+
+  it('treats a genuinely empty room list (no reason) as loaded, showing the empty hint and allowing manual entry', async () => {
+    // A valid bot that is simply in no space yet: empty list, NO reason → a success, not
+    // a load failure. Persistent so the edit-open refresh reports the same empty success.
+    mockedWebexApi.getRooms.mockResolvedValue({ rooms: [] });
+    mockedApi.update.mockResolvedValueOnce(dept('alpha', 'Alpha', 0));
+    const wrapper = mountPage();
+    await flushPromises();
+
+    await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+    await flushPromises();
+
+    // No pickable rooms, but this is NOT the "couldn't load" state — the empty-bot hint
+    // shows instead, inviting the admin to add the bot to a space or type an id.
+    expect(roomCombobox(wrapper).props('items')).toEqual([]);
+    expect(roomCombobox(wrapper).props('hint')).toBe(
+      "This bot isn't in any Webex space yet — add it to a space, or enter a room ID manually."
+    );
+
+    // Manual entry still works and saves.
+    setEditRoomIds(wrapper, ['MANUAL-ONLY']);
+    await flushPromises();
+    await dialogButton(wrapper, 'Update')!.trigger('click');
+    await flushPromises();
+
+    expect(mockedApi.update).toHaveBeenCalledWith('alpha', {
+      name: 'Alpha',
+      notificationEmails: [],
+      webexRoomIds: ['MANUAL-ONLY'],
+    });
+  });
+
+  it('shows the could-not-load hint on a structured load failure (invalid token)', async () => {
+    // A rejected/expired token is a failure: empty list WITH a reason → the unavailable
+    // hint, unchanged by fix 1. Persistent so the edit-open refresh reports it too.
+    mockedWebexApi.getRooms.mockResolvedValue({ rooms: [], reason: 'invalid_token' });
+    const wrapper = mountPage();
+    await flushPromises();
+
+    await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+    await flushPromises();
+
+    expect(roomCombobox(wrapper).props('items')).toEqual([]);
+    expect(roomCombobox(wrapper).props('hint')).toBe(
+      "Couldn't load Webex spaces — you can still enter a room ID manually"
+    );
+  });
+
+  it('falls back to the unavailable hint and manual entry when the rooms request rejects', async () => {
+    // The request itself rejects (not a structured failure); the catch branch flags the
+    // control unavailable. Persistent so the edit-open refresh also rejects and the
+    // fallback state is not overwritten by a later success.
+    mockedWebexApi.getRooms.mockRejectedValue(new Error('network down'));
+    mockedApi.update.mockResolvedValueOnce(dept('alpha', 'Alpha', 0));
+    const wrapper = mountPage();
+    await flushPromises();
+
+    await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+    await flushPromises();
+
+    expect(roomCombobox(wrapper).props('items')).toEqual([]);
+    expect(roomCombobox(wrapper).props('hint')).toBe(
+      "Couldn't load Webex spaces — you can still enter a room ID manually"
+    );
+
+    // Manual entry still works despite the failed load.
+    setEditRoomIds(wrapper, ['MANUAL-ONLY']);
+    await flushPromises();
+    await dialogButton(wrapper, 'Update')!.trigger('click');
+    await flushPromises();
+
+    expect(mockedApi.update).toHaveBeenCalledWith('alpha', {
+      name: 'Alpha',
+      notificationEmails: [],
+      webexRoomIds: ['MANUAL-ONLY'],
+    });
+  });
+
+  it('splits a joined room-id string into separate ids and de-dupes repeated ids', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+    await flushPromises();
+
+    // A pasted list arrives as ONE combobox entry; it must fan out into three id chips.
+    setEditRoomIds(wrapper, ['room-a, room-b ;room-c']);
+    await flushPromises();
+    expect(roomCombobox(wrapper).props('modelValue')).toEqual(['room-a', 'room-b', 'room-c']);
+
+    // The same id entered twice collapses to a single chip (first-seen order kept).
+    setEditRoomIds(wrapper, ['room-a', 'room-b', 'room-a']);
+    await flushPromises();
+    expect(roomCombobox(wrapper).props('modelValue')).toEqual(['room-a', 'room-b']);
+  });
+
+  it('blocks the save and shows a validation message when a webex room id is too long', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+    await flushPromises();
+
+    // A single id one character over the backend's 256-char cap.
+    setEditRoomIds(wrapper, ['x'.repeat(257)]);
+    await flushPromises();
+
+    await dialogButton(wrapper, 'Update')!.trigger('click');
+    await flushPromises();
+
+    expect(mockedApi.update).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain('Each Webex room ID must be at most 256 characters');
+  });
+
+  it('shows only the selected department room ids when switching between editors', async () => {
+    mockedApi.getAll.mockResolvedValue([
+      dept('alpha', 'Alpha', 0, 0, undefined, ['room-a', 'room-b']),
+      dept('bravo', 'Bravo', 1, 0, undefined, ['room-c']),
+    ]);
+    const wrapper = mountPage();
+    await flushPromises();
+
+    // Open A → exactly its ids.
+    await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+    await flushPromises();
+    expect(roomCombobox(wrapper).props('modelValue')).toEqual(['room-a', 'room-b']);
+
+    // Open B → ONLY B's ids, with no leftover from A's editor.
+    await rowButtons(wrapper, 'mdi-pencil')[1].trigger('click');
+    await flushPromises();
+    expect(roomCombobox(wrapper).props('modelValue')).toEqual(['room-c']);
+  });
+
+  it('clears the room-id field when the create dialog opens after editing a department with rooms', async () => {
+    mockedApi.getAll.mockResolvedValue([
+      dept('alpha', 'Alpha', 0, 0, undefined, ['room-a', 'room-b']),
+    ]);
+    const wrapper = mountPage();
+    await flushPromises();
+
+    // Edit a department that has room ids → the shared field is populated.
+    await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+    await flushPromises();
+    expect(roomCombobox(wrapper).props('modelValue')).toEqual(['room-a', 'room-b']);
+
+    // Opening the create dialog resets every shared field, room ids included, so nothing
+    // leaks into a future create form. Create has no room field of its own, so the reset
+    // is observed through the edit dialog's field, still bound to the shared ref.
+    const opener = wrapper.findAll('.v-btn').find((b) => b.text().trim() === 'Create Department');
+    await opener!.trigger('click');
+    await flushPromises();
+    expect(roomCombobox(wrapper).props('modelValue')).toEqual([]);
+  });
+
+  it('blocks the save and shows a validation message when more than 50 webex room ids are entered', async () => {
+    const wrapper = mountPage();
+    await flushPromises();
+
+    await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+    await flushPromises();
+
+    // 51 room ids exceed the backend cap of 50.
+    const many = Array.from({ length: 51 }, (_, i) => `room-${i}`);
+    setEditRoomIds(wrapper, many);
+    await flushPromises();
+
+    await dialogButton(wrapper, 'Update')!.trigger('click');
+    await flushPromises();
+
+    expect(mockedApi.update).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain('At most 50 Webex spaces are allowed');
   });
 
   it('blocks the save and shows a validation message when a notification email is invalid', async () => {

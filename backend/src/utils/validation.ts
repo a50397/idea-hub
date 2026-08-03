@@ -43,11 +43,22 @@ export const departmentNameSchema = z.object({
   name: z.string().trim().min(1, 'Name is required').max(100, 'Name must be at most 100 characters'),
 });
 
-// PATCH /api/departments/:id accepts a rename, a notification-emails update, or
-// both — every field is optional, so rename-only and emails-only requests each
-// work. Each notification email is trimmed then validated; the raw array is capped
-// at 20 entries; valid entries are de-duplicated CASE-INSENSITIVELY. An empty array
-// is allowed and clears the list.
+// A Webex room id is an OPAQUE, non-whitespace token. This regex matches any character
+// that must never appear inside one: \s (space, tab, CR, LF, form/vertical
+// feed, and Unicode whitespace) plus the remaining C0 control range (\u0000-\u001f)
+// and DEL (\u007f). Rejecting these closes a log-forging vector: a newline in an
+// id would otherwise forge '[WEBEX]' log lines. It also rejects malformed pastes;
+// base64 / base64url ids (A-Z a-z 0-9 and - _ + / =) contain none of these.
+const webexRoomIdForbiddenChar = /[\s\u0000-\u001f\u007f]/;
+
+// PATCH /api/departments/:id accepts a rename, a notification-emails update, a
+// webex-room-ids update, or any combination — every field is optional, so a
+// single-field request works for each. Each notification email is trimmed then
+// validated; the raw array is capped at 20 entries; valid entries are de-duplicated
+// CASE-INSENSITIVELY. Each webex room id is trimmed and (up to 256 chars) capped, the
+// raw array is capped at 50, blank entries are dropped, and the rest are de-duplicated
+// CASE-SENSITIVELY (room ids are opaque). An empty array is allowed for either list
+// and clears it.
 export const updateDepartmentSchema = z.object({
   name: z
     .string()
@@ -70,6 +81,44 @@ export const updateDepartmentSchema = z.object({
         if (!seen.has(key)) {
           seen.add(key);
           deduped.push(email);
+        }
+      }
+      return deduped;
+    })
+    .optional(),
+  webexRoomIds: z
+    // Each id is trimmed, length-capped (a Webex room id is opaque — no format to
+    // validate), then checked for forbidden characters. The item schema allows an empty
+    // (post-trim) string so a stray blank line from a paste does not 400 the whole
+    // array; the transform DROPS it. The raw array is capped at 50 (mirroring
+    // notificationEmails' max on the raw count).
+    .array(
+      z
+        .string()
+        .trim()
+        .max(256, 'Each Webex room ID must be at most 256 characters')
+        // Opaque, NON-whitespace ids: reject any embedded whitespace or control char
+        // (webexRoomIdForbiddenChar). A newline in an id could otherwise forge '[WEBEX]'
+        // log lines (log injection); any such char also signals a malformed paste.
+        // Leading/trailing whitespace was already trimmed above, so a blank (post-trim
+        // '') entry still passes here and is dropped by the transform below.
+        .refine((id) => !webexRoomIdForbiddenChar.test(id), {
+          message: 'Webex room IDs cannot contain whitespace or control characters',
+        })
+    )
+    .max(50, 'At most 50 Webex room IDs are allowed')
+    // Drop blank entries (empty after trim) and de-duplicate. Room ids are OPAQUE, so
+    // unlike the case-insensitive email dedupe they are compared CASE-SENSITIVELY
+    // (exact match) — 'ROOM-A' and 'room-a' are DISTINCT rooms. Order is preserved and
+    // the first occurrence kept.
+    .transform((ids) => {
+      const seen = new Set<string>();
+      const deduped: string[] = [];
+      for (const id of ids) {
+        if (id.length === 0) continue; // already trimmed by the item schema; drop blanks
+        if (!seen.has(id)) {
+          seen.add(id);
+          deduped.push(id);
         }
       }
       return deduped;

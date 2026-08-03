@@ -4,6 +4,7 @@
 //   GET  /api/webex-settings         -> masked settings + hasToken (no ciphertext)
 //   PUT  /api/webex-settings         -> save (upsert) the single document
 //   POST /api/webex-settings/test    -> send a short test DM using the SAVED config
+//   GET  /api/webex-settings/rooms   -> list the rooms/spaces the bot belongs to
 //
 // Every route requires an ADMIN session (requireRole). The effective webex-enabled
 // boolean any authenticated user needs (to drive UI) lives on GET /api/options
@@ -21,6 +22,7 @@ import { updateWebexSettingsSchema, webexTestSendSchema } from '../utils/validat
 import { encrypt } from '../utils/secretbox';
 import {
   sendTestWebexMessage,
+  listWebexRooms,
   WEBEX_SETTINGS_DEFAULTS,
   WEBEX_SETTINGS_SINGLETON,
   type WebexSettingsRecord,
@@ -49,6 +51,35 @@ router.get('/', requireRole(Role.ADMIN), async (req, res) => {
   } catch (error) {
     console.error('Error fetching webex settings:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /rooms: list the rooms/spaces the bot belongs to, powering the admin room
+// picker. Delivery is best-effort, so this ALWAYS responds 200 with a
+// { rooms: WebexRoom[]; reason?: WebexFailureReason } shape: on success `rooms` is
+// the listing and `reason` is absent; on ANY failure — not configured, or an
+// HTTP/transport error — `rooms` is [] and `reason` is a FIXED category, so the FE
+// can render the picker when rooms load yet always fall back to manual room-id
+// entry. CRITICAL: the bot token is the Bearer credential only and is NEVER part of
+// the response (neither the rooms nor the reason carry it); the full error stays in
+// the server log. See utils/webex.ts listWebexRooms().
+router.get('/rooms', requireRole(Role.ADMIN), async (req, res) => {
+  try {
+    const result = await listWebexRooms();
+    if (result.ok) {
+      res.json({ rooms: result.rooms });
+    } else {
+      res.json({ rooms: [], reason: result.reason });
+    }
+  } catch (error) {
+    // listWebexRooms() is documented never-throws, so this is defensive only. It
+    // still answers 200 with the SAME { rooms, reason } shape rather than the house
+    // 500/{ error } fallback used by the routes above: the always-200 contract is
+    // what the picker codes against, and an unexpected exception here is exactly the
+    // "listing unavailable, offer manual entry" case — degrading it into a second
+    // failure mode the FE must handle would buy nothing. The full error is logged.
+    console.error('Error listing webex rooms:', error);
+    res.json({ rooms: [], reason: 'unknown' });
   }
 });
 
