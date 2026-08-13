@@ -7,11 +7,23 @@ A modern web application for managing internal improvement ideas, designed for e
 ### Core Functionality
 - **Idea Submission**: Employees can submit improvement ideas with title, description, benefits, effort estimation, tags, and a target department
 - **Review & Approval**: Power users and admins can review, approve, or reject submitted ideas
-- **Idea Execution**: Approved ideas can be claimed and worked on by any user
-- **Progress Steps**: Assignees can log progress notes on in-progress ideas
-- **Completion Tracking**: Users can mark their claimed ideas as completed
-- **Activity Timeline**: Full audit trail of all actions taken on each idea
+- **Idea Execution via Jira**: An approved idea is executed by a Power User or Admin clicking "Create Jira task" (Slovak UI: „Vytvoriť úlohu v Jire"), which creates a matching issue in Jira Cloud; further progress (steps, completion) is then tracked directly in Jira from then on — see [Jira Execution](#jira-execution-jira-cloud) below
+- **Progress Steps & Completion (legacy ideas only)**: Ideas claimed before the move to Jira keep their original behavior — the original assignee can still log progress steps and mark the idea completed (grandfathered; new ideas no longer follow this path)
+- **Activity Timeline**: Full audit trail of all actions taken on each idea (including Jira events — issue created, status changed, cancelled)
 - **Status Views**: Dedicated pages for my ideas and for approved, in-progress, and completed ideas
+
+### Jira Execution (Jira Cloud)
+
+> **Breaking change:** The original "claim" execution flow (`PATCH /api/ideas/:id/claim`) has been **removed**. Executing an approved idea is now started by a Power User or Admin clicking **"Create Jira task"**, which requires an admin to first configure the Jira integration (the **Jira settings** page) — until that happens, the button stays hidden and approved ideas cannot be dispatched. Ideas that were already in progress (`IN_PROGRESS`) via the old claim flow at deploy time keep their progress steps and completion (grandfathered) — the original assignee finishes them; new ideas are never assigned this way. The database schema change is **additive** and applies itself at backend boot (`prisma db push` + automatic backfill of the `jiraSyncActive` field on existing ideas) — no manual database step is required. The deployment must also allow **outbound HTTPS to the Jira Cloud host** (e.g. `https://yourcompany.atlassian.net`) — without it, neither dispatching to Jira nor the background poller can ever connect.
+
+- A Power User/Admin creates a Jira issue from an approved idea (REST API v3, Basic auth with the tech account's email and API token); the new issue opens in a new browser tab
+- After dispatch the idea stays **Approved** (with a "Jira: KEY" chip, Slovak UI: „V Jire: KEY") — it moves to **In Progress** only once work in Jira actually starts
+- Because the app runs in a segment with no inbound webhooks, the backend polls Jira on a schedule (interval configurable by the admin) and maps the Jira status **category** onto the idea status: `new` (waiting) → Approved, `indeterminate` → In Progress, `done` with an ordinary resolution → Done, `done` with a "cancelling" resolution (default `Won't Do`, `Cancelled`, `Duplicate` — configurable) → back to Approved, with re-dispatch allowed
+- If the Jira issue is deleted or access to it is lost, the idea returns to Approved the same way, after two consecutive confirmations
+- The raw Jira status name is shown as a colored chip on the idea card; the idea detail additionally shows the raw status and the assignee (plus the resolution once done); the Dashboard shows a breakdown of ideas by raw Jira status; the Reports CSV export carries all four fields (key, status, assignee, resolution)
+- The default target Jira project is set in admin (**Jira settings**), with an optional per-department override
+- If Jira sync has been failing for a while (e.g. an invalid API token or an unreachable Jira), an admin sees a dismissible banner in the app header and on the **Jira settings** page itself
+- Milestone notifications (work started / completed / cancelled) go through the existing submitter opt-in mechanism (email and/or Webex)
 
 ### Dashboard & Analytics
 - Real-time statistics (submitted, approved, in-progress, done, rejected)
@@ -35,7 +47,7 @@ A modern web application for managing internal improvement ideas, designed for e
 - Admin-managed SMTP configuration on the **Email settings** page (server, from address, notification language, optional subject template), stored in the database with the SMTP password encrypted
 - Admin-managed Webex configuration on the **Webex settings** page (bot access token stored encrypted, message language). Per-submitter lifecycle notifications are always private 1:1 bot messages; department new-idea notifications can additionally post to Webex spaces the admin configures per department (the bot must be a member of each space)
 - New-idea notification sent to the target department's notification addresses (email and/or 1:1 Webex message) and to the department's configured Webex spaces, over every enabled channel (best-effort — delivery problems never block the request)
-- Per-idea lifecycle notifications: the submitter can opt in (a toggle on the create form and on the idea's details page, shown only when at least one channel is enabled) to be notified when their idea is approved, rejected, claimed, completed, or gets a progress step. A change the submitter makes themselves never notifies them, and delivery is best-effort like the department notifications
+- Per-idea lifecycle notifications: the submitter can opt in (a toggle on the create form and on the idea's details page, shown only when at least one channel is enabled) to be notified when their idea is approved or rejected, when work starts on it in Jira, when it is completed or cancelled, and (for older ideas claimed before the move to Jira) when it gets a progress step. A change the submitter makes themselves never notifies them, and delivery is best-effort like the department notifications
 - Test buttons (test email / test Webex message) to verify each configuration
 
 ### Internationalization
@@ -102,12 +114,12 @@ idea-hub/
 │   ├── src/
 │   │   ├── __tests__/      # Jest unit/route tests (mocked Prisma)
 │   │   ├── __integration__/# Jest integration tests (real MongoDB)
-│   │   ├── config/         # Mail & SSO configuration
+│   │   ├── config/         # Mail, SSO & Jira configuration
 │   │   ├── lib/            # Prisma client
 │   │   ├── middleware/     # Auth & RBAC middleware
-│   │   ├── routes/         # API routes (auth, sso, ideas, users, reports, departments, mail-settings, webex-settings)
+│   │   ├── routes/         # API routes (auth, sso, ideas, users, reports, departments, mail-settings, webex-settings, jira-settings)
 │   │   ├── types/          # TypeScript types
-│   │   ├── utils/          # Validation, mailer & templates, bootstrap, SSO pruning
+│   │   ├── utils/          # Validation, mailer & templates, Jira client & poller, bootstrap, SSO pruning
 │   │   └── index.ts        # Server entry point
 │   ├── Dockerfile
 │   └── package.json
@@ -193,10 +205,10 @@ This is the easiest way to get started. Docker will handle all dependencies and 
    >   ```
    > - **Generate a `MAIL_SETTINGS_KEY`** the same way (64 hex chars). It is
    >   **required outside development** — the backend refuses to boot without it and
-   >   both compose files fail-fast if it's unset. It encrypts the SMTP password and
-   >   the Webex bot token an admin later sets on the **Email settings** / **Webex
-   >   settings** pages; keep it stable, or previously saved secrets become
-   >   undecryptable.
+   >   both compose files fail-fast if it's unset. It encrypts the SMTP password, the
+   >   Webex bot token, and the Jira API token an admin later sets on the **Email
+   >   settings** / **Webex settings** / **Jira settings** pages; keep it stable, or
+   >   previously saved secrets become undecryptable.
    > - **Set `ADMIN_EMAIL` / `ADMIN_PASSWORD` to unique, non-default values.** The
    >   bootstrap admin is created on first run from these; use a long, random
    >   password (12+ characters — the app enforces a 12-char minimum for
@@ -357,20 +369,20 @@ npm run test:watch       # Vitest in watch mode
 
 ### Options Endpoint
 
-- `GET /api/options` - Authenticated: consolidated runtime UI flags for the app, as `{ mailEnabled, webexEnabled, ssoShowLogout }` (any logged-in user). `mailEnabled` / `webexEnabled` (channel effectively enabled) together drive the per-idea notify toggle — it appears when at least one is true; `ssoShowLogout` (`SSO_SHOW_LOGOUT`) re-exposes the in-app logout button for SSO users. Exposes only these booleans — no admin configuration.
+- `GET /api/options` - Authenticated: consolidated runtime UI flags for the app, as `{ mailEnabled, webexEnabled, jiraEnabled, ssoShowLogout }` (any logged-in user), plus `jiraSyncFailing` for admins only (whether Jira sync has been failing for a while — drives the in-app header banner). `mailEnabled` / `webexEnabled` (channel effectively enabled) together drive the per-idea notify toggle — it appears when at least one is true; `jiraEnabled` (the Jira integration is effectively enabled — enabled AND has a base URL/email/API token configured) drives the visibility of the "Create Jira task" button; `ssoShowLogout` (`SSO_SHOW_LOGOUT`) re-exposes the in-app logout button for SSO users. Other than `jiraSyncFailing`, exposes only these booleans — no admin configuration.
 
 ### Ideas Endpoints
 
-- `GET /api/ideas` - Get all ideas (with filters and pagination)
+- `GET /api/ideas` - Get all ideas (with filters and pagination); ideas dispatched to Jira additionally carry `jiraBrowseUrl` (when it can be safely built)
 - `GET /api/ideas/:id` - Get single idea with events and progress steps
 - `POST /api/ideas` - Create new idea (emails the target department when mail is configured)
 - `PATCH /api/ideas/:id` - Update idea (submitter only, while SUBMITTED)
 - `PATCH /api/ideas/:id/approve` - Approve idea (Power User/Admin)
 - `PATCH /api/ideas/:id/reject` - Reject idea (Power User/Admin)
-- `PATCH /api/ideas/:id/claim` - Claim and start working on idea
-- `PATCH /api/ideas/:id/complete` - Mark idea as completed (assignee only)
+- `POST /api/ideas/:id/jira-task` - Create a Jira issue from an approved idea and enroll it in poller status tracking (Power User/Admin; requires the Jira integration to be enabled/configured and a target project to be resolvable); **replaces the old `PATCH /api/ideas/:id/claim`, which has been removed**
+- `PATCH /api/ideas/:id/complete` - Mark idea as completed (assignee only; now applies only to legacy ideas claimed before the move to Jira — grandfathered)
 - `PATCH /api/ideas/:id/notify` - Toggle the submitter's lifecycle-email opt-in (submitter only, any status)
-- `POST /api/ideas/:id/steps` - Add progress step to in-progress idea (assignee only)
+- `POST /api/ideas/:id/steps` - Add progress step to in-progress idea (assignee only; same grandfathering as above)
 - `DELETE /api/ideas/:id` - Delete idea (Admin only)
 
 ### Reports Endpoints
@@ -379,14 +391,15 @@ npm run test:watch       # Vitest in watch mode
 - `GET /api/reports/by-department` - Idea counts per department (regular users: own ideas only)
 - `GET /api/reports/monthly-trend` - Monthly completion trend (regular users: own ideas only)
 - `GET /api/reports/top-contributors` - Top contributors (Power User/Admin)
-- `GET /api/reports/filtered` - Filtered ideas with pagination (with CSV export)
+- `GET /api/reports/jira-statuses` - Counts of ideas dispatched to Jira, grouped by raw Jira status (regular users: own ideas only)
+- `GET /api/reports/filtered` - Filtered ideas with pagination (with CSV export; the CSV additionally carries Jira Key/Status/Assignee/Resolution columns)
 
 ### Departments Endpoints
 
-- `GET /api/departments` - List departments (notification emails and Webex space IDs visible to admins only)
+- `GET /api/departments` - List departments (notification emails, Webex space IDs, and the default-Jira-project override visible to admins only)
 - `POST /api/departments` - Create department (Admin only)
 - `PATCH /api/departments/reorder` - Reorder departments (Admin only)
-- `PATCH /api/departments/:id` - Update department name / notification emails / Webex space IDs (Admin only)
+- `PATCH /api/departments/:id` - Update department name / notification emails / Webex space IDs / Jira project override (Admin only)
 - `DELETE /api/departments/:id` - Delete department (Admin only; refused for the last department or one that has ideas)
 
 ### Email Settings Endpoints (Admin Only)
@@ -401,6 +414,13 @@ npm run test:watch       # Vitest in watch mode
 - `PUT /api/webex-settings` - Save Webex configuration (bot token stored encrypted)
 - `POST /api/webex-settings/test` - Send a test Webex message using the saved configuration
 - `GET /api/webex-settings/rooms` - List the bot's Webex spaces (id + title) for the department space picker; returns an empty list with a reason code when Webex is disabled or unreachable
+
+### Jira Settings Endpoints (Admin Only)
+
+- `GET /api/jira-settings` - Get Jira configuration (the API token is never returned, only a `hasToken` flag), including the read-only last-sync status `lastSync` (`{ ok, reason?, at }` — since when the poller has been succeeding or failing; `null` when nothing has been recorded yet)
+- `PUT /api/jira-settings` - Save Jira configuration (token stored encrypted); changing `baseUrl` or `email` while a token is already stored requires the token to be either re-entered or explicitly cleared — otherwise `400`; returns the same shape as `GET`, including `lastSync` (a save can neither set nor clear it — only the poller writes it)
+- `POST /api/jira-settings/test` - Verify the saved settings (`GET /rest/api/3/myself`)
+- `GET /api/jira-settings/projects` - List the Jira projects visible to the tech account (for the default-project / department-override picker); returns an empty list with a reason code when Jira is disabled or unreachable
 
 ### Users Endpoints (Admin Only)
 
@@ -419,21 +439,22 @@ npm run test:watch       # Vitest in watch mode
 ### USER
 - Submit new ideas
 - View all ideas (global list and own ideas)
-- Claim approved ideas for execution
-- Log progress steps and mark claimed ideas as completed
+- No longer executes ideas by claiming them — dispatching an approved idea to Jira is done by a Power User/Admin; a regular user only tracks progress. Ideas claimed before this change keep their original behavior (their assignee still logs progress steps and marks the idea completed — grandfathered)
 - Dashboard and reports scoped to own ideas
 
 ### POWER_USER
 - All USER permissions
 - Access to review queue
 - Approve or reject submitted ideas
+- Create a Jira issue from an approved idea ("Create Jira task"), once an admin has configured the Jira integration
 - Organization-wide dashboard, reports, and top-contributors view
 
 ### ADMIN
 - All POWER_USER permissions
 - Manage users (create, edit, delete, change roles)
-- Manage departments, their notification emails, and Webex spaces
+- Manage departments, their notification emails, Webex spaces, and default-Jira-project override
 - Configure email (SMTP) and Webex notification settings
+- Configure the Jira integration (connection, default project, issue type, poll interval, resolutions that mean cancelled)
 - Delete ideas
 
 ## Database Schema
@@ -460,8 +481,13 @@ npm run test:watch       # Vitest in watch mode
 - `departmentId`: Target department
 - `submitterId`: User who submitted
 - `approverId`: User who approved (nullable)
-- `assigneeId`: User working on it (nullable)
+- `assigneeId`: User working on it (nullable; an idea executed via Jira never gets an in-app assignee)
 - `notifyOnChange`: Submitter opt-in to lifecycle-change email (nullable Boolean; `null` on pre-feature ideas, backfilled to `false` at boot)
+- `jiraIssueId`, `jiraIssueKey`: Identifier and key of the matching Jira issue (optional; filled in when the issue is created)
+- `jiraStatus`, `jiraStatusCategory`: Raw Jira status name and its category (`new`/`indeterminate`/`done`), which the idea's `status` is derived from
+- `jiraAssignee`, `jiraResolution`: Assignee name and resolution mirrored from Jira
+- `jiraSyncActive`: Whether the idea is currently tracked by the poller (from a successful issue creation until a final state is reached)
+- `jiraLastSyncAt`, `jiraMissingCount`: Timestamp of the last successful poll and the count of consecutive confirmations that the Jira issue is missing (before the idea reverts to Approved)
 - `submittedAt`, `approvedAt`, `startedAt`, `completedAt`, `rejectedAt`: Timestamps
 
 ### Department Model
@@ -470,12 +496,13 @@ npm run test:watch       # Vitest in watch mode
 - `order`: Display order
 - `notificationEmails`: Addresses notified about new ideas targeting this department
 - `webexRoomIds`: Webex space (room) IDs that new-idea notifications for this department are posted to
+- `jiraProjectKey`: Optional override of the default target Jira project for this department (visible to admins only)
 
 ### IdeaEvent Model
 - `id`: Unique identifier
 - `ideaId`: Related idea
-- `type`: SUBMITTED | APPROVED | REJECTED | CLAIMED | STARTED | COMPLETED | UPDATED | CHANGE_REQUESTED
-- `byUserId`: User who performed action
+- `type`: SUBMITTED | APPROVED | REJECTED | CLAIMED | STARTED | COMPLETED | UPDATED | CHANGE_REQUESTED | JIRA_CREATED | JIRA_STATUS_CHANGED | JIRA_CANCELLED
+- `byUserId`: User who performed the action (nullable — events the poller writes to the timeline while syncing with Jira status, `JIRA_STATUS_CHANGED`/`JIRA_CANCELLED`, have no logged-in user and render in the UI with the actor "Jira")
 - `timestamp`: When event occurred
 - `note`: Optional note/comment
 
@@ -495,24 +522,36 @@ npm run test:watch       # Vitest in watch mode
 - Message `language` (en/sk)
 - `enabled`: Master switch for Webex notifications
 
+### JiraSettings Model (singleton)
+- `enabled`: Master switch for the Jira integration
+- `baseUrl`: Base URL of the Jira Cloud instance (must be https, no IP address, no localhost)
+- `email`: Jira tech account email used for Basic auth
+- API token stored encrypted (AES-256-GCM), never returned by the API
+- `defaultProjectKey`: Default target project key (overridable per department)
+- `issueTypeName`: Issue type created in Jira (default „Task")
+- `pollIntervalMinutes`: Status poll interval (1-1440 minutes)
+- `cancelResolutions`: List of Jira resolution names that mean "not completed/cancelled" and return the idea to Approved (default `Won't Do,Cancelled,Duplicate`)
+- `lastSyncOk`, `lastSyncReason`, `lastSyncAt`: Read-only status of the last poller run ("in this state since" — written only on a state change); `null` until anything has been recorded; read by the **Jira settings** page and the `jiraSyncFailing` banner
+
 ## Testing
 
 IdeaHub has **comprehensive test coverage** across backend, frontend, and end-to-end suites.
 
 ### Test Coverage Summary
 
-- **Backend**: 664 tests across 19 Jest suites (run against mocked Prisma — no database needed)
-- **Backend integration**: 91 tests across 11 Jest suites against a real MongoDB (`npm run test:integration`)
-- **Frontend**: 520 Vitest tests across 19 files (pages, stores, API client, i18n)
-- **E2E**: Playwright scenarios covering local & SSO login, RBAC, the idea lifecycle, departments, email settings, Webex settings, the per-idea notification opt-in, and i18n
+- **Backend**: 1058 tests across 24 Jest suites (run against mocked Prisma — no database needed)
+- **Backend integration**: 110 tests across 12 Jest suites against a real MongoDB (`npm run test:integration`)
+- **Frontend**: 635 Vitest tests across 24 files (pages, stores, API client, i18n)
+- **E2E**: 22 Playwright tests across 12 files, covering local & SSO login, RBAC (including the admin-only Jira settings page), the idea lifecycle (including dispatch to Jira, status polling, cancellation, and re-dispatch), departments, email settings, Webex settings, Jira settings and the F2 rule, the per-idea notification opt-in, and i18n
 
 **What's Tested:**
 - ✅ Authentication, sessions & password change
 - ✅ SSO/OIDC flow (login, callback, provisioning, break-glass)
 - ✅ Ideas CRUD & workflow transitions
-- ✅ Departments CRUD, reordering & notification emails
+- ✅ Departments CRUD, reordering, notification emails & Jira project override
 - ✅ Email settings, mail templates (new-idea & lifecycle) & mailer behavior
 - ✅ Webex settings, message templates (markdown escaping) & sender behavior
+- ✅ Jira integration: settings (including the credential-binding rule on base URL/email change), issue creation, the poller & status mapping (including cancellation and re-dispatch), security rules (https-only base URL, closed failure-reason set, sanitizing strings coming from Jira)
 - ✅ Reports & analytics (including role scoping)
 - ✅ User management & RBAC enforcement
 - ✅ Validation schemas & error handling
@@ -543,7 +582,7 @@ npm run test:watch             # watch mode
 npm run test:e2e
 ```
 
-Playwright starts its own backend, frontend, and mock identity provider — ports 3001, 5173, and 8099 must be free.
+Playwright starts its own backend, frontend, mock identity provider, and mock Jira Cloud — ports 3001, 5173, 8098, and 8099 must be free.
 
 ### Continuous Integration
 
@@ -599,7 +638,7 @@ A step-by-step production runbook (Slovak) is available in [docs/DEPLOY.md](docs
 | `ADMIN_NAME` | Default admin display name | `Admin` |
 | `FRONTEND_URL` | Frontend origin; used for CORS and the SSO post-login redirect | `http://localhost:5173` |
 | `VITE_API_URL` | Frontend API base URL (build-time) | `/api` (Docker), `http://localhost:3001` (dev) |
-| `MAIL_SETTINGS_KEY` | AES-256-GCM key that encrypts the stored SMTP password and the Webex bot token. 32 bytes: 64 hex chars (preferred) or base64 decoding to 32 bytes. Required outside development — the backend fails fast at boot if missing (like `SESSION_SECRET`). Everything else about the notification channels (SMTP server, from address, language, subject template, password; Webex token and language) is admin-managed at runtime on the **Email settings** / **Webex settings** pages and stored in the database | Required in production |
+| `MAIL_SETTINGS_KEY` | AES-256-GCM key that encrypts the stored SMTP password, the Webex bot token, AND the Jira API token (the same key for all three — rotating it invalidates all three stored secrets at once). 32 bytes: 64 hex chars (preferred) or base64 decoding to 32 bytes. Required outside development — the backend fails fast at boot if missing (like `SESSION_SECRET`). Everything else about the notification/execution channels (SMTP server, from address, language, subject template, password; Webex token and language; Jira base URL, email, API token, and project) is admin-managed at runtime on the **Email settings** / **Webex settings** / **Jira settings** pages and stored in the database | Required in production |
 
 See [Single Sign-On (SSO)](#single-sign-on-sso) for the `SSO_*` and `BREAK_GLASS_EMAILS` variables, and [dev/MAIL-TESTING.md](dev/MAIL-TESTING.md) for the mail dev/testing story.
 
@@ -633,8 +672,9 @@ See [Single Sign-On (SSO)](#single-sign-on-sso) for the `SSO_*` and `BREAK_GLASS
 - **RBAC**: Role-based access control on all protected routes
 - **CSV Injection**: Report exports sanitize fields to prevent formula injection
 - **Security Headers**: CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy via nginx and Helmet
-- **Rate Limiting**: General API limit (300 req/15min, active in production) with stricter per-endpoint limits: login 10, password change 5, SSO login 30, and idea submission 30 per 15 minutes
-- **SMTP Password & Webex Bot Token**: Stored AES-256-GCM-encrypted with `MAIL_SETTINGS_KEY` and never returned by the API
+- **Rate Limiting**: General API limit (300 req/15min, active in production) with stricter per-endpoint limits: login 10, password change 5, SSO login 30, idea submission 30, and Jira task creation 30 per 15 minutes
+- **SMTP Password, Webex Bot Token & Jira API Token**: All three are stored AES-256-GCM-encrypted with the **same** `MAIL_SETTINGS_KEY` and never returned by the API. Because one key protects all three channels' secrets, rotating it invalidates all three stored secrets at once — after rotation the SMTP password, the Webex bot token, and the Jira API token all need to be re-entered
+- **Jira base URL**: Stored only as an https URL with no IP address/localhost host and no credentials, query string, or fragment in the URL (defense against SSRF and leaking the Basic credential via a rewritten base URL); outbound calls to Jira never follow redirects. The test/proxy override `JIRA_API_BASE_URL` (outside this validation, E2E only) works exclusively under `NODE_ENV=test` — the code ignores it entirely outside a test run, even if it is set, so it cannot be accidentally activated in production
 - **Error Handling**: Internal server errors return generic messages to prevent information leakage
 - **Session Invalidation**: Sessions are invalidated when user role or email is changed by admin
 - **Admin Protection**: Admins cannot delete their own account or change their own role

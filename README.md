@@ -7,11 +7,23 @@ Interná webová aplikácia na správu interných zlepšovacích nápadov, urče
 ### Základná funkcionalita
 - **Podávanie nápadov**: Zamestnanci môžu podať zlepšovací nápad s názvom, popisom, prínosmi, odhadom náročnosti, štítkami a cieľovým oddelením
 - **Posúdenie a schválenie**: Pokročilí používatelia a administrátori môžu podané nápady posúdiť, schváliť alebo zamietnuť
-- **Realizácia nápadov**: Schválený nápad si môže prevziať a realizovať ktorýkoľvek používateľ
-- **Kroky priebehu**: Riešiteľ môže k rozpracovanému nápadu zapisovať poznámky o priebehu
-- **Sledovanie dokončenia**: Používateľ môže svoj prevzatý nápad označiť za dokončený
-- **Časová os aktivity**: Úplná auditná stopa všetkých akcií vykonaných nad každým nápadom
+- **Realizácia nápadov cez Jira**: Schválený nápad realizuje Pokročilý používateľ alebo Administrátor tlačidlom „Vytvoriť úlohu v Jire" (anglicky „Create Jira task"), ktoré v Jira Cloud vytvorí zodpovedajúcu úlohu; ďalší priebeh (kroky, dokončenie) sa odvtedy sleduje priamo v Jire — pozri [Realizácia cez Jira](#realizácia-cez-jira-jira-cloud) nižšie
+- **Kroky priebehu a dokončenie (len staršie nápady)**: Nápady prevzaté ešte pred prechodom na Jiru si zachovávajú pôvodné správanie — pôvodný riešiteľ môže naďalej zapisovať kroky priebehu a označiť nápad za dokončený (tzv. grandfathering, nové nápady už takto neprebiehajú)
+- **Časová os aktivity**: Úplná auditná stopa všetkých akcií vykonaných nad každým nápadom (vrátane udalostí z Jiry — vytvorenie úlohy, zmena stavu, zrušenie)
 - **Pohľady podľa stavu**: Samostatné stránky pre moje nápady a pre schválené, rozpracované a dokončené nápady
+
+### Realizácia cez Jira (Jira Cloud)
+
+> **Dôležitá zmena (breaking change):** Pôvodný spôsob realizácie „prevzatím" (`PATCH /api/ideas/:id/claim`) bol **odstránený**. Realizáciu schváleného nápadu teraz spúšťa Pokročilý používateľ alebo Administrátor tlačidlom **„Vytvoriť úlohu v Jire"**, ktoré vyžaduje, aby administrátor najprv nakonfiguroval Jira integráciu (stránka **Nastavenia Jiry**) — kým sa tak nestane, je tlačidlo skryté a schválené nápady nemožno odoslať do realizácie. Nápady, ktoré boli v čase nasadenia už rozpracované (`IN_PROGRESS`) pôvodným prevzatím, si zachovávajú kroky priebehu a dokončenie (grandfathering) — dokončí ich pôvodný riešiteľ, novo sa už neprideľujú. Zmena schémy databázy je **aditívna** a aplikuje sa sama pri štarte backendu (`prisma db push` + automatické doplnenie poľa `jiraSyncActive` existujúcim nápadom) — netreba žiadny manuálny krok v databáze. Nasadenie navyše musí povoľovať **odchádzajúce HTTPS na hostiteľa Jira Cloud** (napr. `https://firma.atlassian.net`) — bez neho sa odoslanie úloh do Jiry ani pravidelný poller nikdy nepripoja.
+
+- Pokročilý používateľ/Administrátor vytvorí zo schváleného nápadu úlohu v Jire (REST API v3, Basic autentifikácia e-mailom a API tokenom technického účtu); nová úloha sa otvorí v novej karte prehliadača
+- Nápad po odoslaní zostáva v stave **Schválený** (so značkou „V Jire: KEY", anglicky „Jira: KEY") — do stavu **Rozpracovaný** prejde, až keď sa práca v Jire naozaj začne
+- Keďže aplikácia beží v segmente bez prichádzajúcich webhookov, backend Jiru pravidelne pollinguje (interval nastaviteľný administrátorom) a mapuje kategóriu stavu Jira na stav nápadu: `new` (čaká sa) → Schválený, `indeterminate` → Rozpracovaný, `done` s bežným riešením → Dokončený, `done` so „zrušujúcim" riešením (predvolene „Won't Do", „Cancelled", „Duplicate" — nastaviteľné) → späť na Schválený, s možnosťou opätovného odoslania
+- Ak je úloha v Jire zmazaná alebo sa k nej stratí prístup, nápad sa po dvoch po sebe idúcich potvrdeniach vráti do stavu Schválený rovnakým spôsobom
+- Surový názov stavu z Jiry sa zobrazuje ako farebný štítok na karte nápadu; detail nápadu navyše zobrazuje surový stav a riešiteľa (pri dokončených nápadoch aj riešenie/resolution); Prehľad (dashboard) zobrazuje rozpis nápadov podľa surových stavov Jira; CSV export v Reportoch obsahuje všetky štyri polia (kľúč, stav, riešiteľ, riešenie)
+- Predvolený cieľový projekt Jira sa nastavuje v administrácii (**Nastavenia Jiry**), s voliteľným prepísaním pre jednotlivé oddelenia
+- Ak synchronizácia s Jirou dlhodobo zlyháva (napríklad neplatný API token alebo nedostupná Jira), administrátor to uvidí v odklikávateľnom banneri v hlavičke aplikácie aj priamo na stránke **Nastavenia Jiry**
+- Notifikácie o míľnikoch (začiatok práce / dokončenie / zrušenie) idú cez existujúci mechanizmus odberu autora (e-mail a/alebo Webex)
 
 ### Prehľad a analytika
 - Štatistiky v reálnom čase (podané, schválené, rozpracované, dokončené, zamietnuté)
@@ -35,7 +47,7 @@ Interná webová aplikácia na správu interných zlepšovacích nápadov, urče
 - Administrátorom spravovaná SMTP konfigurácia na stránke **Nastavenia e-mailu** (server, adresa odosielateľa, jazyk notifikácií, voliteľná šablóna predmetu), uložená v databáze so šifrovaným SMTP heslom
 - Administrátorom spravovaná konfigurácia Webexu na stránke **Nastavenia Webexu** (prístupový token bota uložený šifrovane, jazyk správ). Notifikácie o životnom cykle pre autora sú vždy súkromné 1:1 správy od bota; notifikácie o novom nápade pre oddelenie sa navyše môžu posielať do Webex priestorov, ktoré administrátor priradí jednotlivým oddeleniam (bot musí byť členom každého takého priestoru)
 - Notifikácia o novom nápade sa odosiela na notifikačné adresy cieľového oddelenia (e-mailom a/alebo 1:1 správou vo Webexe) a do Webex priestorov nastavených pre dané oddelenie, a to cez každý zapnutý kanál (best-effort — problémy s doručením nikdy neblokujú požiadavku)
-- Notifikácie o životnom cykle jednotlivého nápadu: autor sa môže prihlásiť na odber (prepínač na formulári na vytvorenie nápadu aj na detaile nápadu, zobrazuje sa len ak je zapnutý aspoň jeden kanál) a dostávať upozornenia, keď je jeho nápad schválený, zamietnutý, prevzatý, dokončený alebo keď k nemu pribudne krok priebehu. Zmena, ktorú vykoná sám autor, mu nikdy notifikáciu nepošle; doručovanie je best-effort rovnako ako pri notifikáciách pre oddelenie
+- Notifikácie o životnom cykle jednotlivého nápadu: autor sa môže prihlásiť na odber (prepínač na formulári na vytvorenie nápadu aj na detaile nápadu, zobrazuje sa len ak je zapnutý aspoň jeden kanál) a dostávať upozornenia, keď je jeho nápad schválený alebo zamietnutý, keď sa naň začne pracovať v Jire, keď je dokončený alebo zrušený, a (pri starších nápadoch prevzatých ešte pred prechodom na Jiru) keď k nemu pribudne krok priebehu. Zmena, ktorú vykoná sám autor, mu nikdy notifikáciu nepošle; doručovanie je best-effort rovnako ako pri notifikáciách pre oddelenie
 - Testovacie tlačidlá (testovací e-mail / testovacia správa vo Webexe) na overenie oboch konfigurácií
 
 ### Viacjazyčnosť
@@ -102,12 +114,12 @@ idea-hub/
 │   ├── src/
 │   │   ├── __tests__/      # Jest unit/route testy (mockovaná Prisma)
 │   │   ├── __integration__/# Jest integračné testy (reálna MongoDB)
-│   │   ├── config/         # Konfigurácia pošty a SSO
+│   │   ├── config/         # Konfigurácia pošty, SSO a Jira
 │   │   ├── lib/            # Prisma klient
 │   │   ├── middleware/     # Middleware pre autentifikáciu a RBAC
-│   │   ├── routes/         # API routy (auth, sso, ideas, users, reports, departments, mail-settings, webex-settings)
+│   │   ├── routes/         # API routy (auth, sso, ideas, users, reports, departments, mail-settings, webex-settings, jira-settings)
 │   │   ├── types/          # TypeScript typy
-│   │   ├── utils/          # Validácia, mailer a šablóny, bootstrap, prune SSO používateľov
+│   │   ├── utils/          # Validácia, mailer a šablóny, Jira klient a poller, bootstrap, prune SSO používateľov
 │   │   └── index.ts        # Vstupný bod servera
 │   ├── Dockerfile
 │   └── package.json
@@ -195,9 +207,10 @@ Najjednoduchší spôsob, ako začať. Docker sa postará o všetky závislosti 
    > - **Vygenerujte `MAIL_SETTINGS_KEY`** rovnakým spôsobom (64 hex znakov). Je
    >   **povinný mimo vývojového prostredia** — backend bez neho odmietne
    >   naštartovať a oba compose súbory okamžite zlyhajú, ak nie je nastavený.
-   >   Šifruje SMTP heslo a token Webex bota, ktoré administrátor neskôr nastaví na
-   >   stránkach **Nastavenia e-mailu** / **Nastavenia Webexu**; nemeňte ho, inak sa
-   >   predtým uložené tajomstvá stanú nedešifrovateľnými.
+   >   Šifruje SMTP heslo, token Webex bota a API token Jira, ktoré administrátor
+   >   neskôr nastaví na stránkach **Nastavenia e-mailu** / **Nastavenia Webexu** /
+   >   **Nastavenia Jiry**; nemeňte ho, inak sa predtým uložené tajomstvá stanú
+   >   nedešifrovateľnými (treba ich všetky znova zadať).
    > - **Nastavte `ADMIN_EMAIL` / `ADMIN_PASSWORD` na jedinečné, neprednastavené
    >   hodnoty.** Pri prvom spustení sa z nich vytvorí úvodný administrátor;
    >   použite dlhé, náhodné heslo (12+ znakov — aplikácia vynucuje minimálne
@@ -359,20 +372,20 @@ npm run test:watch       # Vitest v režime watch
 
 ### Endpoint options
 
-- `GET /api/options` – Pre prihlásených: zjednotené runtime príznaky UI v tvare `{ mailEnabled, webexEnabled, ssoShowLogout }` (ktorýkoľvek prihlásený používateľ). `mailEnabled` / `webexEnabled` (kanál je efektívne zapnutý) spolu riadia prepínač notifikácií pri nápade — zobrazí sa, ak je aspoň jeden `true`; `ssoShowLogout` (`SSO_SHOW_LOGOUT`) opäť sprístupní tlačidlo odhlásenia pre SSO používateľov. Vracia iba tieto booleovské hodnoty — žiadnu administrátorskú konfiguráciu.
+- `GET /api/options` – Pre prihlásených: zjednotené runtime príznaky UI v tvare `{ mailEnabled, webexEnabled, jiraEnabled, ssoShowLogout }` (ktorýkoľvek prihlásený používateľ), a navyše `jiraSyncFailing` len pre administrátorov (či synchronizácia s Jirou dlhodobo zlyháva — riadi banner v hlavičke aplikácie). `mailEnabled` / `webexEnabled` (kanál je efektívne zapnutý) spolu riadia prepínač notifikácií pri nápade — zobrazí sa, ak je aspoň jeden `true`; `jiraEnabled` (Jira integrácia je efektívne zapnutá — zapnutá A s vyplnenou base URL/e-mailom/API tokenom) riadi viditeľnosť tlačidla „Vytvoriť úlohu v Jire"; `ssoShowLogout` (`SSO_SHOW_LOGOUT`) opäť sprístupní tlačidlo odhlásenia pre SSO používateľov. Mimo `jiraSyncFailing` vracia iba tieto booleovské hodnoty — žiadnu administrátorskú konfiguráciu.
 
 ### Endpointy nápadov
 
-- `GET /api/ideas` – Zoznam všetkých nápadov (s filtrami a stránkovaním)
+- `GET /api/ideas` – Zoznam všetkých nápadov (s filtrami a stránkovaním); nápady odoslané do Jiry navyše nesú `jiraBrowseUrl` (ak ho možno bezpečne zostaviť)
 - `GET /api/ideas/:id` – Jeden nápad vrátane udalostí a krokov priebehu
 - `POST /api/ideas` – Vytvorenie nového nápadu (pri nastavenej pošte odošle e-mail cieľovému oddeleniu)
 - `PATCH /api/ideas/:id` – Úprava nápadu (len autor, kým je v stave SUBMITTED)
 - `PATCH /api/ideas/:id/approve` – Schválenie nápadu (Pokročilý používateľ/Administrátor)
 - `PATCH /api/ideas/:id/reject` – Zamietnutie nápadu (Pokročilý používateľ/Administrátor)
-- `PATCH /api/ideas/:id/claim` – Prevzatie nápadu a začiatok práce na ňom
-- `PATCH /api/ideas/:id/complete` – Označenie nápadu za dokončený (len riešiteľ)
+- `POST /api/ideas/:id/jira-task` – Vytvorenie úlohy v Jire zo schváleného nápadu a jeho zaradenie do sledovania stavu pollerom (Pokročilý používateľ/Administrátor; vyžaduje zapnutú a nakonfigurovanú Jira integráciu a nastavený cieľový projekt); **nahrádza pôvodný `PATCH /api/ideas/:id/claim`, ktorý bol odstránený**
+- `PATCH /api/ideas/:id/complete` – Označenie nápadu za dokončený (len riešiteľ; platí už len pre staršie nápady prevzaté pred prechodom na Jiru — grandfathering)
 - `PATCH /api/ideas/:id/notify` – Prepnutie odberu notifikácií o životnom cykle pre autora (len autor, v ľubovoľnom stave)
-- `POST /api/ideas/:id/steps` – Pridanie kroku priebehu k rozpracovanému nápadu (len riešiteľ)
+- `POST /api/ideas/:id/steps` – Pridanie kroku priebehu k rozpracovanému nápadu (len riešiteľ; rovnaké obmedzenie ako vyššie — grandfathering)
 - `DELETE /api/ideas/:id` – Zmazanie nápadu (len administrátor)
 
 ### Endpointy reportov
@@ -381,14 +394,15 @@ npm run test:watch       # Vitest v režime watch
 - `GET /api/reports/by-department` – Počty nápadov podľa oddelení (za celú organizáciu, pre všetky roly)
 - `GET /api/reports/monthly-trend` – Mesačný trend dokončených nápadov (za celú organizáciu, pre všetky roly)
 - `GET /api/reports/top-contributors` – Najaktívnejší prispievatelia (Pokročilý používateľ/Administrátor)
-- `GET /api/reports/filtered` – Filtrované nápady so stránkovaním (vrátane exportu do CSV)
+- `GET /api/reports/jira-statuses` – Počty nápadov odoslaných do Jiry podľa surového stavu Jira (bežní používatelia: len vlastné nápady)
+- `GET /api/reports/filtered` – Filtrované nápady so stránkovaním (vrátane exportu do CSV; CSV navyše obsahuje stĺpce Jira Key/Status/Assignee/Resolution)
 
 ### Endpointy oddelení
 
-- `GET /api/departments` – Zoznam oddelení (notifikačné e-maily a ID Webex priestorov vidia len administrátori)
+- `GET /api/departments` – Zoznam oddelení (notifikačné e-maily, ID Webex priestorov a prepísanie predvoleného Jira projektu vidia len administrátori)
 - `POST /api/departments` – Vytvorenie oddelenia (len administrátor)
 - `PATCH /api/departments/reorder` – Zmena poradia oddelení (len administrátor)
-- `PATCH /api/departments/:id` – Úprava názvu / notifikačných e-mailov / ID Webex priestorov oddelenia (len administrátor)
+- `PATCH /api/departments/:id` – Úprava názvu / notifikačných e-mailov / ID Webex priestorov / prepísania Jira projektu oddelenia (len administrátor)
 - `DELETE /api/departments/:id` – Zmazanie oddelenia (len administrátor; odmietnuté pri poslednom oddelení alebo pri oddelení, ktoré má nápady)
 
 ### Endpointy nastavení e-mailu (len administrátor)
@@ -403,6 +417,13 @@ npm run test:watch       # Vitest v režime watch
 - `PUT /api/webex-settings` – Uloženie konfigurácie Webexu (token bota sa ukladá šifrovane)
 - `POST /api/webex-settings/test` – Odoslanie testovacej správy vo Webexe podľa uloženej konfigurácie
 - `GET /api/webex-settings/rooms` – Zoznam Webex priestorov bota (id + názov) pre výber priestorov oddelenia; ak je Webex vypnutý alebo nedostupný, vráti prázdny zoznam s kódom dôvodu
+
+### Endpointy nastavení Jiry (len administrátor)
+
+- `GET /api/jira-settings` – Získanie konfigurácie Jira (API token sa nikdy nevracia, len príznak `hasToken`), vrátane READ-ONLY stavu poslednej synchronizácie `lastSync` (`{ ok, reason?, at }` — odkedy poller synchronizuje úspešne, resp. zlyháva; `null`, ak sa ešte nič nezaznamenalo)
+- `PUT /api/jira-settings` – Uloženie konfigurácie Jira (token sa ukladá šifrovane); zmena `baseUrl` alebo `email` pri už uloženom tokene vyžaduje token buď znova zadať, alebo výslovne vymazať — inak `400`; vracia rovnaký tvar ako `GET` vrátane `lastSync` (uloženie ho nemôže nastaviť ani vymazať — píše ho výhradne poller)
+- `POST /api/jira-settings/test` – Overenie uložených nastavení (`GET /rest/api/3/myself`)
+- `GET /api/jira-settings/projects` – Zoznam projektov Jira viditeľných pre technický účet (pre výber predvoleného projektu / prepísania oddelenia); ak je Jira vypnutá alebo nedostupná, vráti prázdny zoznam s kódom dôvodu
 
 ### Endpointy používateľov (len administrátor)
 
@@ -420,22 +441,23 @@ npm run test:watch       # Vitest v režime watch
 
 ### USER
 - Podávanie nových nápadov
-- Zobrazenie všetkých nápadov za celú organizáciu (globálny zoznam aj vlastné nápady)
-- Prevzatie schválených nápadov na realizáciu
-- Zapisovanie krokov priebehu a označenie prevzatých nápadov za dokončené
-- Prehľad a reporty za celú organizáciu, len na čítanie (bez rebríčka prispievateľov)
+- Zobrazenie všetkých nápadov (globálny zoznam aj vlastné nápady)
+- Realizácia nápadov už neprebieha prevzatím — o odoslanie schváleného nápadu do Jiry sa stará Pokročilý používateľ/Administrátor; bežný používateľ len sleduje priebeh. Staršie nápady prevzaté pred touto zmenou si zachovávajú pôvodné správanie (ich riešiteľ naďalej zapisuje kroky priebehu a označí nápad za dokončený — grandfathering)
+- Prehľad a reporty obmedzené na vlastné nápady
 
 ### POWER_USER
 - Všetky oprávnenia roly USER
 - Prístup do fronty na posúdenie
 - Schvaľovanie alebo zamietanie podaných nápadov
+- Vytvorenie úlohy v Jire zo schváleného nápadu („Vytvoriť úlohu v Jire"), po nakonfigurovaní Jira integrácie administrátorom
 - Prehľad, reporty a rebríček prispievateľov za celú organizáciu
 
 ### ADMIN
 - Všetky oprávnenia roly POWER_USER
 - Správa používateľov (vytváranie, úprava, mazanie, zmena rolí)
-- Správa oddelení, ich notifikačných e-mailov a Webex priestorov
+- Správa oddelení, ich notifikačných e-mailov, Webex priestorov a prepísania predvoleného Jira projektu
 - Konfigurácia notifikácií cez e-mail (SMTP) a Webex
+- Konfigurácia Jira integrácie (pripojenie, predvolený projekt, typ úlohy, interval pollovania, riešenia znamenajúce zrušenie)
 - Mazanie nápadov
 
 ## Schéma databázy
@@ -462,8 +484,13 @@ npm run test:watch       # Vitest v režime watch
 - `departmentId`: Cieľové oddelenie
 - `submitterId`: Používateľ, ktorý nápad podal
 - `approverId`: Používateľ, ktorý nápad schválil (môže byť prázdne)
-- `assigneeId`: Používateľ, ktorý nápad rieši (môže byť prázdne)
+- `assigneeId`: Používateľ, ktorý nápad rieši (môže byť prázdne; nápad realizovaný cez Jiru asignáciu nikdy nedostane)
 - `notifyOnChange`: Odber notifikácií o zmenách životného cyklu zo strany autora (nullable Boolean; `null` pri nápadoch spred tejto funkcie, pri štarte sa doplní na `false`)
+- `jiraIssueId`, `jiraIssueKey`: Identifikátor a kľúč zodpovedajúcej úlohy v Jire (voliteľné; vyplnia sa pri vytvorení úlohy)
+- `jiraStatus`, `jiraStatusCategory`: Surový názov stavu v Jire a jeho kategória (`new`/`indeterminate`/`done`), z ktorej sa odvodzuje `status` nápadu
+- `jiraAssignee`, `jiraResolution`: Meno riešiteľa a riešenie (resolution) zrkadlené z Jiry
+- `jiraSyncActive`: Či je nápad práve sledovaný pollerom (od úspešného vytvorenia úlohy po dosiahnutie finálneho stavu)
+- `jiraLastSyncAt`, `jiraMissingCount`: Časová značka posledného úspešného pollu a počet po sebe idúcich potvrdení, že úloha v Jire chýba (predtým, než sa nápad vráti do stavu Schválený)
 - `submittedAt`, `approvedAt`, `startedAt`, `completedAt`, `rejectedAt`: Časové značky
 
 ### Model Department
@@ -472,12 +499,13 @@ npm run test:watch       # Vitest v režime watch
 - `order`: Poradie zobrazenia
 - `notificationEmails`: Adresy, ktoré dostávajú upozornenia na nové nápady smerované tomuto oddeleniu
 - `webexRoomIds`: ID Webex priestorov (rooms), do ktorých sa posielajú upozornenia na nové nápady pre toto oddelenie
+- `jiraProjectKey`: Voliteľné prepísanie predvoleného cieľového projektu Jira pre toto oddelenie (viditeľné len pre administrátorov)
 
 ### Model IdeaEvent
 - `id`: Jedinečný identifikátor
 - `ideaId`: Súvisiaci nápad
-- `type`: SUBMITTED | APPROVED | REJECTED | CLAIMED | STARTED | COMPLETED | UPDATED | CHANGE_REQUESTED
-- `byUserId`: Používateľ, ktorý akciu vykonal
+- `type`: SUBMITTED | APPROVED | REJECTED | CLAIMED | STARTED | COMPLETED | UPDATED | CHANGE_REQUESTED | JIRA_CREATED | JIRA_STATUS_CHANGED | JIRA_CANCELLED
+- `byUserId`: Používateľ, ktorý akciu vykonal (nullable — udalosti, ktoré do časovej osi zapisuje poller pri synchronizácii so stavom Jiry, `JIRA_STATUS_CHANGED`/`JIRA_CANCELLED`, nemajú prihláseného používateľa a v UI sa zobrazujú s pôvodcom „Jira")
 - `timestamp`: Kedy udalosť nastala
 - `note`: Voliteľná poznámka/komentár
 
@@ -497,24 +525,36 @@ npm run test:watch       # Vitest v režime watch
 - Jazyk správ `language` (en/sk)
 - `enabled`: Hlavný vypínač notifikácií cez Webex
 
+### Model JiraSettings (singleton)
+- `enabled`: Hlavný vypínač Jira integrácie
+- `baseUrl`: Základná URL inštancie Jira Cloud (musí byť https, bez IP adresy a bez localhost)
+- `email`: E-mail technického účtu Jira použitý pre Basic autentifikáciu
+- API token uložený šifrovane (AES-256-GCM), API ho nikdy nevracia
+- `defaultProjectKey`: Predvolený kľúč cieľového projektu (možno prepísať na úrovni oddelenia)
+- `issueTypeName`: Typ úlohy vytváraný v Jire (predvolene „Task")
+- `pollIntervalMinutes`: Interval pollovania stavu (1 – 1440 minút)
+- `cancelResolutions`: Zoznam názvov riešení (resolution) v Jire, ktoré znamenajú „nedokončené/zrušené" a vrátia nápad do stavu Schválený (predvolene `Won't Do,Cancelled,Duplicate`)
+- `lastSyncOk`, `lastSyncReason`, `lastSyncAt`: READ-ONLY stav posledného behu pollera („v tomto stave od" — zapisuje sa len pri zmene stavu); `null`, kým sa nič nezaznamenalo; číta ho stránka **Nastavenia Jiry** aj banner `jiraSyncFailing`
+
 ## Testovanie
 
 IdeaHub má **komplexné pokrytie testami** naprieč backendom, frontendom a end-to-end sadami.
 
 ### Súhrn pokrytia testami
 
-- **Backend**: 664 testov v 19 Jest sadách (bežia proti mockovanej Prisme — databáza nie je potrebná)
-- **Backend integračné**: 91 testov v 11 Jest sadách proti reálnej MongoDB (`npm run test:integration`)
-- **Frontend**: 520 Vitest testov v 19 súboroch (stránky, stores, API klient, i18n)
-- **E2E**: Playwright scenáre pokrývajúce lokálne a SSO prihlásenie, RBAC, životný cyklus nápadu, oddelenia, nastavenia e-mailu, nastavenia Webexu, odber notifikácií pri nápade a i18n
+- **Backend**: 1058 testov v 24 Jest sadách (bežia proti mockovanej Prisme — databáza nie je potrebná)
+- **Backend integračné**: 110 testov v 12 Jest sadách proti reálnej MongoDB (`npm run test:integration`)
+- **Frontend**: 635 Vitest testov v 24 súboroch (stránky, stores, API klient, i18n)
+- **E2E**: 22 Playwright testov v 12 súboroch, pokrývajúcich lokálne a SSO prihlásenie, RBAC (vrátane admin-only Nastavení Jiry), životný cyklus nápadu (vrátane odoslania do Jiry, pollovania stavu, zrušenia a opätovného odoslania), oddelenia, nastavenia e-mailu, nastavenia Webexu, nastavenia Jiry a pravidlo F2, odber notifikácií pri nápade a i18n
 
 **Čo je otestované:**
 - ✅ Autentifikácia, relácie a zmena hesla
 - ✅ SSO/OIDC flow (prihlásenie, callback, provisioning, break-glass)
 - ✅ CRUD nápadov a prechody v pracovnom postupe
-- ✅ CRUD oddelení, zmena poradia a notifikačné e-maily
+- ✅ CRUD oddelení, zmena poradia, notifikačné e-maily a prepísanie Jira projektu
 - ✅ Nastavenia e-mailu, e-mailové šablóny (nový nápad a životný cyklus) a správanie mailera
 - ✅ Nastavenia Webexu, šablóny správ (escapovanie markdownu) a správanie odosielateľa
+- ✅ Jira integrácia: nastavenia (vrátane pravidla väzby na tajomstvo pri zmene base URL/e-mailu), vytvorenie úlohy, poller a mapovanie stavov (vrátane zrušenia a opätovného odoslania), bezpečnostné pravidlá (https-only base URL, uzavretá množina dôvodov zlyhania, sanitizácia reťazcov prichádzajúcich z Jiry)
 - ✅ Reporty a analytika (vrátane obmedzenia podľa roly)
 - ✅ Správa používateľov a vynucovanie RBAC
 - ✅ Validačné schémy a spracovanie chýb
@@ -545,7 +585,7 @@ npm run test:watch             # režim watch
 npm run test:e2e
 ```
 
-Playwright si spustí vlastný backend, frontend aj mock poskytovateľa identity — porty 3001, 5173 a 8099 musia byť voľné.
+Playwright si spustí vlastný backend, frontend, mock poskytovateľa identity aj mock Jira Cloud — porty 3001, 5173, 8098 a 8099 musia byť voľné.
 
 ### Kontinuálna integrácia
 
@@ -601,7 +641,7 @@ Podrobný produkčný runbook (po slovensky) nájdete v [docs/DEPLOY.md](docs/DE
 | `ADMIN_NAME` | Predvolené zobrazované meno administrátora | `Admin` |
 | `FRONTEND_URL` | Origin frontendu; používa sa pre CORS a pre presmerovanie po SSO prihlásení | `http://localhost:5173` |
 | `VITE_API_URL` | Základná URL API pre frontend (build-time) | `/api` (Docker), `http://localhost:3001` (vývoj) |
-| `MAIL_SETTINGS_KEY` | Kľúč AES-256-GCM, ktorým sa šifruje uložené SMTP heslo a token Webex bota. 32 bajtov: 64 hex znakov (preferované) alebo base64 dekódovateľné na 32 bajtov. Povinné mimo vývoja — backend bez neho pri štarte okamžite zlyhá (rovnako ako pri `SESSION_SECRET`). Všetko ostatné okolo notifikačných kanálov (SMTP server, adresa odosielateľa, jazyk, šablóna predmetu, heslo; token a jazyk Webexu) spravuje administrátor za behu na stránkach **Nastavenia e-mailu** / **Nastavenia Webexu** a ukladá sa to do databázy | Povinné v produkcii |
+| `MAIL_SETTINGS_KEY` | Kľúč AES-256-GCM, ktorým sa šifruje uložené SMTP heslo, token Webex bota AJ API token Jira (rovnaký kľúč pre všetky tri — jeho rotácia naraz znehodnotí uložené tajomstvo všetkých troch). 32 bajtov: 64 hex znakov (preferované) alebo base64 dekódovateľné na 32 bajtov. Povinné mimo vývoja — backend bez neho pri štarte okamžite zlyhá (rovnako ako pri `SESSION_SECRET`). Všetko ostatné okolo notifikačných/exekučných kanálov (SMTP server, adresa odosielateľa, jazyk, šablóna predmetu, heslo; token a jazyk Webexu; base URL, e-mail, API token a projekt Jira) spravuje administrátor za behu na stránkach **Nastavenia e-mailu** / **Nastavenia Webexu** / **Nastavenia Jiry** a ukladá sa to do databázy | Povinné v produkcii |
 
 Premenné `SSO_*` a `BREAK_GLASS_EMAILS` nájdete v časti [Jednotné prihlásenie (SSO)](#jednotné-prihlásenie-sso) a postup pre vývoj/testovanie pošty v [dev/MAIL-TESTING.md](dev/MAIL-TESTING.md).
 
@@ -635,8 +675,9 @@ Premenné `SSO_*` a `BREAK_GLASS_EMAILS` nájdete v časti [Jednotné prihlásen
 - **RBAC**: Riadenie prístupu podľa rolí na všetkých chránených routách
 - **CSV injection**: Exporty reportov sanitizujú polia, aby zabránili injection cez vzorce
 - **Bezpečnostné hlavičky**: CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy cez nginx a Helmet
-- **Rate limiting**: Všeobecný limit API (300 požiadaviek/15 min, aktívny v produkcii) s prísnejšími limitmi pre jednotlivé endpointy: prihlásenie 10, zmena hesla 5, SSO prihlásenie 30 a podanie nápadu 30 za 15 minút
-- **SMTP heslo a token Webex bota**: Uložené šifrovane cez AES-256-GCM kľúčom `MAIL_SETTINGS_KEY` a API ich nikdy nevracia
+- **Rate limiting**: Všeobecný limit API (300 požiadaviek/15 min, aktívny v produkcii) s prísnejšími limitmi pre jednotlivé endpointy: prihlásenie 10, zmena hesla 5, SSO prihlásenie 30, podanie nápadu 30 a vytvorenie úlohy v Jire 30 za 15 minút
+- **SMTP heslo, token Webex bota a API token Jira**: Všetky tri sú uložené šifrovane cez AES-256-GCM **rovnakým** kľúčom `MAIL_SETTINGS_KEY` a API ich nikdy nevracia. Keďže jeden kľúč chráni tajomstvá všetkých troch kanálov, jeho rotácia naraz znehodnotí uložené tajomstvo všetkých troch — po rotácii treba SMTP heslo, token Webex bota aj API token Jira znova zadať
+- **Jira base URL**: Ukladá sa len ako https URL bez IP adresy/localhost hosta a bez prihlasovacích údajov, query stringu či fragmentu v URL (obrana proti SSRF a úniku Basic credentialu cez prepísanú base URL); odchádzajúce volania na Jiru nikdy nenasledujú presmerovania (redirect). Testovací/proxy override `JIRA_API_BASE_URL` (mimo tejto validácie, len pre E2E) funguje výhradne pri `NODE_ENV=test` — kód ho mimo testovacieho behu úplne ignoruje, aj keby bol nastavený, takže ho nemožno omylom aktivovať v produkcii
 - **Spracovanie chýb**: Interné chyby servera vracajú všeobecné správy, aby neunikali informácie
 - **Zneplatnenie relácií**: Relácie sa zneplatnia, keď administrátor zmení rolu alebo e-mail používateľa
 - **Ochrana administrátora**: Administrátori nemôžu zmazať vlastné konto ani si zmeniť vlastnú rolu
