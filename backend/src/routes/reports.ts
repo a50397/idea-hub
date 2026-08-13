@@ -125,6 +125,47 @@ router.get('/by-department', requireAuth, async (_req, res) => {
   }
 });
 
+// Get idea counts grouped by the RAW Jira status name (dashboard breakdown).
+//
+// Only DISPATCHED ideas are counted, and only the raw Jira status is exposed — the
+// canonical IdeaStatus breakdown lives in /summary. The two presence filters use
+// Prisma Mongo's `isSet` operator rather than a bare `not: null`: an idea document
+// that predates the Jira fields has no such field at all, and a Prisma+Mongo
+// where-clause does NOT match a missing scalar (the same limitation the boot
+// backfill exists for), so `not: null` alone would silently drop rows on some
+// documents and match nothing on others.
+//
+// Scoping mirrors /summary and /by-department exactly: a USER only ever sees their
+// own ideas, every other role sees all of them.
+router.get('/jira-statuses', requireAuth, async (req, res) => {
+  try {
+    const userFilter = req.session.role === Role.USER ? { submitterId: req.session.userId } : {};
+
+    const grouped = await prisma.idea.groupBy({
+      by: ['jiraStatus'],
+      where: {
+        jiraIssueKey: { isSet: true },
+        jiraStatus: { isSet: true, not: null },
+        ...userFilter,
+      },
+      _count: { id: true },
+    });
+
+    // Biggest bucket first, ties broken by name for a deterministic response. The
+    // status strings were sanitized at the Jira ingest boundary before they were
+    // stored (utils/jira.ts), so nothing raw from the remote system is echoed here.
+    const result = grouped
+      .filter((g): g is typeof g & { jiraStatus: string } => g.jiraStatus !== null)
+      .map((g) => ({ status: g.jiraStatus, count: g._count.id }))
+      .sort((a, b) => b.count - a.count || a.status.localeCompare(b.status));
+
+    res.json(result);
+  } catch (error) {
+    console.error('Error fetching jira status report:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Get monthly trend data
 router.get('/monthly-trend', requireAuth, async (_req, res) => {
   try {
@@ -307,6 +348,12 @@ router.get('/filtered', requireAuth, async (req, res) => {
           'Duration (days)',
           'Tags',
           'Department',
+          // Mirrored Jira fields. EVERY one of these is a REMOTE string, so every
+          // one of them goes through sanitizeCsvField below — see the row block.
+          'Jira Key',
+          'Jira Status',
+          'Jira Assignee',
+          'Jira Resolution',
         ].join(','),
       ];
 
@@ -334,6 +381,18 @@ router.get('/filtered', requireAuth, async (req, res) => {
             duration,
             sanitizeCsvField(idea.tags.join(', ')),
             idea.department ? sanitizeCsvField(idea.department.name) : '',
+            // The four Jira cells. These are the only values in this file that come
+            // from a THIRD-PARTY system (an issue key, a workflow status name, an
+            // assignee display name, a resolution name), so each one MUST go through
+            // sanitizeCsvField — it both quotes/escapes the value and defuses CSV
+            // formula injection (a status literally named "=cmd|…" would otherwise
+            // execute when the export is opened in a spreadsheet). A null field
+            // (never dispatched, unassigned, unresolved) renders as an empty cell,
+            // exactly like the optional cells above.
+            idea.jiraIssueKey ? sanitizeCsvField(idea.jiraIssueKey) : '',
+            idea.jiraStatus ? sanitizeCsvField(idea.jiraStatus) : '',
+            idea.jiraAssignee ? sanitizeCsvField(idea.jiraAssignee) : '',
+            idea.jiraResolution ? sanitizeCsvField(idea.jiraResolution) : '',
           ].join(',')
         );
       });

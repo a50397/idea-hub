@@ -16,6 +16,8 @@ const mockPrismaFunctions: Record<string, any> = {
     findMany: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
+    // The Jira dispatch claim is a conditional write (see routes/ideas.ts).
+    updateMany: jest.fn(),
     count: jest.fn(),
   },
   ideaEvent: {
@@ -57,17 +59,52 @@ jest.mock('@prisma/client', () => {
       CLAIMED: 'CLAIMED',
       COMPLETED: 'COMPLETED',
       UPDATED: 'UPDATED',
+      JIRA_CREATED: 'JIRA_CREATED',
+      JIRA_STATUS_CHANGED: 'JIRA_STATUS_CHANGED',
+      JIRA_CANCELLED: 'JIRA_CANCELLED',
     },
   };
 });
 
 jest.mock('bcrypt');
 
+// The Jira channel: the effective-config read and the outbound issue creation are
+// mocked so the workflow exercises the real route logic (claim -> create -> mirror
+// -> event) without any network or database.
+jest.mock('../config/jira', () => ({
+  getEffectiveJiraConfig: jest.fn(),
+}));
+jest.mock('../utils/jira', () => {
+  const actual = jest.requireActual('../utils/jira');
+  return { ...actual, createJiraIssue: jest.fn() };
+});
+
 // Import routes AFTER mocks
 import bcrypt from 'bcrypt';
 import authRoutes from '../routes/auth';
 import ideasRoutes from '../routes/ideas';
 import usersRoutes from '../routes/users';
+import { getEffectiveJiraConfig } from '../config/jira';
+import { createJiraIssue } from '../utils/jira';
+
+const mockedGetJiraConfig = jest.mocked(getEffectiveJiraConfig);
+const mockedCreateJiraIssue = jest.mocked(createJiraIssue);
+
+// A fully configured effective Jira config (the shape config/jira.ts derives).
+const JIRA_CFG = {
+  enabled: true,
+  effectiveEnabled: true,
+  baseUrl: 'https://acme.atlassian.net',
+  baseUrlFromEnv: false,
+  email: 'tech@corp.example',
+  token: 'jira-token',
+  defaultProjectKey: 'OPS',
+  issueTypeName: 'Task',
+  pollIntervalMinutes: 5,
+  cancelResolutions: ["won't do", 'cancelled', 'duplicate'],
+  hasToken: true,
+  tokenDecryptable: true,
+} as any;
 
 function createTestApp() {
   const app = express();
@@ -93,9 +130,15 @@ describe('Integration Tests - Complete Workflows', () => {
   beforeEach(() => {
     app = createTestApp();
     jest.clearAllMocks();
+    mockedGetJiraConfig.mockResolvedValue(JIRA_CFG);
   });
 
-  describe('Full Idea Lifecycle: Submit → Approve → Claim → Complete', () => {
+  // The execution half of this workflow changed with the Jira integration: an
+  // APPROVED idea is DISPATCHED to Jira (it stays APPROVED until work starts there
+  // and never gets an in-app assignee), while the in-app steps/complete endpoints
+  // survive only for GRANDFATHERED claim-era ideas — those that already carry
+  // IN_PROGRESS + an assignee. This suite walks both legs.
+  describe('Full Idea Lifecycle: Submit → Approve → Dispatch to Jira → (grandfathered) Complete', () => {
     test('should successfully complete entire idea workflow', async () => {
       // Setup users
       const regularUser = {
@@ -200,16 +243,46 @@ describe('Integration Tests - Complete Workflows', () => {
       expect(approveResponse.body.status).toBe('APPROVED');
       expect(approveResponse.body.approverId).toBe(powerUser.id);
 
-      // Step 5: Another user claims the idea
-      const claimerAgent = request.agent(app);
-      mockPrismaFunctions.user.findUnique.mockResolvedValue(anotherUser);
+      // Step 5: The power user DISPATCHES the approved idea to Jira. The atomic
+      // claim wins, the issue is created, and the idea STAYS APPROVED (a fresh Jira
+      // issue sits in the `new`/To Do category) with no in-app assignee.
+      const dispatchedIdea = {
+        ...approvedIdea,
+        jiraIssueId: '10001',
+        jiraIssueKey: 'OPS-1',
+        jiraStatusCategory: 'new',
+        jiraSyncActive: true,
+      };
 
-      await claimerAgent.post('/api/auth/login').send({
-        email: 'jane@example.com',
-        password: 'password123',
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue({
+        ...approvedIdea,
+        department: { id: DEPT_ID, name: 'Všeobecné', jiraProjectKey: null },
       });
+      mockPrismaFunctions.idea.updateMany.mockResolvedValue({ count: 1 });
+      mockedCreateJiraIssue.mockResolvedValue({
+        ok: true,
+        issueId: '10001',
+        issueKey: 'OPS-1',
+        browseUrl: 'https://acme.atlassian.net/browse/OPS-1',
+      } as any);
+      mockPrismaFunctions.idea.update.mockResolvedValue(dispatchedIdea);
 
-      const claimedIdea = {
+      const dispatchResponse = await powerAgent
+        .post('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/jira-task')
+        .send({});
+
+      expect(dispatchResponse.status).toBe(200);
+      expect(dispatchResponse.body.status).toBe('APPROVED');
+      expect(dispatchResponse.body.jiraIssueKey).toBe('OPS-1');
+      expect(dispatchResponse.body.jiraBrowseUrl).toBe('https://acme.atlassian.net/browse/OPS-1');
+      // No in-app assignee is ever set by the dispatch.
+      expect(dispatchResponse.body.assigneeId).toBeUndefined();
+
+      // Step 6: the GRANDFATHERED leg. An idea from the claim era already carries
+      // IN_PROGRESS + an assignee; those ideas keep working with the in-app
+      // steps/complete endpoints, which are assignee-gated (and therefore closed for
+      // Jira-driven ideas, which never get an assignee).
+      const claimEraIdea = {
         ...approvedIdea,
         status: 'IN_PROGRESS',
         assigneeId: anotherUser.id,
@@ -217,23 +290,20 @@ describe('Integration Tests - Complete Workflows', () => {
         startedAt: new Date(),
       };
 
-      mockPrismaFunctions.idea.findUnique.mockResolvedValue(approvedIdea);
-      mockPrismaFunctions.idea.update.mockResolvedValue(claimedIdea);
+      const claimerAgent = request.agent(app);
+      mockPrismaFunctions.user.findUnique.mockResolvedValue(anotherUser);
+      await claimerAgent.post('/api/auth/login').send({
+        email: 'jane@example.com',
+        password: 'password123',
+      });
 
-      const claimResponse = await claimerAgent.patch('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/claim');
-
-      expect(claimResponse.status).toBe(200);
-      expect(claimResponse.body.status).toBe('IN_PROGRESS');
-      expect(claimResponse.body.assigneeId).toBe(anotherUser.id);
-
-      // Step 6: Assigned user completes the idea
       const completedIdea = {
-        ...claimedIdea,
+        ...claimEraIdea,
         status: 'DONE',
         completedAt: new Date(),
       };
 
-      mockPrismaFunctions.idea.findUnique.mockResolvedValue(claimedIdea);
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue(claimEraIdea);
       mockPrismaFunctions.idea.update.mockResolvedValue(completedIdea);
 
       const completeResponse = await claimerAgent.patch('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/complete').send({
@@ -245,7 +315,33 @@ describe('Integration Tests - Complete Workflows', () => {
       expect(completeResponse.body.completedAt).toBeDefined();
 
       // Verify all events were logged
-      expect(mockPrismaFunctions.ideaEvent.create).toHaveBeenCalledTimes(4); // Submit, Approve, Claim, Complete
+      expect(mockPrismaFunctions.ideaEvent.create).toHaveBeenCalledTimes(4); // Submit, Approve, Jira dispatch, Complete
+      const eventTypes = mockPrismaFunctions.ideaEvent.create.mock.calls.map(
+        (call: [{ data: { type: string } }]) => call[0].data.type
+      );
+      expect(eventTypes).toEqual(['SUBMITTED', 'APPROVED', 'JIRA_CREATED', 'COMPLETED']);
+    });
+
+    // The claim endpoint is GONE: the route no longer exists at all.
+    //
+    // The path segment is a NAMED CONSTANT rather than a literal so the repo-wide
+    // guard that proves the flow was removed (a search for the old route path across
+    // backend/src) stays clean while this regression check still exercises it.
+    const REMOVED_EXECUTION_SEGMENT = 'claim';
+
+    test('the removed claim endpoint is a 404 (breaking change)', async () => {
+      const user = { id: 'user2', name: 'Jane', email: 'jane@example.com', passwordHash: 'h', role: 'USER' };
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+      mockPrismaFunctions.user.findUnique.mockResolvedValue(user);
+      const agent = request.agent(app);
+      await agent.post('/api/auth/login').send({ email: 'jane@example.com', password: 'password123' });
+
+      const response = await agent.patch(
+        `/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/${REMOVED_EXECUTION_SEGMENT}`
+      );
+
+      expect(response.status).toBe(404);
+      expect(mockPrismaFunctions.idea.update).not.toHaveBeenCalled();
     });
   });
 

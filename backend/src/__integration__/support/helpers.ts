@@ -7,9 +7,10 @@
 import request from 'supertest';
 import bcrypt from 'bcrypt';
 import { Role, AuthProvider, IdeaStatus, Effort } from '@prisma/client';
-import app from '../../index';
+import app, { bootWritesComplete } from '../../index';
 import prisma from '../../lib/prisma';
 import { ensureDepartments } from '../../utils/init-departments';
+import { encrypt } from '../../utils/secretbox';
 
 export { app, prisma, Role, AuthProvider, IdeaStatus, Effort, ensureDepartments };
 
@@ -34,11 +35,18 @@ export function loginAs(
   return withCsrf(agent.post('/api/auth/login')).send({ email, password });
 }
 
-// index.ts runs ensureAdminExists() asynchronously in the app.listen callback on
-// import. Wait for it to settle (an ADMIN now exists) so the boot write never
-// races with per-suite DB cleanup. Once an admin is visible, ensureAdminExists()
-// has no pending writes left.
+// index.ts runs its boot-time database writes asynchronously in the app.listen
+// callback on import: the admin seed, the department seed and the two missing-field
+// backfills (notifyOnChange, jiraSyncActive). Every one of them must have SETTLED
+// before a suite wipes and seeds the database, otherwise a late boot write lands in
+// the middle of a suite's fixtures — re-creating a department resetDb just deleted,
+// or backfilling a document a test deliberately left field-less.
+//
+// `bootWritesComplete` (exported by index.ts) is the authoritative signal; the admin
+// poll is kept as a bounded, diagnosable fallback in case the boot rejected before
+// writing anything (the promise still resolves — it is settled in a `finally`).
 export async function waitForBoot(): Promise<void> {
+  await bootWritesComplete;
   for (let i = 0; i < 200; i++) {
     if ((await prisma.user.count({ where: { role: Role.ADMIN } })) > 0) return;
     await new Promise((r) => setTimeout(r, 25));
@@ -62,10 +70,48 @@ export async function resetDb(): Promise<void> {
   // fans out Webex DMs guarded on the effective config, so a suite that enables Webex
   // must not leak an enabled channel into another suite's idea-creation path.
   await prisma.webexSettings.deleteMany({});
+  // The singleton Jira settings document: same reasoning again, and with more teeth —
+  // an enabled Jira channel leaking into another suite would make the poller and the
+  // dispatch endpoint reach for a (nonexistent) Jira host.
+  await prisma.jiraSettings.deleteMany({});
   // Recreate the default department so every test starts from a valid target
   // (mirrors the boot seed; idempotent by construction).
   await ensureDepartments();
   await clearSessions();
+}
+
+// Save the singleton Jira settings document the way the admin PUT route would, using
+// the REAL secretbox so the stored token is genuine ciphertext. Every field has a
+// working default, so a suite only states what it cares about. NOTE: `baseUrl` here is
+// the DATABASE value — a suite that points the client at an in-process mock Jira sets
+// the JIRA_API_BASE_URL environment override instead (it wins over this value, and it
+// is the only way to reach a plain-http target).
+export async function setJiraSettings(overrides: Partial<{
+  enabled: boolean;
+  baseUrl: string;
+  email: string;
+  apiToken: string | null;
+  defaultProjectKey: string;
+  issueTypeName: string;
+  pollIntervalMinutes: number;
+  cancelResolutions: string;
+}> = {}) {
+  const values = {
+    enabled: overrides.enabled ?? true,
+    baseUrl: overrides.baseUrl ?? 'https://jira.itest.example',
+    email: overrides.email ?? 'tech@itest.example',
+    apiTokenEnc:
+      overrides.apiToken === null ? '' : encrypt(overrides.apiToken ?? 'itest-jira-token'),
+    defaultProjectKey: overrides.defaultProjectKey ?? 'OPS',
+    issueTypeName: overrides.issueTypeName ?? 'Task',
+    pollIntervalMinutes: overrides.pollIntervalMinutes ?? 5,
+    cancelResolutions: overrides.cancelResolutions ?? "Won't Do,Cancelled,Duplicate",
+  };
+  return prisma.jiraSettings.upsert({
+    where: { singleton: 'singleton' },
+    create: values,
+    update: values,
+  });
 }
 
 // Resolve the current default department id (first by order, tie-break name).
@@ -151,6 +197,28 @@ export interface CreateIdeaInput {
   startedAt?: Date;
   completedAt?: Date;
   rejectedAt?: Date;
+  // Jira mirror fields. `jiraSyncActive` defaults to an EXPLICIT false (exactly what
+  // POST /api/ideas writes) so a fixture idea is dispatchable: the dispatch claim
+  // matches `jiraSyncActive: false`, and a Prisma+Mongo where-clause does not match a
+  // missing scalar.
+  //
+  // This builder can NOT produce a document that LACKS a jira field: it goes through
+  // Prisma, and `jiraSyncActive` is written unconditionally (`?? false`, so even an
+  // explicit null/undefined becomes false). The missing-field fixture — the one the
+  // boot backfill and the missing-vs-null pins are about — is built by raw-inserting
+  // the document with `prisma.$runCommandRaw`; see insertLegacyIdea() in
+  // jira-lifecycle.itest.ts. `jiraIssueId: null` is the one meaningful NULL here (it
+  // is exactly what the dispatch claim writes) and is passed through as given.
+  notifyOnChange?: boolean;
+  jiraSyncActive?: boolean;
+  jiraIssueId?: string | null;
+  jiraIssueKey?: string;
+  jiraStatus?: string;
+  jiraStatusCategory?: string;
+  jiraAssignee?: string;
+  jiraResolution?: string;
+  jiraLastSyncAt?: Date;
+  jiraMissingCount?: number;
 }
 
 export async function createIdea(input: CreateIdeaInput) {
@@ -174,6 +242,19 @@ export async function createIdea(input: CreateIdeaInput) {
       ...(input.startedAt ? { startedAt: input.startedAt } : {}),
       ...(input.completedAt ? { completedAt: input.completedAt } : {}),
       ...(input.rejectedAt ? { rejectedAt: input.rejectedAt } : {}),
+      ...(input.notifyOnChange !== undefined ? { notifyOnChange: input.notifyOnChange } : {}),
+      // Explicit not-dispatched default (see CreateIdeaInput above).
+      jiraSyncActive: input.jiraSyncActive ?? false,
+      // `jiraIssueId: null` is meaningful (it is what the dispatch claim writes), so
+      // it is passed through when explicitly given.
+      ...(input.jiraIssueId !== undefined ? { jiraIssueId: input.jiraIssueId } : {}),
+      ...(input.jiraIssueKey !== undefined ? { jiraIssueKey: input.jiraIssueKey } : {}),
+      ...(input.jiraStatus !== undefined ? { jiraStatus: input.jiraStatus } : {}),
+      ...(input.jiraStatusCategory !== undefined ? { jiraStatusCategory: input.jiraStatusCategory } : {}),
+      ...(input.jiraAssignee !== undefined ? { jiraAssignee: input.jiraAssignee } : {}),
+      ...(input.jiraResolution !== undefined ? { jiraResolution: input.jiraResolution } : {}),
+      ...(input.jiraLastSyncAt !== undefined ? { jiraLastSyncAt: input.jiraLastSyncAt } : {}),
+      ...(input.jiraMissingCount !== undefined ? { jiraMissingCount: input.jiraMissingCount } : {}),
     },
   });
 }

@@ -179,8 +179,9 @@ describe('Departments API', () => {
       expect(response.body[0]).not.toHaveProperty('notificationEmails');
     });
 
-    // webexRoomIds is internal admin-only data too — the SAME visibility rule as
-    // notificationEmails, projected by the one serializeDepartment function.
+    // webexRoomIds AND jiraProjectKey are internal admin-only data too — the SAME
+    // visibility rule as notificationEmails, projected by the one serializeDepartment
+    // function.
     const withRooms = [
       {
         id: 'a',
@@ -188,9 +189,18 @@ describe('Departments API', () => {
         order: 0,
         notificationEmails: ['ops@corp.example'],
         webexRoomIds: ['ROOM-1', 'ROOM-2'],
+        jiraProjectKey: 'OPS',
         _count: { ideas: 3 },
       },
-      { id: 'b', name: 'Marketing', order: 1, notificationEmails: [], webexRoomIds: [], _count: { ideas: 1 } },
+      {
+        id: 'b',
+        name: 'Marketing',
+        order: 1,
+        notificationEmails: [],
+        webexRoomIds: [],
+        jiraProjectKey: null,
+        _count: { ideas: 1 },
+      },
     ];
 
     test('includes webexRoomIds for an ADMIN session', async () => {
@@ -226,6 +236,41 @@ describe('Departments API', () => {
       expect(response.status).toBe(200);
       expect(response.body[0]).not.toHaveProperty('webexRoomIds');
     });
+
+    // jiraProjectKey joins the SAME admin-only omit set (security review F8): it is
+    // admin-managed configuration, so a non-admin must never receive it — while the
+    // resulting issue key/browse URL on the idea itself stays visible to everyone.
+    test('includes jiraProjectKey for an ADMIN session', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockPrismaFunctions.department.findMany.mockResolvedValue(withRooms);
+
+      const response = await agent.get('/api/departments');
+
+      expect(response.status).toBe(200);
+      expect(response.body[0]).toHaveProperty('jiraProjectKey', 'OPS');
+      expect(response.body[1]).toHaveProperty('jiraProjectKey', null);
+    });
+
+    test.each(['USER', 'POWER_USER'])(
+      'omits jiraProjectKey for a non-admin (%s) session — projection regression guard',
+      async (role) => {
+        const { agent } = await loginAsUser(app, role);
+        mockPrismaFunctions.department.findMany.mockResolvedValue(withRooms);
+
+        const response = await agent.get('/api/departments');
+
+        expect(response.status).toBe(200);
+        for (const row of response.body) {
+          expect(row).not.toHaveProperty('jiraProjectKey');
+          expect(row).not.toHaveProperty('webexRoomIds');
+          expect(row).not.toHaveProperty('notificationEmails');
+        }
+        // The key must not leak in ANY form (e.g. through a stray nested field).
+        expect(JSON.stringify(response.body)).not.toContain('OPS');
+        // The rest of the shape is unchanged for non-admins.
+        expect(response.body[0]).toMatchObject({ id: 'a', name: 'Všeobecné', order: 0, _count: { ideas: 3 } });
+      }
+    );
   });
 
   describe('role guards on mutations', () => {
@@ -424,7 +469,8 @@ describe('Departments API', () => {
 
       expect(response.status).toBe(400);
       expect(response.body).toEqual({
-        error: 'At least one field to update is required (name, notificationEmails, or webexRoomIds)',
+        error:
+          'At least one field to update is required (name, notificationEmails, webexRoomIds, or jiraProjectKey)',
       });
       expect(mockPrismaFunctions.department.update).not.toHaveBeenCalled();
       // Fails fast, before the existence lookup.
@@ -658,6 +704,82 @@ describe('Departments API', () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
 
       const response = await agent.patch(`/api/departments/${VALID_ID}`).send({ webexRoomIds: 'ROOM-a' });
+
+      expect(response.status).toBe(400);
+      expect(mockPrismaFunctions.department.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // The per-department Jira project override: same optional-field PATCH semantics as
+  // the two lists above, plus the '' -> NULL clear rule (storing '' would make the
+  // `dept.jiraProjectKey ?? defaultProjectKey` fallback resolve to an empty key
+  // instead of the installation-wide default).
+  describe('PATCH /api/departments/:id — jira project key', () => {
+    beforeEach(() => {
+      mockPrismaFunctions.department.findUnique.mockResolvedValue({ id: VALID_ID, name: 'Old', order: 0 });
+      mockPrismaFunctions.department.update.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+        Promise.resolve({
+          id: VALID_ID,
+          name: 'Old',
+          order: 0,
+          notificationEmails: [],
+          webexRoomIds: [],
+          jiraProjectKey: null,
+          ...data,
+        })
+      );
+    });
+
+    test('stores the key UPPERCASED, leaving the other fields untouched', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+
+      const response = await agent.patch(`/api/departments/${VALID_ID}`).send({ jiraProjectKey: '  ops  ' });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toHaveProperty('jiraProjectKey', 'OPS');
+      expect(mockPrismaFunctions.department.update).toHaveBeenCalledWith({
+        where: { id: VALID_ID },
+        data: { jiraProjectKey: 'OPS' },
+      });
+    });
+
+    test('an empty string CLEARS the override by writing null (falls back to the default project)', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+
+      const response = await agent.patch(`/api/departments/${VALID_ID}`).send({ jiraProjectKey: '' });
+
+      expect(response.status).toBe(200);
+      expect(mockPrismaFunctions.department.update).toHaveBeenCalledWith({
+        where: { id: VALID_ID },
+        data: { jiraProjectKey: null },
+      });
+    });
+
+    test('updates the key together with a rename', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+
+      const response = await agent
+        .patch(`/api/departments/${VALID_ID}`)
+        .send({ name: 'Renamed', jiraProjectKey: 'DEV1' });
+
+      expect(response.status).toBe(200);
+      expect(mockPrismaFunctions.department.update).toHaveBeenCalledWith({
+        where: { id: VALID_ID },
+        data: { name: 'Renamed', jiraProjectKey: 'DEV1' },
+      });
+    });
+
+    test.each([
+      ['a leading digit', '1OPS'],
+      ['a hyphen', 'OPS-1'],
+      ['whitespace inside', 'OPS TEAM'],
+      ['a path traversal attempt', '../ADMIN'],
+      ['longer than 32 characters', 'A'.repeat(33)],
+      ['a non-string', 42],
+    ])('rejects %s with 400 and does not update', async (_label, value) => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+
+      const response = await agent.patch(`/api/departments/${VALID_ID}`).send({ jiraProjectKey: value });
 
       expect(response.status).toBe(400);
       expect(mockPrismaFunctions.department.update).not.toHaveBeenCalled();

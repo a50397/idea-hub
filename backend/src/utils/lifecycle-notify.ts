@@ -31,15 +31,31 @@ export interface NotifiableIdea {
   submitter: { id: string; name: string; email: string } | null;
 }
 
+/**
+ * The constant actor label for every notification the Jira poller triggers.
+ *
+ * SECURITY (review finding F5): a Jira-driven notification NEVER carries the remote
+ * assignee's display name (or any other remote string) as the actor — that value is
+ * attacker-influenceable in the remote system and lands in a plain-text mail body /
+ * Webex message. The actor is always this fixed, local constant.
+ */
+export const JIRA_ACTOR_NAME = 'Jira';
+
 export interface MaybeNotifyArgs {
   idea: NotifiableIdea;
   event: IdeaLifecycleEvent;
-  /** The user who performed the change (session user). */
-  actorUserId: string;
-  /** Display name of the actor, for the message body. */
+  /**
+   * The user who performed the change (session user), or NULL when there is no
+   * human actor — every Jira-poller-driven notification. A null actor is never the
+   * submitter, so it can never trip the self-notification bail below.
+   */
+  actorUserId: string | null;
+  /** Display name of the actor, for the message body ("Jira" when actorUserId is null). */
   actorName: string;
   /** Progress-step text; only meaningful for the STEP_ADDED event. */
   stepText?: string;
+  /** Jira issue key; only meaningful for the JIRA_* events. */
+  jiraKey?: string;
 }
 
 /**
@@ -51,14 +67,24 @@ export interface MaybeNotifyArgs {
  * when Webex is effectively enabled — independently, so one failing never affects
  * the other.
  */
-export function maybeNotifySubmitter({ idea, event, actorUserId, actorName, stepText }: MaybeNotifyArgs): void {
+export function maybeNotifySubmitter({
+  idea,
+  event,
+  actorUserId,
+  actorName,
+  stepText,
+  jiraKey,
+}: MaybeNotifyArgs): void {
   // Synchronous bails — cheap, and keep the request path clean when nothing sends.
   // These are the SHARED opt-in / recipient guards; when they pass, each channel
   // independently decides whether it is effectively enabled.
   if (!idea.notifyOnChange) return; // opted out (or legacy null == false)
   const to = idea.submitter?.email;
   if (!to) return; // no recipient
-  if (actorUserId === idea.submitterId) return; // no self-notification
+  // No self-notification. A NULL actor (the Jira poller) is by definition not the
+  // submitter, so it must never bail here — the explicit non-null check keeps that
+  // true even if a submitterId were ever null/undefined at runtime.
+  if (actorUserId !== null && actorUserId === idea.submitterId) return;
 
   const link = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/ideas/${idea.id}`;
 
@@ -75,6 +101,7 @@ export function maybeNotifySubmitter({ idea, event, actorUserId, actorName, step
         title: idea.title,
         actorName,
         stepText,
+        jiraKey,
         link,
         language: cfg.language,
       });
@@ -96,6 +123,7 @@ export function maybeNotifySubmitter({ idea, event, actorUserId, actorName, step
         title: idea.title,
         actorName,
         stepText,
+        jiraKey,
         link,
         language: cfg.language,
       });

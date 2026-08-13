@@ -88,7 +88,14 @@ async function main() {
     users: [user1.email, user2.email, user3.email],
   });
 
-  // Create ideas in different states
+  // Create ideas in different states.
+  //
+  // Every seeded idea carries an EXPLICIT `jiraSyncActive: false`, exactly like
+  // POST /api/ideas. The Jira dispatch endpoint claims an idea with
+  // `updateMany({ where: { ..., jiraSyncActive: false } })`, and a Prisma+Mongo
+  // where-clause does NOT match a *missing* scalar — a seeded database would
+  // otherwise stay un-dispatchable until the boot backfill
+  // (utils/init-idea-jira.ts) happened to run after the seed.
   const now = new Date();
   const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   const lastWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -104,6 +111,7 @@ async function main() {
         'Reduces HR workload by 30%, ensures consistent onboarding experience, and helps new employees feel more welcomed and prepared.',
       effort: Effort.ONE_TO_THREE_DAYS,
       status: IdeaStatus.SUBMITTED,
+      jiraSyncActive: false,
       submitterId: user1.id,
       tags: ['hr', 'automation', 'employee-experience'],
       departmentId: generalDept.id,
@@ -130,6 +138,7 @@ async function main() {
         'Improves employee health and wellbeing, reduces back pain complaints, increases productivity and morale.',
       effort: Effort.LESS_THAN_ONE_DAY,
       status: IdeaStatus.SUBMITTED,
+      jiraSyncActive: false,
       submitterId: user2.id,
       tags: ['health', 'workplace', 'equipment'],
       departmentId: marketingDept.id,
@@ -157,6 +166,7 @@ async function main() {
         'Reduces repetitive questions, preserves institutional knowledge, speeds up problem-solving, and improves cross-team collaboration.',
       effort: Effort.MORE_THAN_THREE_DAYS,
       status: IdeaStatus.APPROVED,
+      jiraSyncActive: false,
       submitterId: user1.id,
       approverId: powerUser.id,
       tags: ['knowledge-management', 'documentation', 'collaboration'],
@@ -194,6 +204,7 @@ async function main() {
         'Saves 2-3 hours per week per manager, standardizes reporting format, creates historical record of team progress.',
       effort: Effort.ONE_TO_THREE_DAYS,
       status: IdeaStatus.APPROVED,
+      jiraSyncActive: false,
       submitterId: user3.id,
       approverId: powerUser.id,
       tags: ['automation', 'reporting', 'productivity'],
@@ -232,6 +243,7 @@ async function main() {
         'Reduces company environmental impact, improves corporate social responsibility profile, saves costs on waste management over time.',
       effort: Effort.ONE_TO_THREE_DAYS,
       status: IdeaStatus.IN_PROGRESS,
+      jiraSyncActive: false,
       submitterId: user2.id,
       approverId: powerUser.id,
       assigneeId: user2.id,
@@ -279,6 +291,7 @@ async function main() {
         'Improves employee satisfaction, supports local business, creates a better break room atmosphere.',
       effort: Effort.LESS_THAN_ONE_DAY,
       status: IdeaStatus.DONE,
+      jiraSyncActive: false,
       submitterId: user3.id,
       approverId: admin.id,
       assigneeId: admin.id,
@@ -333,6 +346,7 @@ async function main() {
         'Improves work-life balance, reduces commute stress, increases employee satisfaction and retention.',
       effort: Effort.LESS_THAN_ONE_DAY,
       status: IdeaStatus.DONE,
+      jiraSyncActive: false,
       submitterId: user1.id,
       approverId: admin.id,
       assigneeId: powerUser.id,
@@ -387,6 +401,7 @@ async function main() {
       benefits: 'Could improve alertness and productivity after lunch.',
       effort: Effort.MORE_THAN_THREE_DAYS,
       status: IdeaStatus.REJECTED,
+      jiraSyncActive: false,
       submitterId: user2.id,
       approverId: powerUser.id,
       tags: ['wellness', 'workplace'],

@@ -12,22 +12,36 @@ const departmentOrderBy: Prisma.DepartmentOrderByWithRelationInput[] = [
   { name: 'asc' },
 ];
 
-// notificationEmails AND webexRoomIds are INTERNAL, admin-only data. Project them
-// onto the wire representation ONLY for ADMIN sessions; every other authenticated
-// user receives the same id/name/order/_count/timestamps shape as before these
-// features (neither list). Keeping the authz projection in one place makes the
-// visibility rule easy to audit — so EVERY department-returning path (GET list,
-// create, reorder, update) funnels through this one function. Generic over the
-// department shape so it accepts both the enriched list row (with _count) and a plain
-// create/update result.
-function serializeDepartment<T extends { notificationEmails: string[]; webexRoomIds: string[] }>(
+// notificationEmails, webexRoomIds AND jiraProjectKey are INTERNAL, admin-only data.
+// Project them onto the wire representation ONLY for ADMIN sessions; every other
+// authenticated user receives the same id/name/order/_count/timestamps shape as
+// before these features (none of the three). Keeping the authz projection in one
+// place makes the visibility rule easy to audit — so EVERY department-returning path
+// (GET list, create, reorder, update) funnels through this one function. Generic over
+// the department shape so it accepts both the enriched list row (with _count) and a
+// plain create/update result.
+//
+// NOTE on jiraProjectKey (security review F8/F14): the resulting Jira issue KEY and
+// browse URL ARE shown to every authenticated user on the idea itself — that is
+// ordinary internal data, consistent with "everyone sees all ideas". The department's
+// configured project key is nevertheless kept admin-only as CONFIGURATION HYGIENE
+// (it belongs with the other admin-managed department settings), which is why it must
+// be part of this omit set and not merely returned everywhere.
+function serializeDepartment<
+  T extends { notificationEmails: string[]; webexRoomIds: string[]; jiraProjectKey: string | null }
+>(
   dept: T,
   includeAdminFields: boolean
-): T | Omit<T, 'notificationEmails' | 'webexRoomIds'> {
+): T | Omit<T, 'notificationEmails' | 'webexRoomIds' | 'jiraProjectKey'> {
   if (includeAdminFields) {
     return dept;
   }
-  const { notificationEmails: _omitEmails, webexRoomIds: _omitRooms, ...rest } = dept;
+  const {
+    notificationEmails: _omitEmails,
+    webexRoomIds: _omitRooms,
+    jiraProjectKey: _omitJiraProjectKey,
+    ...rest
+  } = dept;
   return rest;
 }
 
@@ -133,10 +147,10 @@ router.patch('/reorder', requireRole(Role.ADMIN), async (req, res) => {
 });
 
 // Update a department (Admin only): rename and/or set its notification emails
-// and/or its Webex room ids. All three are optional, so any single-field update or
-// any combination works. Always allowed, even when the department is referenced by
-// ideas. The response is admin-only, so it always carries notificationEmails and
-// webexRoomIds.
+// and/or its Webex room ids and/or its Jira project key. All four are optional, so
+// any single-field update or any combination works. Always allowed, even when the
+// department is referenced by ideas. The response is admin-only, so it always
+// carries notificationEmails, webexRoomIds and jiraProjectKey.
 router.patch('/:id', requireRole(Role.ADMIN), async (req, res) => {
   try {
     const idParsed = objectIdParamSchema.safeParse(req.params.id);
@@ -144,15 +158,21 @@ router.patch('/:id', requireRole(Role.ADMIN), async (req, res) => {
       return res.status(400).json({ error: 'Invalid department ID format' });
     }
     const id = idParsed.data;
-    const { name, notificationEmails, webexRoomIds } = updateDepartmentSchema.parse(req.body);
+    const { name, notificationEmails, webexRoomIds, jiraProjectKey } = updateDepartmentSchema.parse(req.body);
 
     // Reject an empty update fast: all fields are optional in the schema, so an
     // empty `{}` body (or one of only unknown keys Zod strips) parses OK yet would
     // reach prisma.update with `data: {}`, turning a client mistake into a 500/no-op.
-    if (name === undefined && notificationEmails === undefined && webexRoomIds === undefined) {
-      return res
-        .status(400)
-        .json({ error: 'At least one field to update is required (name, notificationEmails, or webexRoomIds)' });
+    if (
+      name === undefined &&
+      notificationEmails === undefined &&
+      webexRoomIds === undefined &&
+      jiraProjectKey === undefined
+    ) {
+      return res.status(400).json({
+        error:
+          'At least one field to update is required (name, notificationEmails, webexRoomIds, or jiraProjectKey)',
+      });
     }
 
     const existing = await prisma.department.findUnique({ where: { id } });
@@ -163,11 +183,16 @@ router.patch('/:id', requireRole(Role.ADMIN), async (req, res) => {
     const department = await prisma.department.update({
       where: { id },
       // Prisma skips `undefined` fields, so an absent name / notificationEmails /
-      // webexRoomIds leaves that column untouched. An explicit [] clears the list.
+      // webexRoomIds / jiraProjectKey leaves that column untouched. An explicit []
+      // clears a list; an explicit '' clears the Jira project key by writing NULL —
+      // storing an empty string instead would make `dept.jiraProjectKey ?? default`
+      // resolve to '' (no fallback to the installation-wide default) rather than to
+      // the default key.
       data: {
         ...(name !== undefined ? { name } : {}),
         ...(notificationEmails !== undefined ? { notificationEmails } : {}),
         ...(webexRoomIds !== undefined ? { webexRoomIds } : {}),
+        ...(jiraProjectKey !== undefined ? { jiraProjectKey: jiraProjectKey === '' ? null : jiraProjectKey } : {}),
       },
     });
 

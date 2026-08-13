@@ -51,6 +51,22 @@ export const departmentNameSchema = z.object({
 // base64 / base64url ids (A-Z a-z 0-9 and - _ + / =) contain none of these.
 const webexRoomIdForbiddenChar = /[\s\u0000-\u001f\u007f]/;
 
+// A Jira PROJECT key: a letter followed by letters/digits/underscores (Atlassian's
+// own rule), stored UPPERCASE because Jira treats keys as uppercase. Declared here
+// (above its first use) and SHARED by the per-department override in
+// updateDepartmentSchema below and the installation-wide default in
+// updateJiraSettingsSchema, so the two rules can never drift apart. An empty string
+// is allowed by both callers and means "no key" (the department PATCH turns it into
+// null; the settings PUT stores '').
+const jiraProjectKeySchema = z
+  .string()
+  .trim()
+  .max(32, 'Project key must be at most 32 characters')
+  .refine((v) => v === '' || /^[A-Za-z][A-Za-z0-9_]*$/.test(v), {
+    message: 'Project key must start with a letter and contain only letters, digits or underscores',
+  })
+  .transform((v) => v.toUpperCase());
+
 // PATCH /api/departments/:id accepts a rename, a notification-emails update, a
 // webex-room-ids update, or any combination — every field is optional, so a
 // single-field request works for each. Each notification email is trimmed then
@@ -124,6 +140,11 @@ export const updateDepartmentSchema = z.object({
       return deduped;
     })
     .optional(),
+  // Optional per-department Jira project override. Same key rule as the
+  // installation-wide default (jiraProjectKeySchema, uppercased); an EMPTY STRING is
+  // the explicit CLEAR signal, which the route turns into null so the effective
+  // project falls back to JiraSettings.defaultProjectKey.
+  jiraProjectKey: jiraProjectKeySchema.optional(),
 });
 
 export const reorderDepartmentsSchema = z.object({
@@ -196,6 +217,147 @@ export const updateWebexSettingsSchema = z.object({
 // POST /api/webex-settings/test — send a short test Webex DM to a single address.
 export const webexTestSendSchema = z.object({
   to: z.string().trim().email('Invalid email address'),
+});
+
+// ---------------------------------------------------------------------------
+// Jira integration (PUT /api/jira-settings, PATCH /api/departments/:id)
+// ---------------------------------------------------------------------------
+
+// Is this hostname an IP LITERAL rather than a name? URL.hostname renders an IPv6
+// literal in brackets; the numeric forms cover dotted-quad IPv4 and the hex/decimal
+// spellings a URL parser also accepts.
+function isIpLiteralHost(hostname: string): boolean {
+  if (hostname.startsWith('[')) return true; // IPv6 literal, e.g. [::1]
+  if (/^[0-9.]+$/.test(hostname)) return true; // 127.0.0.1, 2130706433, 127.1 ...
+  if (/^0x[0-9a-f]+$/i.test(hostname)) return true; // hex spelling of an IPv4
+  return false;
+}
+
+// Loopback-by-name. Combined with isIpLiteralHost this closes the obvious
+// "point the stored credential at something local" cases (see below).
+//
+// The trailing dot is NOT cosmetic: "localhost." is the fully qualified (root-label)
+// spelling of the SAME name, it resolves the same way, and URL keeps it verbatim —
+// `new URL('https://localhost.').hostname === 'localhost.'`. Comparing the raw
+// hostname therefore let "https://localhost." and "https://jira.localhost." straight
+// through the check. One trailing dot is stripped before comparing, which is what a
+// resolver does with it. (The numeric spellings need no such treatment: a trailing
+// dot does not stop URL from canonicalizing them to a dotted quad, so
+// "https://0x7f000001." still reaches isIpLiteralHost as "127.0.0.1".)
+function isLocalhostName(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/\.$/, '');
+  return host === 'localhost' || host.endsWith('.localhost');
+}
+
+/**
+ * The Jira site base URL — the single most security-sensitive field in this feature
+ * (security review F1).
+ *
+ * The stored account email + API token are sent as an HTTP Basic header to WHATEVER
+ * ORIGIN this names, so an admin (or anyone who reaches this endpoint) could
+ * otherwise turn the setting into a credential-exfiltration primitive, and the same
+ * value is also the base of the browse URL the SPA renders as a link. Hence:
+ *   - https ONLY (no http, and emphatically no javascript:/data: — which is what
+ *     would make the browse link stored XSS),
+ *   - no userinfo (https://user:pass@host would smuggle a second credential),
+ *   - no query or fragment (they cannot belong to an origin),
+ *   - no IP literal and no localhost host (blunts the obvious SSRF-to-loopback
+ *     shape; a full SSRF filter is out of scope — the outbound call additionally
+ *     refuses redirects, see utils/jira.ts),
+ *   - stored NORMALIZED to a bare origin (scheme://host[:port]), so any path is
+ *     dropped and every join in utils/jira.ts is well-formed.
+ * An empty string is allowed and means "not configured" (the effective config then
+ * reads as not enabled). The e2e/test story does NOT relax this rule: it uses the
+ * JIRA_API_BASE_URL environment override instead (config/jira.ts).
+ */
+const jiraBaseUrlSchema = z
+  .string()
+  .trim()
+  .max(200, 'Base URL must be at most 200 characters')
+  .superRefine((value, ctx) => {
+    if (value === '') return; // not configured
+    let parsed: URL;
+    try {
+      parsed = new URL(value);
+    } catch {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Base URL must be a valid absolute URL' });
+      return;
+    }
+    if (parsed.protocol !== 'https:') {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Base URL must use https' });
+    }
+    if (parsed.username.length > 0 || parsed.password.length > 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Base URL must not contain credentials' });
+    }
+    if (parsed.search.length > 0 || parsed.hash.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Base URL must not contain a query string or fragment',
+      });
+    }
+    if (isIpLiteralHost(parsed.hostname)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Base URL must name a host, not an IP address' });
+    } else if (isLocalhostName(parsed.hostname)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Base URL must not point at localhost' });
+    }
+  })
+  // Normalize to the bare origin. Only reached for a value that passed every check
+  // above (a failed refinement short-circuits the pipeline); the try/catch keeps it
+  // total regardless.
+  .transform((value) => {
+    if (value === '') return '';
+    try {
+      return new URL(value).origin;
+    } catch {
+      return value;
+    }
+  });
+
+// PUT /api/jira-settings — full save of the singleton admin-managed Jira config.
+// `apiToken` is the ONLY optional field and drives keep/set/wipe of the stored API
+// token exactly like the Webex bot token: ABSENT keeps the existing token, a
+// NON-EMPTY value is TRIMMED then encrypted and stored, and an EMPTY STRING wipes
+// it. A whitespace-only token is REJECTED (trimmed it would leave nothing to store,
+// yet effectiveEnabled would still read true — an "enabled" channel with an
+// unusable credential).
+//
+// NOTE: the F2 credential-binding rule ("changing baseUrl or email REQUIRES setting
+// or wiping the token") is NOT expressible here — it compares the request against
+// the STORED document — so it lives in the route handler, which can also return the
+// house-style message. This schema only validates each field in isolation.
+export const updateJiraSettingsSchema = z.object({
+  enabled: z.boolean(),
+  baseUrl: jiraBaseUrlSchema,
+  email: z
+    .string()
+    .trim()
+    .max(128, 'Email must be at most 128 characters')
+    .refine((v) => v === '' || z.string().email().safeParse(v).success, {
+      message: 'Invalid email address',
+    }),
+  apiToken: z
+    .string()
+    .max(512, 'API token must be at most 512 characters')
+    .refine((v) => v === '' || v.trim().length > 0, {
+      message: 'API token cannot be only whitespace',
+    })
+    .transform((v) => (v === '' ? '' : v.trim()))
+    .optional(),
+  defaultProjectKey: jiraProjectKeySchema,
+  issueTypeName: z
+    .string()
+    .trim()
+    .min(1, 'Issue type is required')
+    .max(100, 'Issue type must be at most 100 characters'),
+  pollIntervalMinutes: z
+    .number({ invalid_type_error: 'Poll interval must be a number' })
+    .int('Poll interval must be an integer')
+    .min(1, 'Poll interval must be at least 1 minute')
+    .max(1440, 'Poll interval must be at most 1440 minutes'),
+  cancelResolutions: z
+    .string()
+    .trim()
+    .max(500, 'Cancel resolutions must be at most 500 characters'),
 });
 
 export const reviewIdeaSchema = z.object({

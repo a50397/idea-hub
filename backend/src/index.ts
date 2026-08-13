@@ -13,12 +13,19 @@ import usersRoutes from './routes/users';
 import departmentsRoutes from './routes/departments';
 import mailSettingsRoutes from './routes/mail-settings';
 import webexSettingsRoutes from './routes/webex-settings';
+import jiraSettingsRoutes from './routes/jira-settings';
 import optionsRoutes from './routes/options';
 import crypto from 'crypto';
 import { ensureAdminExists } from './utils/init-admin';
 import { ensureDepartments } from './utils/init-departments';
 import { ensureIdeaNotifyDefaults } from './utils/init-idea-notify';
+import { ensureIdeaJiraDefaults } from './utils/init-idea-jira';
 import { pruneOrphanSsoUsers } from './utils/prune-sso-users';
+import {
+  maybeRunJiraSync,
+  shouldRegisterJiraPollTimer,
+  jiraPollIntervalOverrideMs,
+} from './utils/jira-sync';
 import { isMailKeyValid } from './utils/secretbox';
 import prisma from './lib/prisma';
 
@@ -142,6 +149,7 @@ app.use('/api/users', usersRoutes);
 app.use('/api/departments', departmentsRoutes);
 app.use('/api/mail-settings', mailSettingsRoutes);
 app.use('/api/webex-settings', webexSettingsRoutes);
+app.use('/api/jira-settings', jiraSettingsRoutes);
 app.use('/api/options', optionsRoutes);
 
 // Error handling middleware
@@ -158,13 +166,38 @@ app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
 
+// Resolves once every BOOT-TIME DATABASE WRITE (the admin seed, the department
+// seed and the two missing-field backfills) has settled. The server is already
+// listening while those run, so without a completion signal a caller cannot tell a
+// finished boot from one still writing.
+//
+// This exists for the real-database integration tier, which boots this very app and
+// then wipes/seeds the database per suite: a boot write landing in the middle of a
+// suite's fixtures is a race (it can re-create a deleted default department or
+// backfill a document a test deliberately left field-less). Production behavior is
+// unchanged — nothing awaits this promise there. It resolves in a `finally`, so a
+// failing boot step can never leave a waiter hanging.
+let markBootWritesComplete: () => void = () => {};
+export const bootWritesComplete: Promise<void> = new Promise<void>((resolve) => {
+  markBootWritesComplete = resolve;
+});
+
 const server = app.listen(PORT, async () => {
   console.log(`🚀 IdeaHub Backend running on port ${PORT}`);
   console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔗 API available at: http://localhost:${PORT}`);
-  await ensureAdminExists();
-  await ensureDepartments();
-  await ensureIdeaNotifyDefaults();
+  try {
+    await ensureAdminExists();
+    await ensureDepartments();
+    await ensureIdeaNotifyDefaults();
+    // Same missing-field self-migration for the Jira dispatch flag. Unlike the notify
+    // backfill this one is load-bearing: the dispatch endpoint's atomic claim matches
+    // on `jiraSyncActive: false`, which a legacy document lacking the field would
+    // never satisfy (see utils/init-idea-jira.ts).
+    await ensureIdeaJiraDefaults();
+  } finally {
+    markBootWritesComplete();
+  }
 
   // Automatic pruning of orphaned SSO users. Skipped ENTIRELY under NODE_ENV=test:
   // the integration tier boots this app, and a boot-time (or interval) prune would
@@ -201,6 +234,45 @@ const server = app.listen(PORT, async () => {
         pruneRunning = false;
       }
     }, intervalMs).unref();
+  }
+
+  // Jira status poller. The app sits in a firewalled segment (no inbound webhooks),
+  // so dispatched ideas are kept in sync by polling — see utils/jira-sync.ts.
+  //
+  // Registration rule: normally always, and under NODE_ENV=test ONLY when a usable
+  // JIRA_POLL_INTERVAL_MS override is set. That override is the e2e enabler (the e2e
+  // backend runs with NODE_ENV=test) while keeping the unit/integration tiers —
+  // which boot this same app — free of a background timer that would race their
+  // fixtures. The condition itself lives in utils/jira-sync.ts as the exported, pure
+  // shouldRegisterJiraPollTimer(): inverting a one-line condition here would leave
+  // every suite green while production silently stops mirroring Jira, so it is
+  // stated once and unit-tested on all four arms.
+  //
+  // The TICK is not the poll period: maybeRunJiraSync() decides whether a run is
+  // actually due (from the admin-configured pollIntervalMinutes, or the override)
+  // and honors the backoff. Ticking at most once a minute keeps that check cheap;
+  // the override lowers it for e2e, floored at 250ms so a bad value cannot hot-loop.
+  // The local latch is belt-and-braces on top of the module's own re-entrancy guard,
+  // and .unref() means this timer can never keep the process alive on its own.
+  if (shouldRegisterJiraPollTimer()) {
+    // null outside a test run (the override is test-only, enforced), so a
+    // production tick is always the plain 60s one.
+    const overrideMs = jiraPollIntervalOverrideMs();
+    const tickMs = Math.max(250, Math.min(60_000, overrideMs ?? 60_000));
+    let jiraSyncTickRunning = false;
+    setInterval(async () => {
+      if (jiraSyncTickRunning) return;
+      jiraSyncTickRunning = true;
+      try {
+        await maybeRunJiraSync();
+      } catch (error) {
+        // maybeRunJiraSync is documented never-throws; this is the last line of
+        // defense against an unhandled rejection in a bare interval callback.
+        console.error('Scheduled Jira sync failed:', error);
+      } finally {
+        jiraSyncTickRunning = false;
+      }
+    }, tickMs).unref();
   }
 });
 

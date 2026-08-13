@@ -201,12 +201,26 @@ describe('newIdeaEmail — user-text delimiting (plain-text injection safety)', 
 // are Slovak so any English text in an SK output can only be a leaked fragment.
 // ---------------------------------------------------------------------------
 
-const EVENTS: IdeaLifecycleEvent[] = ['APPROVED', 'REJECTED', 'CLAIMED', 'COMPLETED', 'STEP_ADDED'];
+// Every lifecycle event, including the three Jira MILESTONES the poller mirrors.
+// The exhaustive Records below are what force this list (and the wording) to stay in
+// sync with utils/mail-templates.ts: adding an event without wording fails to compile.
+const EVENTS: IdeaLifecycleEvent[] = [
+  'APPROVED',
+  'REJECTED',
+  'CLAIMED',
+  'COMPLETED',
+  'STEP_ADDED',
+  'JIRA_STARTED',
+  'JIRA_COMPLETED',
+  'JIRA_CANCELLED',
+];
 
 const lifeBase = {
   title: 'Testovací nápad',
   actorName: 'Ján Novák',
   stepText: 'Dokončil som prvú časť riešenia.',
+  // Only the JIRA_* bodies reference {jiraKey}; the other events ignore it.
+  jiraKey: 'OPS-42',
   link: 'http://localhost:5173/ideas/abc123',
 };
 
@@ -226,6 +240,9 @@ const LIFECYCLE_SUBJECTS: Record<'en' | 'sk', Record<IdeaLifecycleEvent, string>
     CLAIMED: '[IdeaHub] Work has started on your idea: Testovací nápad',
     COMPLETED: '[IdeaHub] Your idea was completed: Testovací nápad',
     STEP_ADDED: '[IdeaHub] New progress on your idea: Testovací nápad',
+    JIRA_STARTED: '[IdeaHub] Work has started on your idea: Testovací nápad',
+    JIRA_COMPLETED: '[IdeaHub] Your idea was completed: Testovací nápad',
+    JIRA_CANCELLED: '[IdeaHub] Work on your idea was cancelled: Testovací nápad',
   },
   sk: {
     APPROVED: '[IdeaHub] Váš nápad bol schválený: Testovací nápad',
@@ -233,6 +250,9 @@ const LIFECYCLE_SUBJECTS: Record<'en' | 'sk', Record<IdeaLifecycleEvent, string>
     CLAIMED: '[IdeaHub] Na Vašom nápade sa začalo pracovať: Testovací nápad',
     COMPLETED: '[IdeaHub] Váš nápad bol dokončený: Testovací nápad',
     STEP_ADDED: '[IdeaHub] Nový pokrok na Vašom nápade: Testovací nápad',
+    JIRA_STARTED: '[IdeaHub] Na Vašom nápade sa začalo pracovať: Testovací nápad',
+    JIRA_COMPLETED: '[IdeaHub] Váš nápad bol dokončený: Testovací nápad',
+    JIRA_CANCELLED: '[IdeaHub] Práca na Vašom nápade bola zrušená: Testovací nápad',
   },
 };
 
@@ -256,6 +276,17 @@ const LIFECYCLE_BODIES: Record<'en' | 'sk', Record<IdeaLifecycleEvent, string>> 
       // The user-supplied step text is quoted line-by-line with "> " (injection safety).
       '> Dokončil som prvú časť riešenia.\n\n' +
       'View the idea: http://localhost:5173/ideas/abc123',
+    // The Jira milestones name the ISSUE, never an actor (there is no human one).
+    JIRA_STARTED:
+      'Work has started on your idea "Testovací nápad" (Jira issue OPS-42).\n\n' +
+      'View the idea: http://localhost:5173/ideas/abc123',
+    JIRA_COMPLETED:
+      'Your idea "Testovací nápad" has been completed (Jira issue OPS-42).\n\n' +
+      'View the idea: http://localhost:5173/ideas/abc123',
+    JIRA_CANCELLED:
+      'Work on your idea "Testovací nápad" was cancelled (Jira issue OPS-42). ' +
+      'The idea is approved again and can be picked up anew.\n\n' +
+      'View the idea: http://localhost:5173/ideas/abc123',
   },
   sk: {
     APPROVED:
@@ -274,6 +305,16 @@ const LIFECYCLE_BODIES: Record<'en' | 'sk', Record<IdeaLifecycleEvent, string>> 
       'Ján Novák pridal/a aktualizáciu pokroku k Vášmu nápadu "Testovací nápad":\n\n' +
       '> Dokončil som prvú časť riešenia.\n\n' +
       'Zobraziť nápad: http://localhost:5173/ideas/abc123',
+    JIRA_STARTED:
+      'Na Vašom nápade "Testovací nápad" sa začalo pracovať (úloha v Jire OPS-42).\n\n' +
+      'Zobraziť nápad: http://localhost:5173/ideas/abc123',
+    JIRA_COMPLETED:
+      'Váš nápad "Testovací nápad" bol dokončený (úloha v Jire OPS-42).\n\n' +
+      'Zobraziť nápad: http://localhost:5173/ideas/abc123',
+    JIRA_CANCELLED:
+      'Práca na Vašom nápade "Testovací nápad" bola zrušená (úloha v Jire OPS-42). ' +
+      'Nápad je opäť schválený a môže sa začať nanovo.\n\n' +
+      'Zobraziť nápad: http://localhost:5173/ideas/abc123',
   },
 };
 
@@ -288,6 +329,10 @@ const LIFECYCLE_ENGLISH_FRAGMENTS = [
   'added a progress update',
   'New progress',
   'View the idea:',
+  // Jira milestone wording.
+  'was cancelled',
+  'Jira issue',
+  'can be picked up anew',
 ];
 
 describe('ideaLifecycleEmail — built-in subject + body per event', () => {
@@ -301,10 +346,34 @@ describe('ideaLifecycleEmail — built-in subject + body per event', () => {
     });
   }
 
-  it('emits a DISTINCT subject for every event (no two events share a subject)', () => {
+  // The five IN-APP events keep pairwise-distinct subjects.
+  it('emits a DISTINCT subject for every in-app event (no two share a subject)', () => {
+    const inApp: IdeaLifecycleEvent[] = ['APPROVED', 'REJECTED', 'CLAIMED', 'COMPLETED', 'STEP_ADDED'];
     for (const language of ['en', 'sk'] as const) {
-      const subjects = EVENTS.map((e) => ideaLifecycleEmail(buildLife(e, language)).subject);
-      expect(new Set(subjects).size).toBe(EVENTS.length);
+      const subjects = inApp.map((e) => ideaLifecycleEmail(buildLife(e, language)).subject);
+      expect(new Set(subjects).size).toBe(inApp.length);
+    }
+  });
+
+  // The Jira milestones DELIBERATELY reuse the subject of their in-app counterpart:
+  // from the submitter's inbox "work started on your idea" is the same news whoever
+  // drove it. Only the BODY differs (it names the issue instead of an actor), so the
+  // reuse is pinned here rather than left to look like an accident.
+  it('reuses the in-app counterpart subject for JIRA_STARTED/JIRA_COMPLETED, with its own for JIRA_CANCELLED', () => {
+    for (const language of ['en', 'sk'] as const) {
+      const subject = (e: IdeaLifecycleEvent) => ideaLifecycleEmail(buildLife(e, language)).subject;
+      expect(subject('JIRA_STARTED')).toBe(subject('CLAIMED'));
+      expect(subject('JIRA_COMPLETED')).toBe(subject('COMPLETED'));
+      expect(subject('JIRA_CANCELLED')).not.toBe(subject('COMPLETED'));
+      expect(subject('JIRA_CANCELLED')).not.toBe(subject('REJECTED'));
+    }
+  });
+
+  // Every event's BODY is unique, including across those shared-subject pairs.
+  it('emits a DISTINCT body for every event', () => {
+    for (const language of ['en', 'sk'] as const) {
+      const bodies = EVENTS.map((e) => ideaLifecycleEmail(buildLife(e, language)).text);
+      expect(new Set(bodies).size).toBe(EVENTS.length);
     }
   });
 });

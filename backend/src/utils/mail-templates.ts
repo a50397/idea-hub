@@ -169,15 +169,37 @@ export function newIdeaEmail(input: NewIdeaEmailInput): BuiltEmail {
 // built-in subject per language.
 // ---------------------------------------------------------------------------
 
-export type IdeaLifecycleEvent = 'APPROVED' | 'REJECTED' | 'CLAIMED' | 'COMPLETED' | 'STEP_ADDED';
+// The lifecycle events a submitter can be notified about.
+//
+// APPROVED/REJECTED/CLAIMED/COMPLETED/STEP_ADDED are in-app transitions performed by
+// a USER. The three JIRA_* events are MILESTONES mirrored from a Jira issue by the
+// poller (utils/jira-sync.ts) — work started, work completed, work cancelled — and
+// they have NO human actor: their wording never names one (it names the issue key
+// instead), and the poller passes the constant actor label "Jira" (F5: the remote
+// assignee's display name is NEVER used as an actor).
+//
+// CLAIMED is retained: the in-app claim endpoint is gone, but historical timelines
+// and the grandfathered IN_PROGRESS ideas keep the event, and the exhaustive Records
+// below still need an entry for it.
+export type IdeaLifecycleEvent =
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'CLAIMED'
+  | 'COMPLETED'
+  | 'STEP_ADDED'
+  | 'JIRA_STARTED'
+  | 'JIRA_COMPLETED'
+  | 'JIRA_CANCELLED';
 
 export interface IdeaLifecycleEmailInput {
   event: IdeaLifecycleEvent;
   title: string;
-  /** Name of the user who performed the change. */
+  /** Name of the user who performed the change ("Jira" for the JIRA_* events). */
   actorName: string;
   /** The progress-step text; used only by the STEP_ADDED event. */
   stepText?: string;
+  /** The Jira issue key; used only by the JIRA_* events ('' elsewhere). */
+  jiraKey?: string;
   link: string;
   /** Active notification language (from the mail settings). */
   language: MailLang;
@@ -222,6 +244,27 @@ const LIFECYCLE_WORDING: Record<MailLang, Record<IdeaLifecycleEvent, Wording>> =
         '{stepText}\n\n' +
         'View the idea: {link}',
     },
+    // Jira milestones: no human actor — the wording names the ISSUE, never the
+    // remote assignee.
+    JIRA_STARTED: {
+      subject: '[IdeaHub] Work has started on your idea: {title}',
+      body:
+        'Work has started on your idea "{title}" (Jira issue {jiraKey}).\n\n' +
+        'View the idea: {link}',
+    },
+    JIRA_COMPLETED: {
+      subject: '[IdeaHub] Your idea was completed: {title}',
+      body:
+        'Your idea "{title}" has been completed (Jira issue {jiraKey}).\n\n' +
+        'View the idea: {link}',
+    },
+    JIRA_CANCELLED: {
+      subject: '[IdeaHub] Work on your idea was cancelled: {title}',
+      body:
+        'Work on your idea "{title}" was cancelled (Jira issue {jiraKey}). ' +
+        'The idea is approved again and can be picked up anew.\n\n' +
+        'View the idea: {link}',
+    },
   },
   sk: {
     APPROVED: {
@@ -255,6 +298,27 @@ const LIFECYCLE_WORDING: Record<MailLang, Record<IdeaLifecycleEvent, Wording>> =
         '{stepText}\n\n' +
         'Zobraziť nápad: {link}',
     },
+    // Míľniky z Jiry: bez ľudského aktéra — text uvádza ÚLOHU, nikdy meno
+    // priradeného používateľa zo vzdialeného systému.
+    JIRA_STARTED: {
+      subject: '[IdeaHub] Na Vašom nápade sa začalo pracovať: {title}',
+      body:
+        'Na Vašom nápade "{title}" sa začalo pracovať (úloha v Jire {jiraKey}).\n\n' +
+        'Zobraziť nápad: {link}',
+    },
+    JIRA_COMPLETED: {
+      subject: '[IdeaHub] Váš nápad bol dokončený: {title}',
+      body:
+        'Váš nápad "{title}" bol dokončený (úloha v Jire {jiraKey}).\n\n' +
+        'Zobraziť nápad: {link}',
+    },
+    JIRA_CANCELLED: {
+      subject: '[IdeaHub] Práca na Vašom nápade bola zrušená: {title}',
+      body:
+        'Práca na Vašom nápade "{title}" bola zrušená (úloha v Jire {jiraKey}). ' +
+        'Nápad je opäť schválený a môže sa začať nanovo.\n\n' +
+        'Zobraziť nápad: {link}',
+    },
   },
 };
 
@@ -278,6 +342,11 @@ export function ideaLifecycleEmail(input: IdeaLifecycleEmailInput): BuiltEmail {
     // pseudo-section in the step note cannot masquerade as a system line. Harmless for
     // the other events, whose bodies never reference {stepText}.
     stepText: quoteBlock(input.stepText ?? ''),
+    // Jira issue key (JIRA_* bodies only). It is a REMOTE string, but it was already
+    // normalized at the ingest boundary (utils/jira.ts sanitizeRemoteString strips
+    // control characters and collapses newlines) before it was ever stored, so it
+    // cannot forge a line here. Empty for every non-Jira event.
+    jiraKey: input.jiraKey ?? '',
     link: input.link,
   };
 

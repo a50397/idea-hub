@@ -384,3 +384,83 @@ describe('department webex room ids (real DB)', () => {
     }
   });
 });
+
+// The per-department Jira project override (admin-only configuration).
+describe('department jira project key (real DB)', () => {
+  // The missing-field proof for jiraProjectKey. Unlike Idea.jiraSyncActive — which is
+  // matched in a WHERE clause and therefore needs a boot backfill — this column is
+  // only ever READ (`dept.jiraProjectKey ?? defaultProjectKey`), so a legacy document
+  // that lacks it simply reads back as null and no backfill is required.
+  test('a department document missing jiraProjectKey reads back as null via Prisma', async () => {
+    await prisma.$runCommandRaw({
+      insert: 'departments',
+      documents: [
+        {
+          name: 'Legacy No Jira Key',
+          order: 77,
+          notificationEmails: [],
+          webexRoomIds: [],
+          createdAt: { $date: '2026-01-01T00:00:00.000Z' },
+          updatedAt: { $date: '2026-01-01T00:00:00.000Z' },
+        },
+      ],
+    });
+
+    const one = await prisma.department.findFirst({ where: { name: 'Legacy No Jira Key' } });
+    expect(one).not.toBeNull();
+    expect(one!.jiraProjectKey).toBeNull();
+
+    const many = await prisma.department.findMany();
+    expect(many.find((d) => d.name === 'Legacy No Jira Key')!.jiraProjectKey).toBeNull();
+
+    // And the PATCH route can populate the previously-absent field.
+    const admin = await loggedInAdmin();
+    const res = await withCsrf(admin.patch(`/api/departments/${one!.id}`)).send({
+      jiraProjectKey: 'ops',
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.jiraProjectKey).toBe('OPS');
+
+    const after = await prisma.department.findUnique({ where: { id: one!.id } });
+    expect(after!.jiraProjectKey).toBe('OPS');
+  });
+
+  test('an empty string CLEARS the override back to null (falls back to the default project)', async () => {
+    const admin = await loggedInAdmin();
+    const dept = await prisma.department.create({
+      data: { name: 'Jira Key Persisted', order: 7, jiraProjectKey: 'DEV' },
+    });
+
+    const cleared = await withCsrf(admin.patch(`/api/departments/${dept.id}`)).send({
+      jiraProjectKey: '',
+    });
+
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.jiraProjectKey).toBeNull();
+    const after = await prisma.department.findUnique({ where: { id: dept.id } });
+    expect(after!.jiraProjectKey).toBeNull();
+  });
+
+  test('a non-admin GET never exposes jiraProjectKey', async () => {
+    const admin = await loggedInAdmin();
+    const dept = await prisma.department.create({ data: { name: 'Secret Jira Key', order: 8 } });
+    await withCsrf(admin.patch(`/api/departments/${dept.id}`)).send({ jiraProjectKey: 'SECRET' });
+
+    await createUser({ email: 'plainjira@dep.test', password: 'usersecret1', role: Role.USER });
+    const user = newAgent();
+    await loginAs(user, 'plainjira@dep.test', 'usersecret1');
+
+    const list = await user.get('/api/departments');
+    expect(list.status).toBe(200);
+    for (const row of list.body) {
+      expect(row).not.toHaveProperty('jiraProjectKey');
+    }
+    expect(JSON.stringify(list.body)).not.toContain('SECRET');
+
+    // ...while an admin does see it.
+    const adminList = await admin.get('/api/departments');
+    expect(
+      adminList.body.find((d: { name: string }) => d.name === 'Secret Jira Key').jiraProjectKey
+    ).toBe('SECRET');
+  });
+});
