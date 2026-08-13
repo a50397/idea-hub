@@ -47,7 +47,10 @@ export const useOptionsStore = defineStore('options', () => {
       const options = await optionsApi.get();
       mailEnabled.value = options.mailEnabled;
       webexEnabled.value = options.webexEnabled;
-      jiraEnabled.value = options.jiraEnabled;
+      // ?? false: a payload from an older backend (deploy skew, a stale cached
+      // response) predates this flag — a missing key must read as the fail-safe
+      // false, never as an undefined ref.
+      jiraEnabled.value = options.jiraEnabled ?? false;
       // Absent for every non-admin role — treated as "not failing" (see above).
       jiraSyncFailing.value = options.jiraSyncFailing ?? false;
       ssoShowLogout.value = options.ssoShowLogout;

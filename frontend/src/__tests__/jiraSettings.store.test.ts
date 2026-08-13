@@ -68,7 +68,7 @@ describe('jiraSettings store', () => {
       const ok = await store.fetch();
 
       expect(ok).toBe(false);
-      expect(store.error).toBe('Failed to load jira settings');
+      expect(store.error).toBe('Failed to load Jira settings');
     });
   });
 

@@ -17,7 +17,7 @@ export const useJiraSettingsStore = defineStore('jiraSettings', () => {
       settings.value = await jiraSettingsApi.get();
       return true;
     } catch (err: any) {
-      error.value = err.response?.data?.error || 'Failed to load jira settings';
+      error.value = err.response?.data?.error || 'Failed to load Jira settings';
       return false;
     } finally {
       loading.value = false;
@@ -31,7 +31,7 @@ export const useJiraSettingsStore = defineStore('jiraSettings', () => {
       settings.value = await jiraSettingsApi.update(payload);
       return true;
     } catch (err: any) {
-      error.value = err.response?.data?.error || 'Failed to save jira settings';
+      error.value = err.response?.data?.error || 'Failed to save Jira settings';
       return false;
     } finally {
       saving.value = false;
@@ -47,7 +47,7 @@ export const useJiraSettingsStore = defineStore('jiraSettings', () => {
     try {
       return await jiraSettingsApi.test();
     } catch (err: any) {
-      error.value = err.response?.data?.error || 'Failed to test the jira connection';
+      error.value = err.response?.data?.error || 'Failed to test the Jira connection';
       return null;
     } finally {
       testing.value = false;

@@ -33,6 +33,20 @@ describe('options store', () => {
     expect(store.notifyEnabled).toBe(false);
   });
 
+  // Deploy skew / stale cache: a payload from an older backend has no jiraEnabled
+  // key at all — it must read as the fail-safe false, never as an undefined ref
+  // (PR #35 review).
+  it('reads an ABSENT jiraEnabled (older backend payload) as false', async () => {
+    const stale = options({ jiraEnabled: true });
+    delete (stale as Partial<AppOptions>).jiraEnabled;
+    mockedApi.get.mockResolvedValueOnce(stale);
+    const store = useOptionsStore();
+
+    await store.fetch();
+
+    expect(store.jiraEnabled).toBe(false);
+  });
+
   // jiraSyncFailing is sent to ADMIN sessions only; every other role gets a
   // response with no such key at all.
   it('reflects jiraSyncFailing when the (admin) response carries it', async () => {
