@@ -36,12 +36,26 @@ const PROBES = [
   'departments.webexRoomsLoading',
   'departments.tooManyWebexRoomIds',
   'departments.webexRoomIdTooLong',
-  // Org-wide idea visibility: claim confirm dialog + capped CSV export.
+  // Org-wide idea visibility: paged-list load failure + capped CSV export.
   'ideas.loadFailed',
-  'approved.claimTitle',
-  'approved.claimConfirm',
-  'approved.claimAction',
   'reports.exportTruncated',
+  // Jira background-sync failure surfacing. jiraSettings.syncFailing is the only
+  // INTERPOLATED key of the three ({since}/{reason}) — the message-compiler class
+  // this script exists to catch.
+  'jiraSync.failingBanner',
+  'jiraSync.failingBannerLink',
+  'jiraSettings.syncFailing',
+  // Main Jira-integration namespace (deep-review gap: the catalogs grew a whole
+  // feature with no runtime probe). createJiraTaskSuccess carries {key} — the
+  // interpolated / message-compiler class this script exists to catch.
+  'jiraSettings.title',
+  'jiraSettings.testReason.invalid_credentials',
+  'ideas.createJiraTask',
+  'ideas.createJiraTaskSuccess',
+  'events.actorJira',
+  'events.actorConnective',
+  'dashboard.jiraStatuses',
+  'reports.headerJira',
 ];
 let failed = false;
 

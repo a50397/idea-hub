@@ -126,4 +126,53 @@ describe('IdeaCard', () => {
     const chip = wrapper.findAllComponents({ name: 'VChip' })[0];
     expect(chip.text()).toBe('Odoslané');
   });
+
+  describe('Jira raw-status chip', () => {
+    it('renders no Jira chip when the idea was never dispatched', () => {
+      const wrapper = mountCard(makeIdea({ tags: [] }));
+      expect(wrapper.text()).not.toContain('In Review');
+      // Only the status + effort chips (no department, no tags).
+      expect(wrapper.findAllComponents({ name: 'VChip' })).toHaveLength(2);
+    });
+
+    it('renders the raw Jira status name as its own chip, ahead of the canonical status chip', () => {
+      const wrapper = mountCard(makeIdea({ jiraStatus: 'In Review', jiraStatusCategory: 'indeterminate' }));
+      const chips = wrapper.findAllComponents({ name: 'VChip' });
+      expect(chips[0].text()).toBe('In Review');
+      expect(chips[1].text()).toBe('Submitted'); // the canonical status chip, unchanged
+    });
+
+    const categoryCases: Array<{ category: 'new' | 'indeterminate' | 'done'; color: string }> = [
+      { category: 'new', color: 'info' },
+      { category: 'indeterminate', color: 'warning' },
+      { category: 'done', color: 'success' },
+    ];
+
+    describe.each(categoryCases)('category $category', ({ category, color }) => {
+      it(`colors the chip ${color}`, () => {
+        const wrapper = mountCard(makeIdea({ jiraStatus: 'Some Status', jiraStatusCategory: category }));
+        const chip = wrapper.findAllComponents({ name: 'VChip' })[0];
+        expect(chip.props('color')).toBe(color);
+      });
+    });
+
+    it('falls back to a neutral color when the status is known but the category is not (yet)', () => {
+      const wrapper = mountCard(makeIdea({ jiraStatus: 'To Do', jiraStatusCategory: null }));
+      const chip = wrapper.findAllComponents({ name: 'VChip' })[0];
+      expect(chip.props('color')).toBe('default');
+    });
+
+    it('caps an absurdly long remote status name so the canonical status chip still renders (deep-review fix A2)', () => {
+      const wrapper = mountCard(
+        makeIdea({ jiraStatus: 'X'.repeat(255), jiraStatusCategory: 'indeterminate' })
+      );
+      const chips = wrapper.findAllComponents({ name: 'VChip' });
+      // Both chips exist; the Jira chip carries the max-width class and an inner
+      // truncating span, and the canonical chip refuses to shrink away.
+      expect(chips[0].classes()).toContain('jira-status-chip');
+      expect(chips[0].find('span.text-truncate').exists()).toBe(true);
+      expect(chips[1].text()).toBe('Submitted');
+      expect(chips[1].classes()).toContain('flex-shrink-0');
+    });
+  });
 });

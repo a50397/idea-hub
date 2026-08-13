@@ -125,7 +125,7 @@ describe('SubmitIdeaPage', () => {
     mockedDepartments.getAll.mockResolvedValue(departments);
     // Both channels disabled by default: the pre-existing tests (incl. the exact-6-key
     // payload assertion) must see NO notify toggle and NO notifyOnChange field.
-    mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, ssoShowLogout: false });
+    mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, jiraEnabled: false, ssoShowLogout: false });
   });
 
   it('renders the submission form and guidelines', () => {
@@ -303,7 +303,7 @@ describe('SubmitIdeaPage', () => {
 
   describe('lifecycle-notification toggle', () => {
     it('is absent when both channels are disabled', async () => {
-      mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, ssoShowLogout: false });
+      mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, jiraEnabled: false, ssoShowLogout: false });
       const wrapper = mountPage();
       await flushPromises();
 
@@ -311,7 +311,7 @@ describe('SubmitIdeaPage', () => {
     });
 
     it('is present and off by default when mail is enabled', async () => {
-      mockedOptions.get.mockResolvedValue({ mailEnabled: true, webexEnabled: false, ssoShowLogout: false });
+      mockedOptions.get.mockResolvedValue({ mailEnabled: true, webexEnabled: false, jiraEnabled: false, ssoShowLogout: false });
       const wrapper = mountPage();
       await flushPromises();
 
@@ -322,7 +322,7 @@ describe('SubmitIdeaPage', () => {
 
     // The toggle is channel-agnostic: Webex alone (mail off) must reveal it too.
     it('is present when only Webex is enabled (mail off)', async () => {
-      mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: true, ssoShowLogout: false });
+      mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: true, jiraEnabled: false, ssoShowLogout: false });
       const wrapper = mountPage();
       await flushPromises();
 
@@ -332,7 +332,7 @@ describe('SubmitIdeaPage', () => {
     });
 
     it('carries notifyOnChange: true in the create payload after the toggle is switched on (webex-only)', async () => {
-      mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: true, ssoShowLogout: false });
+      mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: true, jiraEnabled: false, ssoShowLogout: false });
       const wrapper = mountPage();
       await flushPromises();
 

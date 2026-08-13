@@ -43,7 +43,12 @@ describe('i18n translation files', () => {
       const skVal = key.split('.').reduce((o: any, k) => o?.[k], sk);
       return enVal === skVal;
     });
-    const allowedIdentical = ['common.appName', 'users.sso'];
+    // 'events.actorJira' is the byUser fallback label for poller-written timeline
+    // events (no human actor) — "Jira" is the same brand-name word in both locales,
+    // like 'common.appName' and 'users.sso' below.
+    // jiraSettings.apiToken: "API token" is the correct technical term in BOTH
+    // locales (the SK catalog deliberately does not translate it).
+    const allowedIdentical = ['common.appName', 'users.sso', 'events.actorJira', 'jiraSettings.apiToken'];
     const unexpected = identical.filter((k) => !allowedIdentical.includes(k));
     expect(unexpected).toEqual([]);
   });
@@ -162,8 +167,7 @@ describe('translation coverage for components', () => {
       'ideas.loadFailed',
     ],
     ApprovedIdeasPage: [
-      'approved.title', 'approved.subtitle', 'approved.claimStart', 'approved.noIdeas',
-      'approved.claimTitle', 'approved.claimConfirm', 'approved.claimAction',
+      'approved.title', 'approved.subtitle', 'approved.noIdeas',
       'ideas.loadFailed',
     ],
     InProgressIdeasPage: [

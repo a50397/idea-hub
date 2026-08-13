@@ -24,11 +24,22 @@ vi.mock('../api/webexSettings', () => ({
   },
 }));
 
+// The page also loads the tech user's Jira projects (for the project-key picker) on
+// mount and on every edit-dialog open — stub it too, exactly like webexSettings.
+vi.mock('../api/jiraSettings', () => ({
+  jiraSettingsApi: {
+    getProjects: vi.fn(),
+  },
+}));
+
 import { departmentsApi } from '../api/departments';
 const mockedApi = vi.mocked(departmentsApi);
 
 import { webexSettingsApi } from '../api/webexSettings';
 const mockedWebexApi = vi.mocked(webexSettingsApi);
+
+import { jiraSettingsApi } from '../api/jiraSettings';
+const mockedJiraApi = vi.mocked(jiraSettingsApi);
 
 function dept(
   id: string,
@@ -36,7 +47,8 @@ function dept(
   order: number,
   ideas = 0,
   notificationEmails?: string[],
-  webexRoomIds?: string[]
+  webexRoomIds?: string[],
+  jiraProjectKey?: string | null
 ): Department {
   return {
     id,
@@ -46,6 +58,7 @@ function dept(
     updatedAt: '2026-01-01T00:00:00.000Z',
     ...(notificationEmails ? { notificationEmails } : {}),
     ...(webexRoomIds ? { webexRoomIds } : {}),
+    ...(jiraProjectKey !== undefined ? { jiraProjectKey } : {}),
     _count: { ideas },
   };
 }
@@ -104,12 +117,24 @@ function roomCombobox(wrapper: VueWrapper) {
     .find((c) => String(c.props('label') ?? '').includes('Webex'))!;
 }
 
+// The Jira project-key override combobox — its label is the only one containing
+// "Jira" (the emails combobox says "Notification", the rooms combobox "Webex").
+function jiraProjectCombobox(wrapper: VueWrapper) {
+  return wrapper
+    .findAllComponents({ name: 'VCombobox' })
+    .find((c) => String(c.props('label') ?? '').includes('Jira'))!;
+}
+
 function setEditEmails(wrapper: VueWrapper, value: string[]) {
   editCombobox(wrapper).vm.$emit('update:modelValue', value);
 }
 
 function setEditRoomIds(wrapper: VueWrapper, value: string[]) {
   roomCombobox(wrapper).vm.$emit('update:modelValue', value);
+}
+
+function setEditJiraProjectKey(wrapper: VueWrapper, value: string | null) {
+  jiraProjectCombobox(wrapper).vm.$emit('update:modelValue', value);
 }
 
 // The combobox's real <input>. A native keydown is used (below) so the event can
@@ -144,10 +169,15 @@ function pressEnter(input: HTMLInputElement, isComposing = false): KeyboardEvent
 }
 
 describe('DepartmentsPage', () => {
-  // Two bot rooms are available by default; tests that need a load failure override this.
+  // Two bot rooms and two Jira projects are available by default; tests that need a
+  // load failure override these.
   const rooms = [
     { id: 'room-a', title: 'Team A Space' },
     { id: 'room-b', title: 'Team B Space' },
+  ];
+  const projects = [
+    { key: 'OPS', name: 'Operations' },
+    { key: 'MKT', name: 'Marketing' },
   ];
 
   beforeEach(() => {
@@ -155,6 +185,7 @@ describe('DepartmentsPage', () => {
     vi.clearAllMocks();
     mockedApi.getAll.mockResolvedValue(unsorted);
     mockedWebexApi.getRooms.mockResolvedValue({ rooms });
+    mockedJiraApi.getProjects.mockResolvedValue({ projects });
   });
 
   it('loads departments on mount and renders them sorted by order with ideas counts', async () => {
@@ -225,6 +256,7 @@ describe('DepartmentsPage', () => {
       name: 'Renamed',
       notificationEmails: ['ops@corp.example', 'lead@corp.example'],
       webexRoomIds: [],
+      jiraProjectKey: '',
     });
   });
 
@@ -255,6 +287,7 @@ describe('DepartmentsPage', () => {
       name: 'Alpha',
       notificationEmails: ['keep@corp.example'],
       webexRoomIds: [],
+      jiraProjectKey: '',
     });
   });
 
@@ -305,6 +338,7 @@ describe('DepartmentsPage', () => {
       name: 'Alpha',
       notificationEmails: [],
       webexRoomIds: ['room-a', 'MANUAL-ROOM-ID'],
+      jiraProjectKey: '',
     });
   });
 
@@ -331,6 +365,7 @@ describe('DepartmentsPage', () => {
       name: 'Alpha',
       notificationEmails: [],
       webexRoomIds: ['room-b'],
+      jiraProjectKey: '',
     });
   });
 
@@ -361,6 +396,7 @@ describe('DepartmentsPage', () => {
       name: 'Alpha',
       notificationEmails: [],
       webexRoomIds: ['MANUAL-ONLY'],
+      jiraProjectKey: '',
     });
   });
 
@@ -392,6 +428,7 @@ describe('DepartmentsPage', () => {
       name: 'Alpha',
       notificationEmails: [],
       webexRoomIds: ['MANUAL-ONLY'],
+      jiraProjectKey: '',
     });
   });
 
@@ -438,6 +475,7 @@ describe('DepartmentsPage', () => {
       name: 'Alpha',
       notificationEmails: [],
       webexRoomIds: ['MANUAL-ONLY'],
+      jiraProjectKey: '',
     });
   });
 
@@ -515,6 +553,130 @@ describe('DepartmentsPage', () => {
     await opener!.trigger('click');
     await flushPromises();
     expect(roomCombobox(wrapper).props('modelValue')).toEqual([]);
+  });
+
+  describe('Jira project-key override', () => {
+    it('renders the Jira project combobox fed by the tech user\'s visible projects', async () => {
+      const wrapper = mountPage();
+      await flushPromises();
+
+      expect(mockedJiraApi.getProjects).toHaveBeenCalledTimes(1);
+
+      await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+      await flushPromises();
+
+      expect(jiraProjectCombobox(wrapper).props('items')).toEqual([
+        { title: 'OPS — Operations', value: 'OPS' },
+        { title: 'MKT — Marketing', value: 'MKT' },
+      ]);
+      expect(jiraProjectCombobox(wrapper).props('hint')).toBe('Select a project or enter a project key');
+      // Refreshed on every edit-open, like the Webex rooms picker.
+      expect(mockedJiraApi.getProjects).toHaveBeenCalledTimes(2);
+    });
+
+    it('pre-fills the edit dialog with the stored project key and saves an unchanged pick as its uppercased key', async () => {
+      mockedApi.getAll.mockResolvedValue([dept('alpha', 'Alpha', 0, 0, undefined, undefined, 'OPS')]);
+      mockedApi.update.mockResolvedValueOnce(dept('alpha', 'Alpha', 0));
+      const wrapper = mountPage();
+      await flushPromises();
+
+      await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+      await flushPromises();
+
+      expect(jiraProjectCombobox(wrapper).props('modelValue')).toBe('OPS');
+
+      await dialogButton(wrapper, 'Update')!.trigger('click');
+      await flushPromises();
+
+      expect(mockedApi.update).toHaveBeenCalledWith(
+        'alpha',
+        expect.objectContaining({ jiraProjectKey: 'OPS' })
+      );
+    });
+
+    it('normalizes a manually typed key to uppercase and saves it', async () => {
+      mockedApi.update.mockResolvedValueOnce(dept('alpha', 'Alpha', 0));
+      const wrapper = mountPage();
+      await flushPromises();
+
+      await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+      await flushPromises();
+
+      setEditJiraProjectKey(wrapper, 'ops1');
+      await flushPromises();
+      expect(jiraProjectCombobox(wrapper).props('modelValue')).toBe('OPS1');
+
+      await dialogButton(wrapper, 'Update')!.trigger('click');
+      await flushPromises();
+
+      expect(mockedApi.update).toHaveBeenCalledWith(
+        'alpha',
+        expect.objectContaining({ jiraProjectKey: 'OPS1' })
+      );
+    });
+
+    it('clears a stored override (sends an empty key) when the combobox is cleared', async () => {
+      mockedApi.getAll.mockResolvedValue([dept('alpha', 'Alpha', 0, 0, undefined, undefined, 'OPS')]);
+      mockedApi.update.mockResolvedValueOnce(dept('alpha', 'Alpha', 0));
+      const wrapper = mountPage();
+      await flushPromises();
+
+      await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+      await flushPromises();
+
+      setEditJiraProjectKey(wrapper, null);
+      await flushPromises();
+      expect(jiraProjectCombobox(wrapper).props('modelValue')).toBe('');
+
+      await dialogButton(wrapper, 'Update')!.trigger('click');
+      await flushPromises();
+
+      expect(mockedApi.update).toHaveBeenCalledWith('alpha', expect.objectContaining({ jiraProjectKey: '' }));
+    });
+
+    it('blocks the save with a validation message when the typed key has an invalid shape', async () => {
+      const wrapper = mountPage();
+      await flushPromises();
+
+      await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+      await flushPromises();
+
+      setEditJiraProjectKey(wrapper, '1OPS');
+      await flushPromises();
+
+      await dialogButton(wrapper, 'Update')!.trigger('click');
+      await flushPromises();
+
+      expect(mockedApi.update).not.toHaveBeenCalled();
+      expect(document.body.textContent).toContain(
+        'Project key must start with a letter and contain only letters, digits or underscores'
+      );
+    });
+
+    it('still allows manual key entry and shows a hint when Jira projects cannot be loaded', async () => {
+      mockedJiraApi.getProjects.mockResolvedValue({ projects: [], reason: 'config_error' });
+      mockedApi.update.mockResolvedValueOnce(dept('alpha', 'Alpha', 0));
+      const wrapper = mountPage();
+      await flushPromises();
+
+      await rowButtons(wrapper, 'mdi-pencil')[0].trigger('click');
+      await flushPromises();
+
+      expect(jiraProjectCombobox(wrapper).props('items')).toEqual([]);
+      expect(jiraProjectCombobox(wrapper).props('hint')).toBe(
+        "Couldn't load Jira projects — you can still enter a project key manually"
+      );
+
+      setEditJiraProjectKey(wrapper, 'MANUAL');
+      await flushPromises();
+      await dialogButton(wrapper, 'Update')!.trigger('click');
+      await flushPromises();
+
+      expect(mockedApi.update).toHaveBeenCalledWith(
+        'alpha',
+        expect.objectContaining({ jiraProjectKey: 'MANUAL' })
+      );
+    });
   });
 
   it('blocks the save and shows a validation message when more than 50 webex room ids are entered', async () => {

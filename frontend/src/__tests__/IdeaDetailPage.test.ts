@@ -3,8 +3,8 @@ import { mount, flushPromises } from '@vue/test-utils';
 import { setActivePinia, createPinia } from 'pinia';
 import IdeaDetailPage from '../pages/IdeaDetailPage.vue';
 import { useAuthStore } from '../stores/auth';
-import { IdeaStatus, Effort, Role } from '../types';
-import type { Idea } from '../types';
+import { IdeaStatus, Effort, Role, EventType } from '../types';
+import type { Idea, IdeaEvent } from '../types';
 import { createTestI18n, createTestVuetify } from './helpers';
 
 // The page reads route.params.id in script; the template's $router.back() is only
@@ -20,6 +20,7 @@ vi.mock('../api/ideas', () => ({
     setNotify: vi.fn(),
     complete: vi.fn(),
     addStep: vi.fn(),
+    createJiraTask: vi.fn(),
   },
 }));
 
@@ -91,11 +92,11 @@ describe('IdeaDetailPage notify toggle', () => {
     vi.clearAllMocks();
     mockedIdeas.getOne.mockResolvedValue(makeIdea());
     mockedIdeas.setNotify.mockResolvedValue(makeIdea({ notifyOnChange: true }));
-    mockedOptions.get.mockResolvedValue({ mailEnabled: true, webexEnabled: false, ssoShowLogout: false });
+    mockedOptions.get.mockResolvedValue({ mailEnabled: true, webexEnabled: false, jiraEnabled: false, ssoShowLogout: false });
   });
 
   it('hides the toggle for a non-submitter even when mail is enabled', async () => {
-    mockedOptions.get.mockResolvedValue({ mailEnabled: true, webexEnabled: false, ssoShowLogout: false });
+    mockedOptions.get.mockResolvedValue({ mailEnabled: true, webexEnabled: false, jiraEnabled: false, ssoShowLogout: false });
     signInAs(OTHER_ID);
     const wrapper = mountPage();
     await flushPromises();
@@ -104,7 +105,7 @@ describe('IdeaDetailPage notify toggle', () => {
   });
 
   it('hides the toggle from the submitter when both channels are disabled', async () => {
-    mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, ssoShowLogout: false });
+    mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, jiraEnabled: false, ssoShowLogout: false });
     signInAs(SUBMITTER_ID);
     const wrapper = mountPage();
     await flushPromises();
@@ -114,7 +115,7 @@ describe('IdeaDetailPage notify toggle', () => {
 
   // The toggle is channel-agnostic: Webex alone (mail off) reveals it for the submitter.
   it('shows the toggle to the submitter when only Webex is enabled (mail off)', async () => {
-    mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: true, ssoShowLogout: false });
+    mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: true, jiraEnabled: false, ssoShowLogout: false });
     signInAs(SUBMITTER_ID);
     const wrapper = mountPage();
     await flushPromises();
@@ -191,5 +192,303 @@ describe('IdeaDetailPage notify toggle', () => {
     await flushPromises();
     expect(toggle(wrapper).props('modelValue')).toBe(true);
     expect(mockedIdeas.setNotify).toHaveBeenCalledWith('idea-1', true);
+  });
+});
+
+function makeEvent(overrides: Partial<IdeaEvent> = {}): IdeaEvent {
+  return {
+    id: 'ev-1',
+    ideaId: 'idea-1',
+    type: EventType.SUBMITTED,
+    byUserId: SUBMITTER_ID,
+    byUser: { id: SUBMITTER_ID, name: 'Sub Mitter', email: 'sub@x.com', role: Role.USER },
+    timestamp: '2026-01-02T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+describe('IdeaDetailPage activity timeline', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.clearAllMocks();
+    mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, jiraEnabled: false, ssoShowLogout: false });
+    signInAs(OTHER_ID); // an uninvolved viewer; steps/notify gating is not under test here
+  });
+
+  const eventCases: Array<{ type: EventType; label: string }> = [
+    { type: EventType.SUBMITTED, label: 'Submitted' },
+    { type: EventType.APPROVED, label: 'Approved' },
+    { type: EventType.REJECTED, label: 'Rejected' },
+    { type: EventType.CLAIMED, label: 'Claimed' },
+    { type: EventType.STARTED, label: 'Started' },
+    { type: EventType.COMPLETED, label: 'Completed' },
+    { type: EventType.UPDATED, label: 'Updated' },
+    { type: EventType.CHANGE_REQUESTED, label: 'Change requested' },
+    { type: EventType.JIRA_CREATED, label: 'Jira task created' },
+    { type: EventType.JIRA_STATUS_CHANGED, label: 'Jira status changed' },
+    { type: EventType.JIRA_CANCELLED, label: 'Jira task cancelled' },
+  ];
+
+  describe.each(eventCases)('event type $type', ({ type, label }) => {
+    it(`renders the "${label}" label`, async () => {
+      mockedIdeas.getOne.mockResolvedValue(makeIdea({ events: [makeEvent({ type })] }));
+      const wrapper = mountPage();
+      await flushPromises();
+
+      expect(wrapper.text()).toContain(label);
+    });
+  });
+
+  it('falls back to the raw enum value for an unmapped event type (never crashes)', async () => {
+    mockedIdeas.getOne.mockResolvedValue(
+      makeIdea({ events: [makeEvent({ type: 'SOMETHING_FUTURE' as unknown as EventType })] })
+    );
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('SOMETHING_FUTURE');
+  });
+
+  it("shows the acting user's name when byUser is present", async () => {
+    mockedIdeas.getOne.mockResolvedValue(
+      makeIdea({
+        events: [
+          makeEvent({
+            type: EventType.JIRA_CREATED,
+            byUser: { id: 'p1', name: 'Power Pat', email: 'pat@x.com', role: Role.POWER_USER },
+          }),
+        ],
+      })
+    );
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Power Pat');
+  });
+
+  // The crash-fix case (nullable byUser/byUserId): a poller-written event carries no
+  // human actor at all, and the timeline must render "Jira" instead of throwing on
+  // `byUser.name`.
+  it('shows "Jira" as the actor when byUser/byUserId are null (poller-written event)', async () => {
+    mockedIdeas.getOne.mockResolvedValue(
+      makeIdea({
+        events: [
+          makeEvent({
+            type: EventType.JIRA_STATUS_CHANGED,
+            byUserId: null,
+            byUser: null,
+            note: 'To Do → In Progress',
+          }),
+        ],
+      })
+    );
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Jira status changed');
+    expect(wrapper.text()).toContain('by Jira');
+    expect(wrapper.text()).toContain('To Do → In Progress');
+  });
+});
+
+describe('IdeaDetailPage Jira sidebar block', () => {
+  const APPROVED_IDEA = () =>
+    makeIdea({
+      status: IdeaStatus.APPROVED,
+      jiraSyncActive: false,
+    });
+
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.clearAllMocks();
+    mockedIdeas.createJiraTask.mockResolvedValue(
+      makeIdea({
+        status: IdeaStatus.APPROVED,
+        jiraIssueId: '10001',
+        jiraIssueKey: 'OPS-1',
+        jiraStatusCategory: 'new',
+        jiraSyncActive: true,
+        jiraBrowseUrl: 'https://acme.atlassian.net/browse/OPS-1',
+      })
+    );
+    vi.spyOn(window, 'open').mockImplementation(() => null);
+  });
+
+  function signInAsPowerUser() {
+    const auth = useAuthStore();
+    auth.user = { id: 'p1', name: 'Power Pat', email: 'pat@x.com', role: Role.POWER_USER };
+  }
+
+  it('shows the create button for a POWER_USER on an APPROVED, undispatched idea when Jira is enabled', async () => {
+    mockedIdeas.getOne.mockResolvedValue(APPROVED_IDEA());
+    mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, jiraEnabled: true, ssoShowLogout: false });
+    signInAsPowerUser();
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Create Jira task');
+  });
+
+  it('hides the create button for a regular USER', async () => {
+    mockedIdeas.getOne.mockResolvedValue(APPROVED_IDEA());
+    mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, jiraEnabled: true, ssoShowLogout: false });
+    signInAs(OTHER_ID);
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain('Create Jira task');
+  });
+
+  it('hides the create button when Jira is not enabled', async () => {
+    mockedIdeas.getOne.mockResolvedValue(APPROVED_IDEA());
+    mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, jiraEnabled: false, ssoShowLogout: false });
+    signInAsPowerUser();
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain('Create Jira task');
+  });
+
+  it('hides the create button once already dispatched (jiraSyncActive) and shows the mirrored fields instead', async () => {
+    mockedIdeas.getOne.mockResolvedValue(
+      makeIdea({
+        status: IdeaStatus.APPROVED,
+        jiraIssueKey: 'OPS-7',
+        jiraStatus: 'In Review',
+        jiraStatusCategory: 'indeterminate',
+        jiraAssignee: 'Alice Assignee',
+        jiraSyncActive: true,
+        jiraBrowseUrl: 'https://acme.atlassian.net/browse/OPS-7',
+      })
+    );
+    mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, jiraEnabled: true, ssoShowLogout: false });
+    signInAsPowerUser();
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain('Create Jira task');
+    expect(wrapper.text()).toContain('OPS-7');
+    expect(wrapper.text()).toContain('In Review');
+    expect(wrapper.text()).toContain('Alice Assignee');
+  });
+
+  it('renders the Jira key as a link when jiraBrowseUrl is present', async () => {
+    mockedIdeas.getOne.mockResolvedValue(
+      makeIdea({ status: IdeaStatus.APPROVED, jiraIssueKey: 'OPS-7', jiraSyncActive: true, jiraBrowseUrl: 'https://acme.atlassian.net/browse/OPS-7' })
+    );
+    mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, jiraEnabled: false, ssoShowLogout: false });
+    signInAs(OTHER_ID);
+    const wrapper = mountPage();
+    await flushPromises();
+
+    const link = wrapper.findAll('a').find((a) => a.text().trim() === 'OPS-7');
+    expect(link).toBeTruthy();
+    expect(link!.attributes('href')).toBe('https://acme.atlassian.net/browse/OPS-7');
+  });
+
+  it('renders the Jira key as plain text (no link) when jiraBrowseUrl is absent', async () => {
+    mockedIdeas.getOne.mockResolvedValue(
+      makeIdea({ status: IdeaStatus.APPROVED, jiraIssueKey: 'OPS-7', jiraSyncActive: true })
+    );
+    mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, jiraEnabled: false, ssoShowLogout: false });
+    signInAs(OTHER_ID);
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('OPS-7');
+    expect(wrapper.findAll('a').find((a) => a.text().trim() === 'OPS-7')).toBeUndefined();
+  });
+
+  it('shows the resolution only once the idea is DONE', async () => {
+    mockedIdeas.getOne.mockResolvedValue(
+      makeIdea({
+        status: IdeaStatus.IN_PROGRESS,
+        jiraIssueKey: 'OPS-7',
+        jiraSyncActive: true,
+        jiraResolution: 'Done',
+      })
+    );
+    mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, jiraEnabled: false, ssoShowLogout: false });
+    signInAs(OTHER_ID);
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain('Jira resolution');
+  });
+
+  it('creates the Jira task, opens the browse URL synchronously and reloads the idea', async () => {
+    // Initial load is undispatched; the reload loadIdea() triggers after a
+    // successful dispatch must reflect the NEW (now-dispatched) state.
+    mockedIdeas.getOne.mockResolvedValueOnce(APPROVED_IDEA());
+    mockedIdeas.getOne.mockResolvedValue(
+      makeIdea({
+        status: IdeaStatus.APPROVED,
+        jiraIssueKey: 'OPS-1',
+        jiraStatusCategory: 'new',
+        jiraSyncActive: true,
+        jiraBrowseUrl: 'https://acme.atlassian.net/browse/OPS-1',
+      })
+    );
+    mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, jiraEnabled: true, ssoShowLogout: false });
+    signInAsPowerUser();
+    const wrapper = mountPage();
+    await flushPromises();
+
+    const btn = wrapper.findAll('.v-btn').find((b) => b.text().trim() === 'Create Jira task');
+    await btn!.trigger('click');
+    await flushPromises();
+
+    expect(mockedIdeas.createJiraTask).toHaveBeenCalledWith('idea-1');
+    expect(window.open).toHaveBeenCalledWith('https://acme.atlassian.net/browse/OPS-1', '_blank', 'noopener');
+    expect(wrapper.text()).toContain('OPS-1');
+    expect(wrapper.text()).not.toContain('Create Jira task');
+    // getOne is called once on initial load and again by the post-dispatch reload.
+    expect(mockedIdeas.getOne).toHaveBeenCalledTimes(2);
+  });
+
+  it('handles a missing jiraBrowseUrl gracefully: no popup, but the success message still shows', async () => {
+    mockedIdeas.getOne.mockResolvedValueOnce(APPROVED_IDEA());
+    mockedIdeas.getOne.mockResolvedValue(
+      makeIdea({ status: IdeaStatus.APPROVED, jiraIssueKey: 'OPS-2', jiraSyncActive: true })
+    );
+    mockedIdeas.createJiraTask.mockResolvedValue(
+      makeIdea({ status: IdeaStatus.APPROVED, jiraIssueKey: 'OPS-2', jiraSyncActive: true })
+    );
+    mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, jiraEnabled: true, ssoShowLogout: false });
+    signInAsPowerUser();
+    const wrapper = mountPage();
+    await flushPromises();
+
+    const btn = wrapper.findAll('.v-btn').find((b) => b.text().trim() === 'Create Jira task');
+    await btn!.trigger('click');
+    await flushPromises();
+
+    expect(window.open).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain('OPS-2');
+    const snackbar = wrapper.findComponent({ name: 'VSnackbar' });
+    expect(snackbar.props('modelValue')).toBe(true);
+  });
+
+  it('surfaces a 502 dispatch failure as the LOCALIZED reason-catalog message, without opening a popup', async () => {
+    mockedIdeas.getOne.mockResolvedValue(APPROVED_IDEA());
+    mockedIdeas.createJiraTask.mockRejectedValueOnce({
+      response: { status: 502, data: { error: 'Failed to create the Jira issue', reason: 'invalid_credentials' } },
+    });
+    mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, jiraEnabled: true, ssoShowLogout: false });
+    signInAsPowerUser();
+    const wrapper = mountPage();
+    await flushPromises();
+
+    const btn = wrapper.findAll('.v-btn').find((b) => b.text().trim() === 'Create Jira task');
+    await btn!.trigger('click');
+    await flushPromises();
+
+    expect(window.open).not.toHaveBeenCalled();
+    const snackbar = wrapper.findComponent({ name: 'VSnackbar' });
+    expect(snackbar.props('color')).toBe('error');
+    // The raw backend string is never shown; the closed reason maps through the
+    // settings testReason catalog (deep-review fix A1).
+    expect(document.body.textContent).toContain('Invalid credentials — check the account email and API token.');
+    expect(document.body.textContent).not.toContain('Failed to create the Jira issue');
   });
 });
