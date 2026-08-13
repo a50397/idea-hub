@@ -12,12 +12,19 @@ export const departmentsApi = {
     return response.data;
   },
 
-  // Update a department's name and/or notification emails and/or Webex room ids.
-  // Every field is optional, so a rename-only (or emails-only, or rooms-only) update
-  // sends just that key; an explicit [] clears the corresponding list.
+  // Update a department's name and/or notification emails and/or Webex room ids
+  // and/or its Jira project-key override. Every field is optional, so a
+  // rename-only (or emails-only, or rooms-only, or jira-key-only) update sends just
+  // that key; an explicit [] clears a list and an explicit '' clears the Jira
+  // project key (falls back to the installation-wide default).
   update: async (
     id: string,
-    payload: { name?: string; notificationEmails?: string[]; webexRoomIds?: string[] }
+    payload: {
+      name?: string;
+      notificationEmails?: string[];
+      webexRoomIds?: string[];
+      jiraProjectKey?: string;
+    }
   ): Promise<Department> => {
     const response = await client.patch(`/departments/${id}`, payload);
     return response.data;

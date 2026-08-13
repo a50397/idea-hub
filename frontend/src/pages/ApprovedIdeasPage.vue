@@ -27,12 +27,29 @@
         <v-col v-for="idea in ideas" :key="idea.id" cols="12" md="6" lg="4">
           <IdeaCard :idea="idea" @view="viewIdea">
             <template #actions>
-              <v-btn
-                color="primary"
-                variant="elevated"
-                @click="showClaimDialog(idea)"
+              <!-- Once dispatched, the button is replaced by a status chip. When the
+                   server provided a browse URL the chip IS a link (new tab, noopener):
+                   Safari and strict-Firefox popup blockers can swallow the post-await
+                   window.open on dispatch, and the snackbar fallback expires — this
+                   chip is the durable way back to the issue (deep-review fix). -->
+              <v-chip
+                v-if="idea.jiraSyncActive"
+                color="info"
+                variant="tonal"
+                :href="idea.jiraBrowseUrl || undefined"
+                :target="idea.jiraBrowseUrl ? '_blank' : undefined"
+                :rel="idea.jiraBrowseUrl ? 'noopener' : undefined"
               >
-                {{ $t('approved.claimStart') }}
+                {{ $t('ideas.jiraChip', { key: idea.jiraIssueKey }) }}
+              </v-chip>
+              <v-btn
+                v-else-if="canCreateJiraTask(idea)"
+                color="success"
+                variant="elevated"
+                @click="createJiraTask(idea)"
+                :loading="creatingId === idea.id"
+              >
+                {{ $t('ideas.createJiraTask') }}
               </v-btn>
             </template>
           </IdeaCard>
@@ -54,25 +71,11 @@
       @update:model-value="onPageChange"
     ></v-pagination>
 
-    <!-- Claiming is irreversible (there is no unclaim), so it is confirmed. -->
-    <v-dialog v-model="claimDialog" max-width="500">
-      <v-card>
-        <v-card-title>{{ $t('approved.claimTitle') }}</v-card-title>
-        <v-card-text>
-          {{ $t('approved.claimConfirm', { title: ideaToClaim?.title }) }}
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer></v-spacer>
-          <v-btn @click="claimDialog = false">{{ $t('common.cancel') }}</v-btn>
-          <v-btn color="primary" @click="claimIdea" :loading="claiming">
-            {{ $t('approved.claimAction') }}
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <v-snackbar v-model="snackbar" :color="snackbarColor">
-      {{ snackbarText }}
+    <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="8000">
+      <div>{{ snackbarText }}</div>
+      <a v-if="jiraLinkUrl" :href="jiraLinkUrl" target="_blank" rel="noopener" class="d-block mt-1 text-white">
+        {{ jiraLinkUrl }}
+      </a>
     </v-snackbar>
   </v-container>
 </template>
@@ -85,29 +88,38 @@ import { ideasApi } from '../api/ideas';
 import { IdeaStatus, MAX_PAGE_LIMIT } from '../types';
 import type { Idea } from '../types';
 import IdeaCard from '../components/IdeaCard.vue';
+import { useAuthStore } from '../stores/auth';
 import { useDepartmentsStore } from '../stores/departments';
+import { useOptionsStore } from '../stores/options';
 import { clampedPage } from '../utils/pagination';
 
-const { t } = useI18n();
+const { t, te } = useI18n();
 const router = useRouter();
+const authStore = useAuthStore();
 const departmentsStore = useDepartmentsStore();
+const optionsStore = useOptionsStore();
 const loading = ref(true);
 const ideas = ref<Idea[]>([]);
+const creatingId = ref<string | null>(null);
 const page = ref(1);
 const lastLoadedPage = ref(1);
 const totalPages = ref(0);
 const departmentFilter = ref<string | null>(null);
-const claimDialog = ref(false);
-const ideaToClaim = ref<Idea | null>(null);
-const claiming = ref(false);
 const snackbar = ref(false);
 const snackbarText = ref('');
 const snackbarColor = ref('success');
+// Set alongside the snackbar on a successful dispatch that DID carry a browse URL;
+// null otherwise (including every failure) so the fallback link never lingers.
+const jiraLinkUrl = ref<string | null>(null);
 
 const departmentOptions = computed(() => [
   { title: t('ideas.allDepartments'), value: null },
   ...departmentsStore.sortedByOrder.map((d) => ({ title: d.name, value: d.id })),
 ]);
+
+function canCreateJiraTask(idea: Idea): boolean {
+  return authStore.isPowerUser && optionsStore.jiraEnabled && !idea.jiraSyncActive;
+}
 
 async function loadIdeas() {
   loading.value = true;
@@ -118,7 +130,7 @@ async function loadIdeas() {
       filters.departmentId = departmentFilter.value;
     }
     const { data, pagination } = await ideasApi.getAll(filters);
-    // Landing past the last page (the page's last item was claimed or filtered
+    // Landing past the last page (the page's last item moved on or was filtered
     // away) would show an empty view — snap back into the real range.
     const snap = clampedPage(data.length, page.value, pagination.totalPages);
     if (snap !== null) {
@@ -155,39 +167,51 @@ function viewIdea(id: string) {
   router.push({ name: 'IdeaDetail', params: { id } });
 }
 
-function showClaimDialog(idea: Idea) {
-  ideaToClaim.value = idea;
-  claimDialog.value = true;
-}
-
-async function claimIdea() {
-  if (!ideaToClaim.value) return;
-
-  claiming.value = true;
+async function createJiraTask(idea: Idea) {
+  creatingId.value = idea.id;
   try {
-    await ideasApi.claim(ideaToClaim.value.id);
-    snackbarText.value = t('approved.claimSuccess');
+    const result = await ideasApi.createJiraTask(idea.id);
+    // Kept synchronous in this promise chain (no extra await before it) so the
+    // browser still associates the new tab with the click gesture as closely as
+    // possible; a popup blocker may still swallow it, which is exactly why the
+    // snackbar below always also carries a clickable fallback when a URL exists.
+    if (result.jiraBrowseUrl) {
+      window.open(result.jiraBrowseUrl, '_blank', 'noopener');
+    }
+    jiraLinkUrl.value = result.jiraBrowseUrl ?? null;
+    snackbarText.value = t('ideas.createJiraTaskSuccess', { key: result.jiraIssueKey ?? '' });
     snackbarColor.value = 'success';
     snackbar.value = true;
-    claimDialog.value = false;
     await loadIdeas();
   } catch (error: any) {
-    snackbarText.value = error.response?.data?.error || 'Failed to claim idea';
+    jiraLinkUrl.value = null;
+    snackbarText.value = jiraTaskErrorText(error);
     snackbarColor.value = 'error';
     snackbar.value = true;
-    // The usual failure is a lost race (somebody else claimed it first), so the
-    // list behind the dialog is stale. Close the dialog and refetch instead of
-    // leaving the user re-confirming a card that can only 400 again.
-    claimDialog.value = false;
-    ideaToClaim.value = null;
-    await loadIdeas();
   } finally {
-    claiming.value = false;
+    creatingId.value = null;
   }
+}
+
+// Localized message for a failed dispatch — the raw backend `error` string is
+// English and never shown. 409/400 get dispatch-specific wordings; a 502 carries the
+// closed JiraFailureReason enum, resolved through the SAME te()-guarded reason
+// catalog the settings test button uses. Keep in sync with IdeaDetailPage.vue's twin.
+function jiraTaskErrorText(error: any): string {
+  const status = error?.response?.status;
+  if (status === 409) return t('ideas.createJiraTaskConflict');
+  if (status === 400) return t('ideas.createJiraTaskBadState');
+  const reason = error?.response?.data?.reason;
+  if (status === 502 && typeof reason === 'string') {
+    const key = `jiraSettings.testReason.${reason}`;
+    if (te(key)) return t(key);
+  }
+  return t('ideas.createJiraTaskFailed');
 }
 
 onMounted(() => {
   loadIdeas();
   departmentsStore.fetchAll();
+  optionsStore.fetch();
 });
 </script>

@@ -136,6 +136,27 @@
               :hint="webexRoomsHint"
               persistent-hint
               :error-messages="formErrors.roomIds"
+              class="mb-4"
+            ></v-combobox>
+            <!-- Jira project-key override: pick from the tech user's visible projects
+                 (item title shown, project key is the stored value) or type a raw key
+                 manually. Single-value (not `multiple`): the model is one string, or
+                 '' when cleared (falls back to the installation-wide default). -->
+            <v-combobox
+              :model-value="formJiraProjectKey"
+              @update:model-value="normalizeJiraProjectKey"
+              @keydown.enter.prevent
+              :label="$t('departments.jiraProjectKey')"
+              variant="outlined"
+              clearable
+              :loading="jiraProjectsLoading"
+              :items="jiraProjectItems"
+              item-title="title"
+              item-value="value"
+              :return-object="false"
+              :hint="jiraProjectsHint"
+              persistent-hint
+              :error-messages="formErrors.jiraProjectKey"
             ></v-combobox>
           </v-form>
         </v-card-text>
@@ -176,7 +197,8 @@ import { ref, reactive, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useDepartmentsStore } from '../stores/departments';
 import { webexSettingsApi, type WebexRoom } from '../api/webexSettings';
-import type { Department } from '../types';
+import { jiraSettingsApi } from '../api/jiraSettings';
+import type { Department, JiraProject } from '../types';
 
 const { t } = useI18n();
 const departmentsStore = useDepartmentsStore();
@@ -190,6 +212,7 @@ const selectedDepartment = ref<Department | null>(null);
 const formName = ref('');
 const formEmails = ref<string[]>([]);
 const formRoomIds = ref<string[]>([]);
+const formJiraProjectKey = ref('');
 const snackbar = ref(false);
 const snackbarText = ref('');
 const snackbarColor = ref('success');
@@ -205,10 +228,17 @@ const webexRooms = ref<WebexRoom[]>([]);
 const webexRoomsUnavailable = ref(false);
 const webexRoomsLoading = ref(false);
 
+// The tech user's visible Jira projects, loaded and refreshed exactly like the
+// Webex rooms above, powering the per-department project-key override picker.
+const jiraProjects = ref<JiraProject[]>([]);
+const jiraProjectsUnavailable = ref(false);
+const jiraProjectsLoading = ref(false);
+
 const formErrors = reactive({
   name: [] as string[],
   emails: [] as string[],
   roomIds: [] as string[],
+  jiraProjectKey: [] as string[],
 });
 
 // Pragmatic email shape check for per-entry validation in the edit dialog. The
@@ -225,6 +255,13 @@ const MAX_NOTIFICATION_EMAILS = 20;
 // are opaque, so there is no format to validate — only these length/count bounds.
 const MAX_WEBEX_ROOM_IDS = 50;
 const MAX_WEBEX_ROOM_ID_LENGTH = 256;
+
+// Mirrors the backend jiraProjectKeySchema (utils/validation.ts): must start with a
+// letter and contain only letters/digits/underscores, capped at 32 chars. An empty
+// value is always allowed — it clears the override (falls back to the
+// installation-wide default).
+const JIRA_PROJECT_KEY_RE = /^[A-Za-z][A-Za-z0-9_]*$/;
+const MAX_JIRA_PROJECT_KEY_LENGTH = 32;
 
 const headers = computed(() => [
   { title: t('departments.order'), key: 'order', sortable: true },
@@ -249,6 +286,20 @@ const webexRoomsHint = computed(() => {
   if (webexRoomsUnavailable.value) return t('departments.webexRoomIdsUnavailable');
   if (webexRooms.value.length === 0) return t('departments.webexRoomsEmpty');
   return t('departments.webexRoomIdsHint');
+});
+
+// The tech user's Jira projects as combobox items: `title` is shown in the dropdown
+// and chip, the project `key` is the value stored in the model.
+const jiraProjectItems = computed(() =>
+  jiraProjects.value.map((p) => ({ title: `${p.key} — ${p.name}`, value: p.key }))
+);
+
+// Same four-state hint pattern as the Webex spaces picker above.
+const jiraProjectsHint = computed(() => {
+  if (jiraProjectsLoading.value) return t('departments.jiraProjectsLoading');
+  if (jiraProjectsUnavailable.value) return t('departments.jiraProjectKeyUnavailable');
+  if (jiraProjects.value.length === 0) return t('departments.jiraProjectsEmpty');
+  return t('departments.jiraProjectKeyHint');
 });
 
 function isFirst(dept: Department): boolean {
@@ -308,6 +359,23 @@ function validateRoomIds(): boolean {
   return true;
 }
 
+// An empty key is always valid (it clears the override); otherwise it must match
+// the backend's key shape and length cap.
+function validateJiraProjectKey(): boolean {
+  formErrors.jiraProjectKey = [];
+  const value = formJiraProjectKey.value.trim();
+  if (value.length === 0) return true;
+  if (value.length > MAX_JIRA_PROJECT_KEY_LENGTH) {
+    formErrors.jiraProjectKey.push(t('departments.jiraProjectKeyTooLong'));
+    return false;
+  }
+  if (!JIRA_PROJECT_KEY_RE.test(value)) {
+    formErrors.jiraProjectKey.push(t('departments.jiraProjectKeyInvalid'));
+    return false;
+  }
+  return true;
+}
+
 // A single combobox entry can arrive as a comma/semicolon/whitespace-separated
 // paste (e.g. "a@x.com, b@y.com"); split every entry on those separators, trim,
 // and drop empty fragments so each address becomes its own individually-validated
@@ -340,6 +408,16 @@ function normalizeRoomIds(value: Array<string | { value?: string }>) {
     });
 }
 
+// The Jira combobox is bound to a SINGLE key string (not `multiple`): picking a
+// project contributes its key (the item value), typing contributes the raw text,
+// and clearing emits null — coerce every shape to a trimmed, UPPERCASED string (the
+// backend uppercases too; doing it here keeps the field's own display consistent
+// with what will be stored, mirroring the common project-key convention).
+function normalizeJiraProjectKey(value: string | { value?: string } | null) {
+  const raw = typeof value === 'string' ? value : value?.value ?? '';
+  formJiraProjectKey.value = raw.trim().toUpperCase();
+}
+
 // Load the bot's Webex rooms and cache them; every department's editor shares this one
 // item list. Best-effort: getRooms always resolves 200 with { rooms } on success (a
 // genuinely empty list included) or { rooms: [], reason } on failure (Webex off /
@@ -361,13 +439,31 @@ async function loadWebexRooms() {
   }
 }
 
+// Load the tech user's Jira projects and cache them; every department's editor
+// shares this one item list. Same always-200-with-reason contract as loadWebexRooms.
+async function loadJiraProjects() {
+  jiraProjectsLoading.value = true;
+  try {
+    const { projects, reason } = await jiraSettingsApi.getProjects();
+    jiraProjects.value = projects;
+    jiraProjectsUnavailable.value = reason !== undefined;
+  } catch {
+    jiraProjects.value = [];
+    jiraProjectsUnavailable.value = true;
+  } finally {
+    jiraProjectsLoading.value = false;
+  }
+}
+
 function showCreateDialog() {
   formName.value = '';
   formEmails.value = [];
   formRoomIds.value = [];
+  formJiraProjectKey.value = '';
   formErrors.name = [];
   formErrors.emails = [];
   formErrors.roomIds = [];
+  formErrors.jiraProjectKey = [];
   createDialog.value = true;
 }
 
@@ -376,14 +472,18 @@ function showEditDialog(dept: Department) {
   formName.value = dept.name;
   formEmails.value = [...(dept.notificationEmails ?? [])];
   formRoomIds.value = [...(dept.webexRoomIds ?? [])];
+  formJiraProjectKey.value = dept.jiraProjectKey ?? '';
   formErrors.name = [];
   formErrors.emails = [];
   formErrors.roomIds = [];
+  formErrors.jiraProjectKey = [];
   editDialog.value = true;
-  // Refresh the shared room list best-effort so a space the admin just added the bot to
-  // shows up without a full page reload. loadWebexRooms is self-contained (its own
-  // try/catch/finally), so this never throws and never blocks the dialog from opening.
+  // Refresh the shared room/project lists best-effort so a space the bot was just
+  // added to, or a project just made visible, shows up without a full page reload.
+  // Both loaders are self-contained (their own try/catch/finally), so neither throws
+  // nor blocks the dialog from opening.
   loadWebexRooms();
+  loadJiraProjects();
 }
 
 function showDeleteDialog(dept: Department) {
@@ -410,12 +510,14 @@ async function updateDepartment() {
   const nameOk = validateName();
   const emailsOk = validateEmails();
   const roomIdsOk = validateRoomIds();
-  if (!nameOk || !emailsOk || !roomIdsOk) return;
+  const jiraProjectKeyOk = validateJiraProjectKey();
+  if (!nameOk || !emailsOk || !roomIdsOk || !jiraProjectKeyOk) return;
   saving.value = true;
   const ok = await departmentsStore.update(selectedDepartment.value.id, {
     name: formName.value.trim(),
     notificationEmails: formEmails.value.map((e) => e.trim()),
     webexRoomIds: formRoomIds.value.map((id) => id.trim()),
+    jiraProjectKey: formJiraProjectKey.value.trim().toUpperCase(),
   });
   saving.value = false;
   if (ok) {
@@ -468,5 +570,6 @@ async function submitReorder(ids: string[]) {
 onMounted(() => {
   departmentsStore.fetchAll();
   loadWebexRooms();
+  loadJiraProjects();
 });
 </script>

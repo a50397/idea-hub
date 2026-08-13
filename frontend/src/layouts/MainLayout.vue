@@ -27,6 +27,8 @@
 
         <v-list-item v-if="authStore.isAdmin" prepend-icon="mdi-message-text-outline" :title="$t('nav.webexSettings')" :to="{ name: 'WebexSettings' }"></v-list-item>
 
+        <v-list-item v-if="authStore.isAdmin" prepend-icon="mdi-jira" :title="$t('nav.jiraSettings')" :to="{ name: 'JiraSettings' }"></v-list-item>
+
         <v-list-item v-if="!isSsoUser" prepend-icon="mdi-lock-reset" :title="$t('nav.changePassword')" :to="{ name: 'ChangePassword' }"></v-list-item>
       </v-list>
 
@@ -53,6 +55,25 @@
     </v-app-bar>
 
     <v-main>
+      <!-- ADMIN-only health banner: the Jira poller runs on a timer with nobody
+           watching it, so a broken integration (expired token, rotated encryption
+           key, unreachable host) would otherwise only ever appear in the server log.
+           It rides above the router view on EVERY page because an admin visits the
+           Jira settings page precisely when they already suspect something.
+           Dismissing hides it for the rest of the session (a local ref — it comes
+           back on reload, and is gone for good once the next poll succeeds). -->
+      <v-alert
+        v-if="showJiraSyncBanner"
+        type="warning"
+        variant="tonal"
+        density="compact"
+        closable
+        class="ma-4"
+        @click:close="jiraSyncBannerDismissed = true"
+      >
+        {{ $t('jiraSync.failingBanner') }}
+        <router-link :to="{ name: 'JiraSettings' }">{{ $t('jiraSync.failingBannerLink') }}</router-link>
+      </v-alert>
       <router-view />
     </v-main>
   </v-app>
@@ -73,6 +94,18 @@ const optionsStore = useOptionsStore();
 const { locale } = useI18n();
 
 const isSsoUser = computed(() => authStore.user?.authProvider === 'SSO');
+
+// Session-scoped dismissal of the Jira-sync banner: a plain ref, so it reappears on
+// the next full page load (nothing is persisted) while an admin who has already
+// acknowledged it is not nagged on every route change.
+const jiraSyncBannerDismissed = ref(false);
+
+// The store's flag is false for non-admins by construction (the server omits it),
+// but the role is checked here too so the banner's audience is explicit at the one
+// place it renders.
+const showJiraSyncBanner = computed(
+  () => authStore.isAdmin && optionsStore.jiraSyncFailing && !jiraSyncBannerDismissed.value
+);
 
 // Whether this deployment re-exposes the logout button for SSO users
 // (SSO_SHOW_LOGOUT), sourced from the authenticated /api/options. The store's

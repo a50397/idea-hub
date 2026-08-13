@@ -5,6 +5,7 @@ import type {
   MonthlyTrend,
   TopContributor,
   DepartmentReport,
+  JiraStatusReport,
   Idea,
   IdeaStatus,
   Paginated,
@@ -28,6 +29,14 @@ export const reportsApi = {
 
   getByDepartment: async (): Promise<DepartmentReport[]> => {
     const response = await client.get('/reports/by-department');
+    return response.data;
+  },
+
+  // Idea counts grouped by the raw Jira status name (dashboard breakdown), desc by
+  // count. Only dispatched ideas are counted; scoped like the other summaries (a
+  // USER sees only their own ideas).
+  getJiraStatuses: async (): Promise<JiraStatusReport[]> => {
+    const response = await client.get('/reports/jira-statuses');
     return response.data;
   },
 

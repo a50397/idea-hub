@@ -1,8 +1,20 @@
 <template>
   <v-card>
     <v-card-title class="d-flex align-center">
-      <span class="flex-grow-1">{{ idea.title }}</span>
-      <v-chip :color="statusColors[idea.status]" size="small">
+      <span class="flex-grow-1 text-truncate card-title-text">{{ idea.title }}</span>
+      <!-- The raw Jira status is remote-controlled text (up to 255 chars): cap and
+           ellipsize it so it can never squeeze the title to nothing or push the
+           canonical status chip out of the clipped title row (deep-review fix). -->
+      <v-chip
+        v-if="idea.jiraStatus"
+        :color="jiraStatusColor"
+        size="small"
+        variant="tonal"
+        class="mr-2 jira-status-chip"
+      >
+        <span class="text-truncate">{{ idea.jiraStatus }}</span>
+      </v-chip>
+      <v-chip :color="statusColors[idea.status]" size="small" class="flex-shrink-0">
         {{ $t(`status.${statusKeyMap[idea.status]}`) }}
       </v-chip>
     </v-card-title>
@@ -53,9 +65,10 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Idea } from '../types';
-import { IdeaStatus, Effort, statusColors } from '../types';
+import { IdeaStatus, Effort, statusColors, jiraCategoryColors } from '../types';
 
 const { locale } = useI18n();
 
@@ -73,13 +86,20 @@ const effortKeyMap: Record<Effort, string> = {
   [Effort.MORE_THAN_THREE_DAYS]: 'moreThanThreeDays',
 };
 
-defineProps<{
+const props = defineProps<{
   idea: Idea;
 }>();
 
 defineEmits<{
   view: [id: string];
 }>();
+
+// Colored by Jira's status CATEGORY (new/indeterminate/done); a raw status name with
+// no (yet) known category — e.g. right after dispatch, before the first poll —
+// falls back to a neutral color rather than guessing.
+const jiraStatusColor = computed(() =>
+  props.idea.jiraStatusCategory ? jiraCategoryColors[props.idea.jiraStatusCategory] : 'default'
+);
 
 function truncate(text: string, length: number): string {
   if (text.length <= length) return text;
@@ -92,3 +112,21 @@ function formatDate(dateString: string): string {
   return date.toLocaleDateString(loc, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 </script>
+
+<style scoped>
+/* The title is a flex item: without min-width:0 it refuses to shrink below its
+   content and text-truncate never engages. */
+.card-title-text {
+  min-width: 0;
+}
+/* Cap the remote-controlled raw-status chip; the inner span carries text-truncate,
+   and the chip's own content wrapper must be allowed to shrink for the ellipsis to
+   engage. */
+.jira-status-chip {
+  max-width: 10rem;
+}
+.jira-status-chip :deep(.v-chip__content) {
+  min-width: 0;
+  overflow: hidden;
+}
+</style>
