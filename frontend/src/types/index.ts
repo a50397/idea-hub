@@ -190,6 +190,27 @@ export interface ReviewIdeaInput {
   note?: string;
 }
 
+// Envelope returned by the paginated list endpoints (GET /api/ideas,
+// GET /api/reports/filtered). `total` is the full match count, independent of
+// the `limit` that capped `data`, so callers can tell the user their view is
+// truncated.
+// Hard cap the server puts on `limit` for both paginated endpoints
+// (backend/src/utils/validation.ts, paginationSchema). Requesting more is a
+// 400, so this is also the largest page the UI can ever show or export.
+export const MAX_PAGE_LIMIT = 100;
+
+export interface Pagination {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface Paginated<T> {
+  data: T[];
+  pagination: Pagination;
+}
+
 export interface DashboardSummary {
   counts: {
     submitted: number;

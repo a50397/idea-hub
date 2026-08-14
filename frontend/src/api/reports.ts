@@ -1,4 +1,5 @@
 import client from './client';
+import { MAX_PAGE_LIMIT } from '../types';
 import type {
   DashboardSummary,
   MonthlyTrend,
@@ -6,6 +7,7 @@ import type {
   DepartmentReport,
   Idea,
   IdeaStatus,
+  Paginated,
 } from '../types';
 
 export const reportsApi = {
@@ -29,6 +31,9 @@ export const reportsApi = {
     return response.data;
   },
 
+  // Returns the whole paginated envelope: `pagination.total` is the full match
+  // count, which the page needs to warn that the table (and the CSV export,
+  // capped at MAX_PAGE_LIMIT) shows only the first page.
   getFiltered: async (filters?: {
     status?: IdeaStatus;
     startDate?: string;
@@ -37,7 +42,8 @@ export const reportsApi = {
     assigneeId?: string;
     departmentId?: string;
     tags?: string[];
-  }): Promise<Idea[]> => {
+    limit?: number;
+  }): Promise<Paginated<Idea>> => {
     const params = new URLSearchParams();
     if (filters?.status) params.append('status', filters.status);
     if (filters?.startDate) params.append('startDate', filters.startDate);
@@ -46,9 +52,10 @@ export const reportsApi = {
     if (filters?.assigneeId) params.append('assigneeId', filters.assigneeId);
     if (filters?.departmentId) params.append('departmentId', filters.departmentId);
     if (filters?.tags) filters.tags.forEach((tag) => params.append('tags', tag));
+    if (filters?.limit) params.append('limit', String(filters.limit));
 
     const response = await client.get(`/reports/filtered?${params.toString()}`);
-    return response.data.data ?? response.data;
+    return { data: response.data.data, pagination: response.data.pagination };
   },
 
   exportCSV: async (filters?: {
@@ -62,6 +69,9 @@ export const reportsApi = {
   }): Promise<Blob> => {
     const params = new URLSearchParams();
     params.append('format', 'csv');
+    // The server caps `limit` at 100 (backend/src/utils/validation.ts); ask for
+    // the maximum so the export is not silently cut to the default page of 20.
+    params.append('limit', String(MAX_PAGE_LIMIT));
     if (filters?.status) params.append('status', filters.status);
     if (filters?.startDate) params.append('startDate', filters.startDate);
     if (filters?.endDate) params.append('endDate', filters.endDate);
