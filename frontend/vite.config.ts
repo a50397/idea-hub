@@ -29,14 +29,45 @@ export default defineConfig(({ mode }) => ({
       'vue-i18n': 'vue-i18n/dist/vue-i18n.runtime.esm-bundler.js',
     },
   },
-  // Pre-bundle Vuetify components used by only one lazily-loaded page. The dep
-  // scanner cannot see through the vuetify autoImport transform, so the first
-  // browser visit to such a page triggers "new dependencies optimized →
-  // reloading" mid-session, which reverts in-flight UI state (this flaked the
-  // webex-settings e2e spec on a cold cache). Add an entry whenever a page
-  // introduces a Vuetify component no other page uses yet.
+  // Pre-bundle every Vuetify component the app uses. The dep scanner cannot see
+  // through the vuetify autoImport transform, so on a cold cache (CI always)
+  // each first browser visit to a page triggers "new dependencies optimized →
+  // reloading" mid-session, which reverts in-flight UI state — and with two
+  // Playwright workers a discovery in one worker reloads the other worker's
+  // page mid-interaction (this failed idea-lifecycle on CI both ways: a reload
+  // swallowed the detail-page navigation, and a VTooltip discovery from the
+  // parallel rbac test wiped the submit form). List sourced from the CI vite
+  // dep-discovery log; add an entry whenever a page introduces a new component.
   optimizeDeps: {
-    include: ['vuetify/components/VCheckbox'],
+    include: [
+      'vuetify/components/VAlert',
+      'vuetify/components/VApp',
+      'vuetify/components/VAppBar',
+      'vuetify/components/VBtn',
+      'vuetify/components/VBtnToggle',
+      'vuetify/components/VCard',
+      'vuetify/components/VCheckbox',
+      'vuetify/components/VChip',
+      'vuetify/components/VCombobox',
+      'vuetify/components/VDataTable',
+      'vuetify/components/VDialog',
+      'vuetify/components/VDivider',
+      'vuetify/components/VForm',
+      'vuetify/components/VGrid',
+      'vuetify/components/VIcon',
+      'vuetify/components/VList',
+      'vuetify/components/VMain',
+      'vuetify/components/VNavigationDrawer',
+      'vuetify/components/VProgressCircular',
+      'vuetify/components/VSelect',
+      'vuetify/components/VSnackbar',
+      'vuetify/components/VSwitch',
+      'vuetify/components/VTextField',
+      'vuetify/components/VTextarea',
+      'vuetify/components/VTimeline',
+      'vuetify/components/VToolbar',
+      'vuetify/components/VTooltip',
+    ],
   },
   test: {
     globals: true,

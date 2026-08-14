@@ -19,7 +19,7 @@ Interná webová aplikácia na správu interných zlepšovacích nápadov, urče
 - Grafy mesačných trendov dokončených nápadov v čase
 - Priemerné časové metriky (od podania po schválenie, od schválenia po dokončenie)
 - Rebríček najaktívnejších prispievateľov (pokročilí používatelia a administrátori)
-- Bežní používatelia vidia štatistiky obmedzené na vlastné nápady
+- Všetci prihlásení používatelia vidia štatistiky za celú organizáciu
 
 ### Reporting
 - Pokročilé filtrovanie (stav, oddelenie, dátumový rozsah, autor, riešiteľ, štítky)
@@ -377,9 +377,9 @@ npm run test:watch       # Vitest v režime watch
 
 ### Endpointy reportov
 
-- `GET /api/reports/summary` – Súhrnné štatistiky pre prehľad (bežní používatelia: len vlastné nápady)
-- `GET /api/reports/by-department` – Počty nápadov podľa oddelení (bežní používatelia: len vlastné nápady)
-- `GET /api/reports/monthly-trend` – Mesačný trend dokončených nápadov (bežní používatelia: len vlastné nápady)
+- `GET /api/reports/summary` – Súhrnné štatistiky pre prehľad (za celú organizáciu, pre všetky roly)
+- `GET /api/reports/by-department` – Počty nápadov podľa oddelení (za celú organizáciu, pre všetky roly)
+- `GET /api/reports/monthly-trend` – Mesačný trend dokončených nápadov (za celú organizáciu, pre všetky roly)
 - `GET /api/reports/top-contributors` – Najaktívnejší prispievatelia (Pokročilý používateľ/Administrátor)
 - `GET /api/reports/filtered` – Filtrované nápady so stránkovaním (vrátane exportu do CSV)
 
@@ -420,10 +420,10 @@ npm run test:watch       # Vitest v režime watch
 
 ### USER
 - Podávanie nových nápadov
-- Zobrazenie všetkých nápadov (globálny zoznam aj vlastné nápady)
+- Zobrazenie všetkých nápadov za celú organizáciu (globálny zoznam aj vlastné nápady)
 - Prevzatie schválených nápadov na realizáciu
 - Zapisovanie krokov priebehu a označenie prevzatých nápadov za dokončené
-- Prehľad a reporty obmedzené na vlastné nápady
+- Prehľad a reporty za celú organizáciu, len na čítanie (bez rebríčka prispievateľov)
 
 ### POWER_USER
 - Všetky oprávnenia roly USER
