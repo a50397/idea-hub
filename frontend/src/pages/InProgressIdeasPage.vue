@@ -38,7 +38,7 @@
           </IdeaCard>
         </v-col>
       </v-row>
-      <v-alert v-else type="info">
+      <v-alert v-else type="info" variant="tonal">
         {{ $t('inProgress.noIdeas') }}
       </v-alert>
     </div>

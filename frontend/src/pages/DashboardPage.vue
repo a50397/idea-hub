@@ -109,9 +109,6 @@
             <v-card-text>
               <v-list>
                 <v-list-item v-for="contributor in topContributors" :key="contributor.userId">
-                  <template v-slot:prepend>
-                    <v-avatar :image="`https://ui-avatars.com/api/?name=${contributor.userName}&background=1976D2&color=fff`"></v-avatar>
-                  </template>
                   <v-list-item-title>{{ contributor.userName }}</v-list-item-title>
                   <v-list-item-subtitle>{{ contributor.completedIdeas }} {{ $t('dashboard.ideasCompleted') }}</v-list-item-subtitle>
                 </v-list-item>
@@ -160,8 +157,8 @@ const chartData = computed(() => ({
     {
       label: t('dashboard.completedIdeas'),
       data: monthlyTrend.value.map((item) => item.count),
-      backgroundColor: 'rgba(0, 137, 123, 0.6)',
-      borderColor: '#00897B',
+      backgroundColor: 'rgba(18, 169, 154, 0.6)',
+      borderColor: '#12A99A',
       borderWidth: 1,
       maxBarThickness: 64,
     },
@@ -174,8 +171,8 @@ const departmentChartData = computed(() => ({
     {
       label: t('dashboard.ideasByDepartment'),
       data: byDepartment.value.map((item) => item.count),
-      backgroundColor: 'rgba(25, 118, 210, 0.6)',
-      borderColor: '#1976D2',
+      backgroundColor: 'rgba(44, 50, 56, 0.6)',
+      borderColor: '#2C3238',
       borderWidth: 1,
     },
   ],

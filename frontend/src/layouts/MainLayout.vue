@@ -2,7 +2,7 @@
   <v-app>
     <v-navigation-drawer v-model="drawer" app>
       <v-list>
-        <v-list-item :prepend-avatar="`https://ui-avatars.com/api/?name=${authStore.user?.name}&background=1976D2&color=fff`" :title="authStore.user?.name" :subtitle="authStore.user?.email"></v-list-item>
+        <v-list-item :prepend-avatar="appIcon" :title="authStore.user?.name" :subtitle="authStore.user?.email"></v-list-item>
       </v-list>
 
       <v-divider></v-divider>
@@ -64,6 +64,7 @@ import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '../stores/auth';
 import { useOptionsStore } from '../stores/options';
+import appIcon from '../../images/ideahub-favicon.svg';
 
 const drawer = ref(true);
 const router = useRouter();
