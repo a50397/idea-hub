@@ -16,16 +16,6 @@
           :loading="loading"
           item-value="id"
         >
-          <template v-slot:item.name="{ item }">
-            <div class="d-flex align-center">
-              <v-avatar
-                :image="`https://ui-avatars.com/api/?name=${item.name}&background=1976D2&color=fff`"
-                size="32"
-                class="mr-2"
-              ></v-avatar>
-              {{ item.name }}
-            </div>
-          </template>
           <template v-slot:item.role="{ item }">
             <v-chip :color="getRoleColor(item.role)" size="small">
               {{ item.role }}

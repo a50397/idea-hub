@@ -66,7 +66,7 @@
             <span class="flex-grow-1">{{ $t('reports.filteredResults') }} ({{ ideas.length }})</span>
             <v-btn
               @click="exportCSV"
-              color="success"
+              color="primary"
               prepend-icon="mdi-download"
               :loading="exporting"
             >

@@ -39,7 +39,7 @@
           <IdeaCard :idea="idea" @view="viewIdea" />
         </v-col>
       </v-row>
-      <v-alert v-else type="info">
+      <v-alert v-else type="info" variant="tonal">
         {{ $t('myIdeas.noIdeas') }}
       </v-alert>
     </div>

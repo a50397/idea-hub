@@ -28,7 +28,7 @@
           <IdeaCard :idea="idea" @view="viewIdea">
             <template #actions>
               <v-btn
-                color="success"
+                color="primary"
                 variant="elevated"
                 @click="claimIdea(idea.id)"
                 :loading="claimingId === idea.id"
@@ -39,7 +39,7 @@
           </IdeaCard>
         </v-col>
       </v-row>
-      <v-alert v-else type="info">
+      <v-alert v-else type="info" variant="tonal">
         {{ $t('approved.noIdeas') }}
       </v-alert>
     </div>

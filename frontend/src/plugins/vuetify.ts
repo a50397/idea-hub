@@ -12,13 +12,18 @@ export default createVuetify({
     themes: {
       light: {
         colors: {
-          primary: '#1976D2',
-          secondary: '#424242',
-          accent: '#82B1FF',
+          primary: '#12A99A', // Teal
+          'on-primary': '#FFFFFF',
+          secondary: '#2C3238', // Antracit
+          accent: '#4DB6AC',
           error: '#FF5252',
-          info: '#2196F3',
-          success: '#4CAF50',
+          info: '#0284C7',
+          'on-info': '#FFFFFF',
+          success: '#16A34A',
+          'on-success': '#FFFFFF',
           warning: '#FFC107',
+          background: '#FFFFFF', // Paper
+          surface: '#FFFFFF', // Paper
         },
       },
     },

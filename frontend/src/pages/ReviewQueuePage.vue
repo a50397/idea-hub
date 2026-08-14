@@ -74,7 +74,7 @@
           </v-card>
         </v-col>
       </v-row>
-      <v-alert v-else type="info">
+      <v-alert v-else type="info" variant="tonal">
         {{ $t('review.noPending') }}
       </v-alert>
     </div>
