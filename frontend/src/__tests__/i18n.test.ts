@@ -162,13 +162,16 @@ describe('translation coverage for components', () => {
     ],
     ApprovedIdeasPage: [
       'approved.title', 'approved.subtitle', 'approved.claimStart', 'approved.noIdeas',
+      'approved.claimTitle', 'approved.claimConfirm', 'approved.claimAction',
+      'ideas.showingFirst',
     ],
     InProgressIdeasPage: [
       'inProgress.title', 'inProgress.markComplete', 'inProgress.completeTitle',
       'inProgress.completeConfirm', 'inProgress.completionNotes', 'inProgress.noIdeas',
+      'ideas.showingFirst',
     ],
     CompletedIdeasPage: [
-      'completed.title', 'completed.noIdeas',
+      'completed.title', 'completed.noIdeas', 'ideas.showingFirst',
     ],
     IdeaDetailPage: [
       'ideas.description', 'ideas.benefits', 'ideas.details',
@@ -179,6 +182,7 @@ describe('translation coverage for components', () => {
       'reports.title', 'reports.filters', 'reports.status', 'reports.startDate',
       'reports.endDate', 'reports.filteredResults', 'reports.exportCSV',
       'reports.headerTitle', 'reports.headerStatus', 'reports.headerEffort',
+      'reports.exportTruncated', 'ideas.showingFirst',
     ],
     UsersPage: [
       'users.title', 'users.usersLabel', 'users.createUser', 'users.editUser',

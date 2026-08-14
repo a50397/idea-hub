@@ -6,6 +6,7 @@ import * as components from 'vuetify/components';
 import * as directives from 'vuetify/directives';
 import { createI18n, type I18n } from 'vue-i18n';
 import type { VueWrapper } from '@vue/test-utils';
+import type { Paginated } from '../types';
 import en from '../i18n/en';
 import sk from '../i18n/sk';
 
@@ -34,4 +35,15 @@ export async function clickByText(wrapper: VueWrapper, selector: string, text: s
   const el = findByText(wrapper, selector, text);
   if (!el) throw new Error(`No "${selector}" element found with text "${text}"`);
   await el.trigger('click');
+}
+
+// The `{ data, pagination }` envelope the list/report endpoints resolve to.
+// `total` defaults to a complete, untruncated page; pass a larger value to
+// simulate the server capping the page. `limit` defaults to the server's default
+// page size — pages that request the maximum page pass MAX_PAGE_LIMIT.
+export function paginated<T>(data: T[], total = data.length, limit = 20): Paginated<T> {
+  return {
+    data,
+    pagination: { page: 1, limit, total, totalPages: Math.ceil(total / limit) },
+  };
 }

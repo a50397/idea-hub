@@ -65,6 +65,10 @@ test('idea lifecycle: submit → approve → claim → complete, chips reflect e
   await expect(card()).toBeVisible();
   await expect(card().getByText('Approved', { exact: true })).toBeVisible();
   await card().getByRole('button', { name: 'Claim & Start' }).click();
+  // Claiming is irreversible, so it goes through a confirm dialog naming the idea.
+  const claimDialog = dialog('Claim Idea');
+  await expect(claimDialog).toContainText(title);
+  await claimDialog.getByRole('button', { name: 'Claim', exact: true }).click();
   await expect(page.getByText('Idea claimed successfully!')).toBeVisible();
 
   // Now IN_PROGRESS in My Ideas.

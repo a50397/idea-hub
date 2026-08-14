@@ -5,7 +5,7 @@ import MyIdeasPage from '../pages/MyIdeasPage.vue';
 import { useAuthStore } from '../stores/auth';
 import { IdeaStatus, Effort, Role } from '../types';
 import type { Idea } from '../types';
-import { createTestI18n, createTestVuetify } from './helpers';
+import { createTestI18n, createTestVuetify, paginated } from './helpers';
 
 const { mockPush } = vi.hoisted(() => ({ mockPush: vi.fn() }));
 
@@ -68,6 +68,9 @@ function makeIdea(overrides: Partial<Idea> = {}): Idea {
   };
 }
 
+// ideasApi.getAll resolves the paginated envelope (see `paginated` in helpers);
+// MyIdeasPage requests no explicit limit, so the server default of 20 applies.
+
 function mountPage() {
   return mount(MyIdeasPage, {
     global: { plugins: [createTestVuetify(), createTestI18n('en')] },
@@ -78,7 +81,7 @@ describe('MyIdeasPage', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
-    mockedIdeas.getAll.mockResolvedValue([]);
+    mockedIdeas.getAll.mockResolvedValue(paginated([]));
     mockedDepartments.getAll.mockResolvedValue([
       { id: 'd1', name: 'General', order: 0, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
       { id: 'd2', name: 'Marketing', order: 1, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
@@ -96,10 +99,12 @@ describe('MyIdeasPage', () => {
   });
 
   it('renders an IdeaCard per returned idea', async () => {
-    mockedIdeas.getAll.mockResolvedValue([
-      makeIdea({ id: 'a', title: 'First idea' }),
-      makeIdea({ id: 'b', title: 'Second idea' }),
-    ]);
+    mockedIdeas.getAll.mockResolvedValue(
+      paginated([
+        makeIdea({ id: 'a', title: 'First idea' }),
+        makeIdea({ id: 'b', title: 'Second idea' }),
+      ])
+    );
     const wrapper = mountPage();
     await flushPromises();
 
@@ -109,7 +114,7 @@ describe('MyIdeasPage', () => {
   });
 
   it('shows the empty-state alert when there are no ideas', async () => {
-    mockedIdeas.getAll.mockResolvedValue([]);
+    mockedIdeas.getAll.mockResolvedValue(paginated([]));
     const wrapper = mountPage();
     await flushPromises();
 
@@ -163,7 +168,7 @@ describe('MyIdeasPage', () => {
   });
 
   it('navigates to the idea detail page on "view"', async () => {
-    mockedIdeas.getAll.mockResolvedValue([makeIdea({ id: 'idea-99' })]);
+    mockedIdeas.getAll.mockResolvedValue(paginated([makeIdea({ id: 'idea-99' })]));
     const wrapper = mountPage();
     await flushPromises();
 
