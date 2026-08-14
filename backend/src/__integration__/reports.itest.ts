@@ -1,9 +1,10 @@
 // Requirement 5: reports computed by real Prisma/Mongo aggregations —
-// /summary (with USER role-scoped visibility), /monthly-trend, and /filtered
-// including the CSV export shape.
+// /summary (org-wide for every authenticated role), /monthly-trend, and
+// /filtered including the CSV export shape.
 import {
   Role,
   IdeaStatus,
+  prisma,
   newAgent,
   loginAs,
   waitForBoot,
@@ -62,16 +63,16 @@ describe('reports aggregations (real DB)', () => {
     expect(typeof res.body.averageTimes.approvedToDoneDays).toBe('number');
   });
 
-  test('GET /summary as USER is scoped to the user\'s own ideas', async () => {
+  test('GET /summary as USER counts all ideas org-wide', async () => {
     const res = await userAgent.get('/api/reports/summary');
     expect(res.status).toBe(200);
     expect(res.body.counts).toEqual({
-      submitted: 1,
-      approved: 0,
+      submitted: 2,
+      approved: 1,
       inProgress: 1,
-      done: 1,
-      rejected: 0,
-      total: 3,
+      done: 2,
+      rejected: 1,
+      total: 7,
     });
   });
 
@@ -87,12 +88,12 @@ describe('reports aggregations (real DB)', () => {
     expect(res.body.every((d: any) => typeof d.departmentId === 'string' && typeof d.count === 'number')).toBe(true);
   });
 
-  test('GET /by-department as USER is scoped to the user\'s own ideas', async () => {
+  test('GET /by-department as USER counts every idea org-wide', async () => {
     const res = await userAgent.get('/api/reports/by-department');
     expect(res.status).toBe(200);
     const general = res.body.find((d: { name: string }) => d.name === 'Všeobecné');
     expect(general).toBeDefined();
-    expect(general.count).toBe(3);
+    expect(general.count).toBe(7);
   });
 
   test('GET /monthly-trend as ADMIN groups completed ideas by month', async () => {
@@ -104,10 +105,13 @@ describe('reports aggregations (real DB)', () => {
     ]);
   });
 
-  test('GET /monthly-trend as USER only counts the user\'s completed ideas', async () => {
+  test('GET /monthly-trend as USER counts every completed idea org-wide', async () => {
     const res = await userAgent.get('/api/reports/monthly-trend');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual([{ month: '2026-03', count: 1 }]);
+    expect(res.body).toEqual([
+      { month: '2026-03', count: 1 },
+      { month: '2026-05', count: 1 },
+    ]);
   });
 
   test('GET /filtered (json) as ADMIN honors a status filter with pagination', async () => {
@@ -131,19 +135,72 @@ describe('reports aggregations (real DB)', () => {
     expect(lines).toHaveLength(3);
   });
 
-  test('GET /filtered as USER is forced to the user\'s own ideas (ignores submitterId)', async () => {
-    const res = await userAgent
-      .get('/api/reports/filtered')
-      .query({ submitterId: other.id }); // attempt to read someone else's ideas
+  test('GET /filtered as USER with NO query params returns every idea org-wide', async () => {
+    const res = await userAgent.get('/api/reports/filtered');
     expect(res.status).toBe(200);
-    expect(res.body.pagination.total).toBe(3); // only userU's three ideas
-    expect(res.body.data.every((i: any) => i.submitter.id === userU.id)).toBe(true);
+    // The unfiltered default is org-wide: userU's 3 ideas + other's 4, no self-scoping.
+    expect(res.body.pagination.total).toBe(7);
+    expect(res.body.data.some((i: any) => i.submitter.id === userU.id)).toBe(true);
+    expect(res.body.data.some((i: any) => i.submitter.id === other.id)).toBe(true);
   });
 
-  test('GET /filtered as USER combined with a status filter stays scoped', async () => {
+  test('GET /filtered as USER honors a submitterId filter for another user', async () => {
+    const res = await userAgent
+      .get('/api/reports/filtered')
+      .query({ submitterId: other.id }); // reading another user's ideas is allowed now
+    expect(res.status).toBe(200);
+    expect(res.body.pagination.total).toBe(4); // all four of `other`'s ideas
+    expect(res.body.data.every((i: any) => i.submitter.id === other.id)).toBe(true);
+  });
+
+  test('GET /filtered as USER with a status filter stays org-wide', async () => {
     const res = await userAgent.get('/api/reports/filtered').query({ status: 'DONE' });
     expect(res.status).toBe(200);
+    expect(res.body.pagination.total).toBe(2); // both users' DONE ideas
+    expect(res.body.data.some((i: any) => i.submitter.id === userU.id)).toBe(true);
+    expect(res.body.data.some((i: any) => i.submitter.id === other.id)).toBe(true);
+  });
+});
+
+// Declared LAST on purpose: this block seeds one extra idea whose timestamp is
+// deliberately NOT midnight, which would skew the org-wide counts asserted
+// above. It is removed again in afterAll.
+describe('reports /filtered date range (real DB)', () => {
+  const END_DAY = '2026-06-10';
+  let onEndDayId: string;
+
+  beforeAll(async () => {
+    const idea = await createIdea({
+      submitterId: userU.id,
+      title: 'Submitted midday on the end day',
+      status: IdeaStatus.SUBMITTED,
+      // Midday, not midnight: with the old `lte: <endDate>` bound this idea was
+      // silently dropped from a range that ends on its own submission day.
+      submittedAt: new Date(`${END_DAY}T12:00:00.000Z`),
+    });
+    onEndDayId = idea.id;
+  });
+
+  afterAll(async () => {
+    await prisma.idea.delete({ where: { id: onEndDayId } });
+  });
+
+  test('includes an idea submitted ON the endDate', async () => {
+    const res = await userAgent
+      .get('/api/reports/filtered')
+      .query({ startDate: '2026-06-01', endDate: END_DAY });
+
+    expect(res.status).toBe(200);
     expect(res.body.pagination.total).toBe(1);
-    expect(res.body.data[0].submitter.id).toBe(userU.id);
+    expect(res.body.data.map((i: any) => i.id)).toContain(onEndDayId);
+  });
+
+  test('excludes it once the range ends the day before', async () => {
+    const res = await userAgent
+      .get('/api/reports/filtered')
+      .query({ startDate: '2026-06-01', endDate: '2026-06-09' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.pagination.total).toBe(0);
   });
 });

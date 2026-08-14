@@ -139,20 +139,20 @@ describe('Reports API', () => {
       expect(response.body.averageTimes).toHaveProperty('approvedToDoneDays');
     });
 
-    test('should filter counts by submitterId for standard USER role but not average times', async () => {
-      const { agent, user } = await loginAsUser(app, 'USER');
+    test('should return org-wide counts for standard USER role (no submitterId scoping)', async () => {
+      const { agent } = await loginAsUser(app, 'USER');
 
       mockPrismaFunctions.idea.count.mockResolvedValue(0);
       mockPrismaFunctions.idea.findMany.mockResolvedValue([]);
 
       await agent.get('/api/reports/summary');
 
-      // All count queries should include submitterId filter
+      // No count query may be scoped to the caller: ideas are readable org-wide.
       mockPrismaFunctions.idea.count.mock.calls.forEach((call: any[]) => {
-        expect(call[0].where).toHaveProperty('submitterId', user.id);
+        expect(call[0].where).not.toHaveProperty('submitterId');
       });
 
-      // findMany (average times) should NOT filter by submitterId - visible to all
+      // findMany (average times) is org-wide too, as it always was.
       expect(mockPrismaFunctions.idea.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.not.objectContaining({
@@ -234,19 +234,18 @@ describe('Reports API', () => {
       ]);
     });
 
-    test('scopes the counts to the user\'s own ideas for a standard USER', async () => {
-      const { agent, user } = await loginAsUser(app, 'USER');
+    test('counts every idea org-wide for a standard USER', async () => {
+      const { agent } = await loginAsUser(app, 'USER');
 
       mockPrismaFunctions.department.findMany.mockResolvedValue([{ id: 'd1', name: 'Všeobecné', order: 0 }]);
       mockPrismaFunctions.idea.groupBy.mockResolvedValue([]);
 
       await agent.get('/api/reports/by-department');
 
-      expect(mockPrismaFunctions.idea.groupBy).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ submitterId: user.id }),
-        })
-      );
+      // The groupBy carries no `where` at all now, so nothing can scope it to
+      // the caller; assert on the actual argument rather than requiring the key.
+      const [args] = mockPrismaFunctions.idea.groupBy.mock.calls[0];
+      expect(args.where?.submitterId).toBeUndefined();
     });
 
     test('does not scope the counts for an ADMIN', async () => {
@@ -257,11 +256,8 @@ describe('Reports API', () => {
 
       await agent.get('/api/reports/by-department');
 
-      expect(mockPrismaFunctions.idea.groupBy).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.not.objectContaining({ submitterId: expect.anything() }),
-        })
-      );
+      const [args] = mockPrismaFunctions.idea.groupBy.mock.calls[0];
+      expect(args.where?.submitterId).toBeUndefined();
     });
 
     test('requires authentication', async () => {
@@ -292,8 +288,8 @@ describe('Reports API', () => {
       expect(response.body).toContainEqual({ month: '2024-03', count: 1 });
     });
 
-    test('should filter by submitterId for standard USER role', async () => {
-      const { agent, user } = await loginAsUser(app, 'USER');
+    test('should return the org-wide trend for standard USER role', async () => {
+      const { agent } = await loginAsUser(app, 'USER');
 
       mockPrismaFunctions.idea.findMany.mockResolvedValue([]);
 
@@ -301,8 +297,8 @@ describe('Reports API', () => {
 
       expect(mockPrismaFunctions.idea.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({
-            submitterId: user.id,
+          where: expect.not.objectContaining({
+            submitterId: expect.anything(),
           }),
         })
       );
@@ -448,7 +444,7 @@ describe('Reports API', () => {
     });
 
     test('should filter by status', async () => {
-      const { agent, user } = await loginAsUser(app);
+      const { agent } = await loginAsUser(app);
 
       mockPrismaFunctions.idea.findMany.mockResolvedValue([]);
       mockPrismaFunctions.idea.count.mockResolvedValue(0);
@@ -459,29 +455,54 @@ describe('Reports API', () => {
         expect.objectContaining({
           where: expect.objectContaining({
             status: 'APPROVED',
-            submitterId: user.id,
           }),
+        })
+      );
+      // The USER session sent no submitterId, so none may be injected.
+      expect(mockPrismaFunctions.idea.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.not.objectContaining({ submitterId: expect.anything() }),
         })
       );
     });
 
-    test('should filter by date range', async () => {
-      const { agent, user } = await loginAsUser(app);
+    test('should filter by date range with an INCLUSIVE end day', async () => {
+      const { agent } = await loginAsUser(app);
 
       mockPrismaFunctions.idea.findMany.mockResolvedValue([]);
       mockPrismaFunctions.idea.count.mockResolvedValue(0);
 
       await agent.get('/api/reports/filtered?startDate=2024-01-01&endDate=2024-12-31');
 
+      // Regression: `lte: 2024-12-31T00:00:00Z` silently excluded everything
+      // submitted ON the end day. The range must close at the NEXT UTC midnight
+      // with `lt` so the whole end day is inside it.
       expect(mockPrismaFunctions.idea.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            submitterId: user.id,
             submittedAt: {
-              gte: expect.any(Date),
-              lte: expect.any(Date),
+              gte: new Date('2024-01-01T00:00:00.000Z'),
+              lt: new Date('2025-01-01T00:00:00.000Z'),
             },
           }),
+        })
+      );
+
+      const [findArgs] = mockPrismaFunctions.idea.findMany.mock.calls[0];
+      expect(findArgs.where.submittedAt).not.toHaveProperty('lte');
+
+      // An idea submitted midday ON the end day falls inside the built range.
+      const onEndDay = new Date('2024-12-31T12:00:00.000Z');
+      expect(onEndDay.getTime()).toBeGreaterThanOrEqual(findArgs.where.submittedAt.gte.getTime());
+      expect(onEndDay.getTime()).toBeLessThan(findArgs.where.submittedAt.lt.getTime());
+
+      // The count (and therefore the CSV branch) shares the very same `where`.
+      const [countArgs] = mockPrismaFunctions.idea.count.mock.calls[0];
+      expect(countArgs.where).toEqual(findArgs.where);
+
+      expect(mockPrismaFunctions.idea.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.not.objectContaining({ submitterId: expect.anything() }),
         })
       );
     });
@@ -503,36 +524,37 @@ describe('Reports API', () => {
       );
     });
 
-    test('should force submitterId to own user id for standard USER role', async () => {
-      const { agent, user } = await loginAsUser(app, 'USER');
+    test('should not force submitterId for standard USER role', async () => {
+      const { agent } = await loginAsUser(app, 'USER');
 
       mockPrismaFunctions.idea.findMany.mockResolvedValue([]);
       mockPrismaFunctions.idea.count.mockResolvedValue(0);
 
       await agent.get('/api/reports/filtered');
 
+      // Nothing in the query, so the report is org-wide (no self-scoping).
       expect(mockPrismaFunctions.idea.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({
-            submitterId: user.id,
+          where: expect.not.objectContaining({
+            submitterId: expect.anything(),
           }),
         })
       );
     });
 
-    test('should ignore client-sent submitterId for standard USER role', async () => {
-      const { agent, user } = await loginAsUser(app, 'USER');
+    test('should honor a client-sent submitterId for standard USER role', async () => {
+      const { agent } = await loginAsUser(app, 'USER');
 
       mockPrismaFunctions.idea.findMany.mockResolvedValue([]);
       mockPrismaFunctions.idea.count.mockResolvedValue(0);
 
       await agent.get('/api/reports/filtered?submitterId=507f1f77bcf86cd799439011');
 
-      // Should use the logged-in user's ID, not the one from the query string
+      // The query-string value is an ordinary filter for every role now.
       expect(mockPrismaFunctions.idea.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            submitterId: user.id,
+            submitterId: '507f1f77bcf86cd799439011',
           }),
         })
       );
@@ -557,7 +579,7 @@ describe('Reports API', () => {
     });
 
     test('should filter by tags', async () => {
-      const { agent, user } = await loginAsUser(app);
+      const { agent } = await loginAsUser(app);
 
       mockPrismaFunctions.idea.findMany.mockResolvedValue([]);
       mockPrismaFunctions.idea.count.mockResolvedValue(0);
@@ -567,11 +589,15 @@ describe('Reports API', () => {
       expect(mockPrismaFunctions.idea.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            submitterId: user.id,
             tags: {
               hasSome: ['automation', 'productivity'],
             },
           }),
+        })
+      );
+      expect(mockPrismaFunctions.idea.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.not.objectContaining({ submitterId: expect.anything() }),
         })
       );
     });
@@ -606,6 +632,38 @@ describe('Reports API', () => {
       expect(response.headers['content-disposition']).toContain('attachment');
       expect(response.text).toContain('ID,Title,Status');
       expect(response.text).toContain('Test Idea');
+    });
+
+    test('neutralises a formula-looking title in the CSV export', async () => {
+      const { agent } = await loginAsUser(app);
+
+      const mockIdeas = [
+        {
+          id: 'idea1',
+          title: '=cmd|/c calc',
+          status: 'DONE',
+          effort: 'ONE_TO_THREE_DAYS',
+          tags: [],
+          submitter: { name: 'Alice' },
+          approver: null,
+          assignee: null,
+          submittedAt: new Date('2024-01-01'),
+          approvedAt: null,
+          startedAt: null,
+          completedAt: null,
+        },
+      ];
+
+      mockPrismaFunctions.idea.findMany.mockResolvedValue(mockIdeas);
+      mockPrismaFunctions.idea.count.mockResolvedValue(1);
+
+      const response = await agent.get('/api/reports/filtered?format=csv');
+
+      expect(response.status).toBe(200);
+      // CSV injection guard: the leading `=` is defused with a single quote, so
+      // a spreadsheet opens the cell as text instead of executing it.
+      expect(response.text).toContain(`"'=cmd|/c calc"`);
+      expect(response.text).not.toContain(',"=cmd');
     });
 
     test('should calculate duration in CSV export', async () => {
