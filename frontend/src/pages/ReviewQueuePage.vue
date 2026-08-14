@@ -171,7 +171,7 @@ async function loadIdeas() {
     if (departmentFilter.value) {
       filters.departmentId = departmentFilter.value;
     }
-    ideas.value = await ideasApi.getAll(filters);
+    ideas.value = (await ideasApi.getAll(filters)).data;
   } catch (error) {
     console.error('Error loading ideas:', error);
   } finally {

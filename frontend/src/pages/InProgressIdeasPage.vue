@@ -22,6 +22,9 @@
     </v-row>
 
     <div v-else>
+      <v-alert v-if="truncated" type="info" variant="tonal" density="compact" class="mb-4">
+        {{ $t('ideas.showingFirst', { shown: ideas.length, total }) }}
+      </v-alert>
       <v-row v-if="ideas.length">
         <v-col v-for="idea in ideas" :key="idea.id" cols="12" md="6" lg="4">
           <IdeaCard :idea="idea" @view="viewIdea">
@@ -78,7 +81,7 @@ import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '../stores/auth';
 import { useDepartmentsStore } from '../stores/departments';
 import { ideasApi } from '../api/ideas';
-import { IdeaStatus } from '../types';
+import { IdeaStatus, MAX_PAGE_LIMIT } from '../types';
 import type { Idea } from '../types';
 import IdeaCard from '../components/IdeaCard.vue';
 
@@ -88,6 +91,7 @@ const authStore = useAuthStore();
 const departmentsStore = useDepartmentsStore();
 const loading = ref(true);
 const ideas = ref<Idea[]>([]);
+const total = ref(0);
 const departmentFilter = ref<string | null>(null);
 const completeDialog = ref(false);
 const completeNote = ref('');
@@ -102,17 +106,20 @@ const departmentOptions = computed(() => [
   ...departmentsStore.sortedByOrder.map((d) => ({ title: d.name, value: d.id })),
 ]);
 
+// The server caps a page at MAX_PAGE_LIMIT, so tell the user when there is more.
+const truncated = computed(() => total.value > ideas.value.length);
+
 async function loadIdeas() {
   loading.value = true;
   try {
-    const filters: any = { status: IdeaStatus.IN_PROGRESS };
+    // Ideas are readable org-wide by every role, so no submitter scoping here.
+    const filters: any = { status: IdeaStatus.IN_PROGRESS, limit: MAX_PAGE_LIMIT };
     if (departmentFilter.value) {
       filters.departmentId = departmentFilter.value;
     }
-    if (!authStore.isPowerUser && !authStore.isAdmin && authStore.user?.id) {
-      filters.submitterId = authStore.user.id;
-    }
-    ideas.value = await ideasApi.getAll(filters);
+    const { data, pagination } = await ideasApi.getAll(filters);
+    ideas.value = data;
+    total.value = pagination.total;
   } catch (error) {
     console.error('Error loading ideas:', error);
   } finally {

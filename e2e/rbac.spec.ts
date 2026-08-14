@@ -20,6 +20,24 @@ test.describe('as a regular USER', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Dashboard' })).toBeVisible();
     await expect(navItem(page, 'Users')).toHaveCount(0);
   });
+
+  // Idea reads are org-wide for every role: a basic USER sees other people's
+  // ideas, not just their own. The storage state is John Doe; the seeded
+  // "Automate Weekly Status Reports" was submitted by Bob Johnson.
+  test('sees another user\'s approved idea and can open its detail', async ({ page }) => {
+    await page.goto('/approved');
+    await expect(page.getByRole('heading', { level: 1, name: 'Approved Ideas' })).toBeVisible();
+
+    const otherIdea = page.locator('.v-card', { hasText: 'Automate Weekly Status Reports' });
+    await expect(otherIdea).toBeVisible();
+    await expect(otherIdea).toContainText('Bob Johnson');
+
+    await otherIdea.getByRole('button', { name: 'View Details' }).click();
+    await expect(page).toHaveURL(/\/ideas\/[a-f0-9]+$/);
+    await expect(
+      page.locator('.v-card-title', { hasText: 'Automate Weekly Status Reports' })
+    ).toBeVisible();
+  });
 });
 
 test.describe('as an ADMIN', () => {

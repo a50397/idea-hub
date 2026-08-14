@@ -63,7 +63,9 @@
       <v-col cols="12">
         <v-card>
           <v-card-title class="d-flex align-center">
-            <span class="flex-grow-1">{{ $t('reports.filteredResults') }} ({{ ideas.length }})</span>
+            <!-- The full match count, not the page size: `ideas.length` would
+                 contradict the truncation notice below (100 vs "of 250"). -->
+            <span class="flex-grow-1">{{ $t('reports.filteredResults') }} ({{ total }})</span>
             <v-btn
               @click="exportCSV"
               color="primary"
@@ -74,6 +76,9 @@
             </v-btn>
           </v-card-title>
           <v-card-text>
+            <v-alert v-if="truncated" type="info" variant="tonal" density="compact" class="mb-4">
+              {{ $t('ideas.showingFirst', { shown: ideas.length, total }) }}
+            </v-alert>
             <v-data-table
               :headers="headers"
               :items="ideas"
@@ -159,7 +164,7 @@ import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { reportsApi } from '../api/reports';
 import { ideasApi } from '../api/ideas';
-import { IdeaStatus, Effort, statusColors } from '../types';
+import { IdeaStatus, Effort, statusColors, MAX_PAGE_LIMIT } from '../types';
 import type { Idea } from '../types';
 import { useAuthStore } from '../stores/auth';
 import { useDepartmentsStore } from '../stores/departments';
@@ -171,6 +176,7 @@ const departmentsStore = useDepartmentsStore();
 const loading = ref(false);
 const exporting = ref(false);
 const ideas = ref<Idea[]>([]);
+const total = ref(0);
 const snackbar = ref(false);
 const snackbarText = ref('');
 const snackbarColor = ref('success');
@@ -228,20 +234,28 @@ const headers = computed(() => {
   return cols;
 });
 
+// The server caps a page at MAX_PAGE_LIMIT, so tell the user when there is more.
+const truncated = computed(() => total.value > ideas.value.length);
+
+// Reports are org-wide for every role: no submitter scoping is applied here.
+function buildFilterParams() {
+  const filterParams: any = {};
+  if (filters.status) filterParams.status = filters.status;
+  if (filters.startDate) filterParams.startDate = filters.startDate;
+  if (filters.endDate) filterParams.endDate = filters.endDate;
+  if (filters.departmentId) filterParams.departmentId = filters.departmentId;
+  return filterParams;
+}
+
 async function applyFilters() {
   loading.value = true;
   try {
-    const filterParams: any = {};
-    if (filters.status) filterParams.status = filters.status;
-    if (filters.startDate) filterParams.startDate = filters.startDate;
-    if (filters.endDate) filterParams.endDate = filters.endDate;
-    if (filters.departmentId) filterParams.departmentId = filters.departmentId;
-
-    if (!authStore.isPowerUser && !authStore.isAdmin && authStore.user?.id) {
-      filterParams.submitterId = authStore.user.id;
-    }
-
-    ideas.value = await reportsApi.getFiltered(filterParams);
+    const { data, pagination } = await reportsApi.getFiltered({
+      ...buildFilterParams(),
+      limit: MAX_PAGE_LIMIT,
+    });
+    ideas.value = data;
+    total.value = pagination.total;
   } catch (error) {
     console.error('Error applying filters:', error);
     snackbarText.value = t('reports.filterFailed');
@@ -263,17 +277,7 @@ function resetFilters() {
 async function exportCSV() {
   exporting.value = true;
   try {
-    const filterParams: any = {};
-    if (filters.status) filterParams.status = filters.status;
-    if (filters.startDate) filterParams.startDate = filters.startDate;
-    if (filters.endDate) filterParams.endDate = filters.endDate;
-    if (filters.departmentId) filterParams.departmentId = filters.departmentId;
-
-    if (!authStore.isPowerUser && !authStore.isAdmin && authStore.user?.id) {
-      filterParams.submitterId = authStore.user.id;
-    }
-
-    const blob = await reportsApi.exportCSV(filterParams);
+    const blob = await reportsApi.exportCSV(buildFilterParams());
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -281,8 +285,15 @@ async function exportCSV() {
     link.click();
     window.URL.revokeObjectURL(url);
 
-    snackbarText.value = t('reports.exportSuccess');
-    snackbarColor.value = 'success';
+    // The export is one server page (MAX_PAGE_LIMIT rows). `total` comes from
+    // the table fetch made with the same filters, so it is the true match count.
+    // A capped export is not a plain success: flag it 'info' (same convention as
+    // the reject action on the review queue), not 'success'.
+    const capped = total.value > MAX_PAGE_LIMIT;
+    snackbarText.value = capped
+      ? t('reports.exportTruncated', { limit: MAX_PAGE_LIMIT, total: total.value })
+      : t('reports.exportSuccess');
+    snackbarColor.value = capped ? 'info' : 'success';
     snackbar.value = true;
   } catch (error) {
     console.error('Error exporting CSV:', error);

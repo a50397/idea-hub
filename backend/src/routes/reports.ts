@@ -17,17 +17,16 @@ function sanitizeCsvField(value: string): string {
 }
 
 // Get dashboard summary statistics
-router.get('/summary', requireAuth, async (req, res) => {
+router.get('/summary', requireAuth, async (_req, res) => {
   try {
-    // Standard users can only see their own ideas
-    const userFilter = req.session.role === Role.USER ? { submitterId: req.session.userId } : {};
-
+    // Idea visibility is org-wide for every authenticated role: the counts are
+    // not scoped to the caller (same read-only visibility as GET /api/ideas).
     const [submitted, approved, inProgress, done, rejected, allIdeas] = await Promise.all([
-      prisma.idea.count({ where: { status: IdeaStatus.SUBMITTED, ...userFilter } }),
-      prisma.idea.count({ where: { status: IdeaStatus.APPROVED, ...userFilter } }),
-      prisma.idea.count({ where: { status: IdeaStatus.IN_PROGRESS, ...userFilter } }),
-      prisma.idea.count({ where: { status: IdeaStatus.DONE, ...userFilter } }),
-      prisma.idea.count({ where: { status: IdeaStatus.REJECTED, ...userFilter } }),
+      prisma.idea.count({ where: { status: IdeaStatus.SUBMITTED } }),
+      prisma.idea.count({ where: { status: IdeaStatus.APPROVED } }),
+      prisma.idea.count({ where: { status: IdeaStatus.IN_PROGRESS } }),
+      prisma.idea.count({ where: { status: IdeaStatus.DONE } }),
+      prisma.idea.count({ where: { status: IdeaStatus.REJECTED } }),
       prisma.idea.findMany({
         where: {
           OR: [
@@ -93,18 +92,15 @@ router.get('/summary', requireAuth, async (req, res) => {
 
 // Get idea counts grouped by department (zero-filled: every department is listed
 // even with a count of 0, sorted by department order).
-router.get('/by-department', requireAuth, async (req, res) => {
+router.get('/by-department', requireAuth, async (_req, res) => {
   try {
-    // Standard users can only see their own ideas (same scoping as /summary).
-    const userFilter = req.session.role === Role.USER ? { submitterId: req.session.userId } : {};
-
+    // Org-wide for every authenticated role (same visibility as /summary).
     const [departments, grouped] = await Promise.all([
       prisma.department.findMany({
         orderBy: [{ order: 'asc' }, { name: 'asc' }],
       }),
       prisma.idea.groupBy({
         by: ['departmentId'],
-        where: { ...userFilter },
         _count: { id: true },
       }),
     ]);
@@ -130,17 +126,15 @@ router.get('/by-department', requireAuth, async (req, res) => {
 });
 
 // Get monthly trend data
-router.get('/monthly-trend', requireAuth, async (req, res) => {
+router.get('/monthly-trend', requireAuth, async (_req, res) => {
   try {
-    const userFilter = req.session.role === Role.USER ? { submitterId: req.session.userId } : {};
-
+    // Org-wide for every authenticated role (same visibility as /summary).
     const ideas = await prisma.idea.findMany({
       where: {
         status: IdeaStatus.DONE,
         completedAt: {
           not: null,
         },
-        ...userFilter,
       },
       select: {
         completedAt: true,
@@ -239,10 +233,9 @@ router.get('/filtered', requireAuth, async (req, res) => {
     if (data.status) {
       where.status = data.status;
     }
-    // Standard users can only see their own ideas - enforce server-side
-    if (req.session.role === Role.USER) {
-      where.submitterId = req.session.userId;
-    } else if (data.submitterId) {
+    // Idea reads are org-wide for every role, so a client-sent submitterId is
+    // an ordinary filter here (no server-side self-scoping for USER anymore).
+    if (data.submitterId) {
       where.submitterId = data.submitterId;
     }
     if (data.assigneeId) {
@@ -257,12 +250,17 @@ router.get('/filtered', requireAuth, async (req, res) => {
       };
     }
     if (data.startDate || data.endDate) {
-      const submittedAt: { gte?: Date; lte?: Date } = {};
+      const submittedAt: { gte?: Date; lt?: Date } = {};
       if (data.startDate) {
         submittedAt.gte = new Date(data.startDate as string);
       }
       if (data.endDate) {
-        submittedAt.lte = new Date(data.endDate as string);
+        // `endDate` names a whole day, not the instant of its UTC midnight.
+        // `lte: <endDate>` silently dropped everything submitted ON that day, so
+        // compare against the NEXT UTC midnight with `lt` to keep the end day in.
+        const end = new Date(data.endDate as string);
+        end.setUTCDate(end.getUTCDate() + 1);
+        submittedAt.lt = end;
       }
       where.submittedAt = submittedAt;
     }
