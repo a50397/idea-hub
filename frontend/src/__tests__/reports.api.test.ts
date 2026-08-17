@@ -73,6 +73,14 @@ describe('reportsApi.getFiltered', () => {
     expect(q.get('page')).toBe('2');
   });
 
+  it('serializes page 1 explicitly — 1-based paging must survive truthiness checks', async () => {
+    await reportsApi.getFiltered({ page: 1, limit: MAX_PAGE_LIMIT });
+
+    const q = requestedQuery();
+    expect(q.get('page')).toBe('1');
+    expect(q.get('limit')).toBe(String(MAX_PAGE_LIMIT));
+  });
+
   it('omits the keys the caller left out instead of sending empty values', async () => {
     await reportsApi.getFiltered({ status: IdeaStatus.SUBMITTED });
 
