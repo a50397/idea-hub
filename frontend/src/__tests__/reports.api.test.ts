@@ -55,6 +55,7 @@ describe('reportsApi.getFiltered', () => {
       departmentId: 'd2',
       tags: ['automation', 'productivity'],
       limit: MAX_PAGE_LIMIT,
+      page: 2,
     });
 
     const q = requestedQuery();
@@ -67,6 +68,9 @@ describe('reportsApi.getFiltered', () => {
     expect(q.get('departmentId')).toBe('d2');
     expect(q.getAll('tags')).toEqual(['automation', 'productivity']);
     expect(q.get('limit')).toBe(String(MAX_PAGE_LIMIT));
+    // The pager depends on this reaching the server; dropping it would pin
+    // the report table to page 1 while the pager pretends to navigate.
+    expect(q.get('page')).toBe('2');
   });
 
   it('omits the keys the caller left out instead of sending empty values', async () => {
@@ -77,6 +81,7 @@ describe('reportsApi.getFiltered', () => {
     expect(q.has('startDate')).toBe(false);
     expect(q.has('endDate')).toBe(false);
     expect(q.has('limit')).toBe(false);
+    expect(q.has('page')).toBe(false);
   });
 });
 

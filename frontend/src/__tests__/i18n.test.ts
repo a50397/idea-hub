@@ -159,19 +159,20 @@ describe('translation coverage for components', () => {
       'review.title', 'review.subtitle', 'review.approve', 'review.reject',
       'review.approveTitle', 'review.rejectTitle', 'review.approveConfirm',
       'review.approvalNotes', 'review.rejectionReason', 'review.noPending',
+      'ideas.loadFailed',
     ],
     ApprovedIdeasPage: [
       'approved.title', 'approved.subtitle', 'approved.claimStart', 'approved.noIdeas',
       'approved.claimTitle', 'approved.claimConfirm', 'approved.claimAction',
-      'ideas.showingFirst',
+      'ideas.loadFailed',
     ],
     InProgressIdeasPage: [
       'inProgress.title', 'inProgress.markComplete', 'inProgress.completeTitle',
       'inProgress.completeConfirm', 'inProgress.completionNotes', 'inProgress.noIdeas',
-      'ideas.showingFirst',
+      'ideas.loadFailed',
     ],
     CompletedIdeasPage: [
-      'completed.title', 'completed.noIdeas', 'ideas.showingFirst',
+      'completed.title', 'completed.noIdeas', 'ideas.loadFailed',
     ],
     IdeaDetailPage: [
       'ideas.description', 'ideas.benefits', 'ideas.details',
@@ -182,7 +183,7 @@ describe('translation coverage for components', () => {
       'reports.title', 'reports.filters', 'reports.status', 'reports.startDate',
       'reports.endDate', 'reports.filteredResults', 'reports.exportCSV',
       'reports.headerTitle', 'reports.headerStatus', 'reports.headerEffort',
-      'reports.exportTruncated', 'ideas.showingFirst',
+      'reports.exportTruncated',
     ],
     UsersPage: [
       'users.title', 'users.usersLabel', 'users.createUser', 'users.editUser',
@@ -198,6 +199,7 @@ describe('translation coverage for components', () => {
     MyIdeasPage: [
       'myIdeas.title', 'myIdeas.subtitle', 'myIdeas.filterByStatus', 'myIdeas.noIdeas',
       'status.submitted', 'status.approved', 'status.inProgress', 'status.done', 'status.rejected',
+      'ideas.loadFailed',
     ],
     ChangePasswordPage: [
       'changePassword.title', 'changePassword.subtitle',

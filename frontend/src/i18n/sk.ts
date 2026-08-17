@@ -76,7 +76,7 @@ export default {
     department: 'Oddelenie',
     filterByDepartment: 'Filtrovať podľa oddelenia',
     allDepartments: 'Všetky oddelenia',
-    showingFirst: 'Zobrazuje sa prvých {shown} z celkovo {total} nápadov.',
+    loadFailed: 'Nápady sa nepodarilo načítať.',
     tags: 'Štítky (voliteľné)',
     tagsHint: 'Stlačte Enter pre pridanie štítku',
     submitIdea: 'Odoslať nápad',

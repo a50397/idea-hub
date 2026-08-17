@@ -10,6 +10,7 @@ export const ideasApi = {
     assigneeId?: string;
     departmentId?: string;
     tags?: string[];
+    page?: number;
     limit?: number;
   }): Promise<Paginated<Idea>> => {
     const params = new URLSearchParams();
@@ -18,6 +19,7 @@ export const ideasApi = {
     if (filters?.assigneeId) params.append('assigneeId', filters.assigneeId);
     if (filters?.departmentId) params.append('departmentId', filters.departmentId);
     if (filters?.tags) filters.tags.forEach((tag) => params.append('tags', tag));
+    if (filters?.page) params.append('page', String(filters.page));
     if (filters?.limit) params.append('limit', String(filters.limit));
 
     const response = await client.get(`/ideas?${params.toString()}`);

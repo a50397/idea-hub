@@ -12,7 +12,7 @@
           variant="outlined"
           density="compact"
           clearable
-          @update:model-value="loadIdeas"
+          @update:model-value="onFilterChange"
         ></v-select>
       </v-col>
       <v-col cols="12" sm="4" md="3">
@@ -22,7 +22,7 @@
           :label="$t('ideas.filterByDepartment')"
           variant="outlined"
           density="compact"
-          @update:model-value="loadIdeas"
+          @update:model-value="onFilterChange"
         ></v-select>
       </v-col>
     </v-row>
@@ -43,6 +43,21 @@
         {{ $t('myIdeas.noIdeas') }}
       </v-alert>
     </div>
+
+    <!-- Outside the loading branch: unmounting it every fetch would drop
+         keyboard focus; disabling instead also blocks mid-flight page clicks. -->
+    <v-pagination
+      v-if="totalPages > 1"
+      v-model="page"
+      :length="totalPages"
+      :disabled="loading"
+      class="mt-4"
+      @update:model-value="onPageChange"
+    ></v-pagination>
+
+    <v-snackbar v-model="snackbar" :color="snackbarColor">
+      {{ snackbarText }}
+    </v-snackbar>
   </v-container>
 </template>
 
@@ -53,9 +68,10 @@ import { useI18n } from 'vue-i18n';
 import { ideasApi } from '../api/ideas';
 import { useAuthStore } from '../stores/auth';
 import { useDepartmentsStore } from '../stores/departments';
-import { IdeaStatus } from '../types';
+import { IdeaStatus, MAX_PAGE_LIMIT } from '../types';
 import type { Idea } from '../types';
 import IdeaCard from '../components/IdeaCard.vue';
+import { clampedPage } from '../utils/pagination';
 
 const { t } = useI18n();
 const router = useRouter();
@@ -63,8 +79,14 @@ const authStore = useAuthStore();
 const departmentsStore = useDepartmentsStore();
 const loading = ref(true);
 const ideas = ref<Idea[]>([]);
+const page = ref(1);
+const lastLoadedPage = ref(1);
+const totalPages = ref(0);
 const statusFilter = ref<IdeaStatus | null>(null);
 const departmentFilter = ref<string | null>(null);
+const snackbar = ref(false);
+const snackbarText = ref('');
+const snackbarColor = ref('error');
 
 const statusOptions = computed(() => [
   { title: t('status.submitted'), value: IdeaStatus.SUBMITTED },
@@ -82,7 +104,7 @@ const departmentOptions = computed(() => [
 async function loadIdeas() {
   loading.value = true;
   try {
-    const filters: any = {};
+    const filters: any = { limit: MAX_PAGE_LIMIT, page: page.value };
     if (statusFilter.value) {
       filters.status = statusFilter.value;
     }
@@ -92,12 +114,38 @@ async function loadIdeas() {
     if (authStore.user?.id) {
       filters.submitterId = authStore.user.id;
     }
-    ideas.value = (await ideasApi.getAll(filters)).data;
+    const { data, pagination } = await ideasApi.getAll(filters);
+    // Landing past the last page (its last item was filtered away) would show
+    // an empty view — snap back into the real range.
+    const snap = clampedPage(data.length, page.value, pagination.totalPages);
+    if (snap !== null) {
+      page.value = snap;
+      return await loadIdeas();
+    }
+    ideas.value = data;
+    totalPages.value = pagination.totalPages;
+    lastLoadedPage.value = page.value;
   } catch (error) {
     console.error('Error loading ideas:', error);
+    // The pager's v-model already advanced; the rows on screen did not. Revert
+    // so the highlighted page stays truthful and re-clicking it works again.
+    page.value = lastLoadedPage.value;
+    snackbarText.value = t('ideas.loadFailed');
+    snackbarColor.value = 'error';
+    snackbar.value = true;
   } finally {
     loading.value = false;
   }
+}
+
+function onFilterChange() {
+  page.value = 1;
+  loadIdeas();
+}
+
+function onPageChange() {
+  loadIdeas();
+  window.scrollTo({ top: 0 });
 }
 
 function viewIdea(id: string) {

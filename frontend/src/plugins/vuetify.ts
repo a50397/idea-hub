@@ -35,5 +35,11 @@ export default createVuetify({
     VCard: {
       elevation: 1,
     },
+    // Server-paged lists: brand-primary active page; fixed visible-button count
+    // so the pager width doesn't depend on ResizeObserver timing at first paint.
+    VPagination: {
+      color: 'primary',
+      totalVisible: 7,
+    },
   },
 });

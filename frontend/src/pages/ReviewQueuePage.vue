@@ -11,7 +11,7 @@
           :label="$t('ideas.filterByDepartment')"
           variant="outlined"
           density="compact"
-          @update:model-value="loadIdeas"
+          @update:model-value="onFilterChange"
         ></v-select>
       </v-col>
     </v-row>
@@ -79,6 +79,17 @@
       </v-alert>
     </div>
 
+    <!-- Outside the loading branch: unmounting it every fetch would drop
+         keyboard focus; disabling instead also blocks mid-flight page clicks. -->
+    <v-pagination
+      v-if="totalPages > 1"
+      v-model="page"
+      :length="totalPages"
+      :disabled="loading"
+      class="mt-4"
+      @update:model-value="onPageChange"
+    ></v-pagination>
+
     <v-dialog v-model="approveDialog" max-width="500">
       <v-card>
         <v-card-title>{{ $t('review.approveTitle') }}</v-card-title>
@@ -135,14 +146,18 @@ import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { ideasApi } from '../api/ideas';
 import { useDepartmentsStore } from '../stores/departments';
-import { IdeaStatus, Effort } from '../types';
+import { IdeaStatus, Effort, MAX_PAGE_LIMIT } from '../types';
 import type { Idea } from '../types';
+import { clampedPage } from '../utils/pagination';
 
 const { t, locale } = useI18n();
 const router = useRouter();
 const departmentsStore = useDepartmentsStore();
 const loading = ref(true);
 const ideas = ref<Idea[]>([]);
+const page = ref(1);
+const lastLoadedPage = ref(1);
+const totalPages = ref(0);
 const departmentFilter = ref<string | null>(null);
 
 const departmentOptions = computed(() => [
@@ -167,16 +182,42 @@ const effortKeyMap: Record<Effort, string> = {
 async function loadIdeas() {
   loading.value = true;
   try {
-    const filters: any = { status: IdeaStatus.SUBMITTED };
+    const filters: any = { status: IdeaStatus.SUBMITTED, limit: MAX_PAGE_LIMIT, page: page.value };
     if (departmentFilter.value) {
       filters.departmentId = departmentFilter.value;
     }
-    ideas.value = (await ideasApi.getAll(filters)).data;
+    const { data, pagination } = await ideasApi.getAll(filters);
+    // Landing past the last page (its last item was just reviewed or filtered
+    // away) would show an empty view — snap back into the real range.
+    const snap = clampedPage(data.length, page.value, pagination.totalPages);
+    if (snap !== null) {
+      page.value = snap;
+      return await loadIdeas();
+    }
+    ideas.value = data;
+    totalPages.value = pagination.totalPages;
+    lastLoadedPage.value = page.value;
   } catch (error) {
     console.error('Error loading ideas:', error);
+    // The pager's v-model already advanced; the rows on screen did not. Revert
+    // so the highlighted page stays truthful and re-clicking it works again.
+    page.value = lastLoadedPage.value;
+    snackbarText.value = t('ideas.loadFailed');
+    snackbarColor.value = 'error';
+    snackbar.value = true;
   } finally {
     loading.value = false;
   }
+}
+
+function onFilterChange() {
+  page.value = 1;
+  loadIdeas();
+}
+
+function onPageChange() {
+  loadIdeas();
+  window.scrollTo({ top: 0 });
 }
 
 function viewIdea(id: string) {

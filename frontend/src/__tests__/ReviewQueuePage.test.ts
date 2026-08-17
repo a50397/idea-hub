@@ -3,7 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils';
 import { setActivePinia, createPinia } from 'pinia';
 import ReviewQueuePage from '../pages/ReviewQueuePage.vue';
 import { useAuthStore } from '../stores/auth';
-import { IdeaStatus, Effort, Role } from '../types';
+import { IdeaStatus, Effort, Role, MAX_PAGE_LIMIT } from '../types';
 import type { Idea } from '../types';
 import { createTestI18n, createTestVuetify, paginated } from './helpers';
 
@@ -91,7 +91,11 @@ describe('ReviewQueuePage', () => {
     await flushPromises();
 
     expect(mockedIdeas.getAll).toHaveBeenCalledTimes(1);
-    expect(mockedIdeas.getAll).toHaveBeenCalledWith({ status: IdeaStatus.SUBMITTED });
+    expect(mockedIdeas.getAll).toHaveBeenCalledWith({
+      status: IdeaStatus.SUBMITTED,
+      limit: MAX_PAGE_LIMIT,
+      page: 1,
+    });
     expect(mockedIdeas.getAll.mock.calls[0][0]).not.toHaveProperty('submitterId');
   });
 
@@ -131,8 +135,55 @@ describe('ReviewQueuePage', () => {
 
     expect(mockedIdeas.getAll).toHaveBeenCalledWith({
       status: IdeaStatus.SUBMITTED,
+      limit: MAX_PAGE_LIMIT,
+      page: 1,
       departmentId: 'd2',
     });
     expect(mockedIdeas.getAll.mock.calls[0][0]).not.toHaveProperty('submitterId');
+  });
+
+  it('pages the queue when it spans multiple server pages', async () => {
+    mockedIdeas.getAll.mockResolvedValue(paginated([makeIdea()], MAX_PAGE_LIMIT + 1));
+    const wrapper = mountPage();
+    await flushPromises();
+
+    const pager = wrapper.findComponent({ name: 'VPagination' });
+    expect(pager.exists()).toBe(true);
+    expect(pager.props('length')).toBe(2);
+
+    mockedIdeas.getAll.mockClear();
+    pager.vm.$emit('update:modelValue', 2);
+    await flushPromises();
+    expect(mockedIdeas.getAll).toHaveBeenCalledWith({
+      status: IdeaStatus.SUBMITTED,
+      limit: MAX_PAGE_LIMIT,
+      page: 2,
+    });
+  });
+
+  it('renders no pager when the queue fits on one page', async () => {
+    mockedIdeas.getAll.mockResolvedValue(paginated([makeIdea()], MAX_PAGE_LIMIT));
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.findComponent({ name: 'VPagination' }).exists()).toBe(false);
+  });
+
+  it('resets to page 1 when the department filter changes after paging', async () => {
+    mockedIdeas.getAll.mockResolvedValue(paginated([makeIdea()], MAX_PAGE_LIMIT + 1));
+    const wrapper = mountPage();
+    await flushPromises();
+    wrapper.findComponent({ name: 'VPagination' }).vm.$emit('update:modelValue', 2);
+    await flushPromises();
+    mockedIdeas.getAll.mockClear();
+
+    wrapper.findComponent({ name: 'VSelect' }).vm.$emit('update:modelValue', 'd2');
+    await flushPromises();
+    expect(mockedIdeas.getAll).toHaveBeenCalledWith({
+      status: IdeaStatus.SUBMITTED,
+      limit: MAX_PAGE_LIMIT,
+      page: 1,
+      departmentId: 'd2',
+    });
   });
 });

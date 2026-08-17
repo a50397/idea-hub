@@ -58,6 +58,7 @@ export default defineConfig(({ mode }) => ({
       'vuetify/components/VList',
       'vuetify/components/VMain',
       'vuetify/components/VNavigationDrawer',
+      'vuetify/components/VPagination',
       'vuetify/components/VProgressCircular',
       'vuetify/components/VSelect',
       'vuetify/components/VSnackbar',
