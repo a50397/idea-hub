@@ -36,8 +36,8 @@ const PROBES = [
   'departments.webexRoomsLoading',
   'departments.tooManyWebexRoomIds',
   'departments.webexRoomIdTooLong',
-  // Org-wide idea visibility: page-truncation notice + claim confirm dialog.
-  'ideas.showingFirst',
+  // Org-wide idea visibility: claim confirm dialog + capped CSV export.
+  'ideas.loadFailed',
   'approved.claimTitle',
   'approved.claimConfirm',
   'approved.claimAction',

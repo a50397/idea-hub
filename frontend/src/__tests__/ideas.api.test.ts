@@ -53,6 +53,7 @@ describe('ideasApi.getAll', () => {
       departmentId: 'd2',
       tags: ['automation', 'productivity'],
       limit: MAX_PAGE_LIMIT,
+      page: 2,
     });
 
     const q = requestedQuery();
@@ -65,6 +66,17 @@ describe('ideasApi.getAll', () => {
     // The pages that read org-wide lists ask for the maximum page explicitly;
     // dropping this would silently cut every such list to the default 20.
     expect(q.get('limit')).toBe(String(MAX_PAGE_LIMIT));
+    // The pager depends on this reaching the server; dropping it would pin
+    // every list to page 1 while the pager pretends to navigate.
+    expect(q.get('page')).toBe('2');
+  });
+
+  it('serializes page 1 explicitly — 1-based paging must survive truthiness checks', async () => {
+    await ideasApi.getAll({ page: 1, limit: MAX_PAGE_LIMIT });
+
+    const q = requestedQuery();
+    expect(q.get('page')).toBe('1');
+    expect(q.get('limit')).toBe(String(MAX_PAGE_LIMIT));
   });
 
   it('omits the keys the caller left out instead of sending empty values', async () => {
@@ -75,5 +87,6 @@ describe('ideasApi.getAll', () => {
     expect(q.has('submitterId')).toBe(false);
     expect(q.has('departmentId')).toBe(false);
     expect(q.has('limit')).toBe(false);
+    expect(q.has('page')).toBe(false);
   });
 });

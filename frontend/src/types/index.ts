@@ -192,8 +192,8 @@ export interface ReviewIdeaInput {
 
 // Envelope returned by the paginated list endpoints (GET /api/ideas,
 // GET /api/reports/filtered). `total` is the full match count, independent of
-// the `limit` that capped `data`, so callers can tell the user their view is
-// truncated.
+// the `limit` that capped `data`; list views page through it via `totalPages`,
+// and the CSV export uses it to flag a capped download.
 // Hard cap the server puts on `limit` for both paginated endpoints
 // (backend/src/utils/validation.ts, paginationSchema). Requesting more is a
 // 400, so this is also the largest page the UI can ever show or export.

@@ -76,7 +76,7 @@ export default {
     department: 'Department',
     filterByDepartment: 'Filter by department',
     allDepartments: 'All departments',
-    showingFirst: 'Showing the first {shown} of {total} ideas.',
+    loadFailed: 'Failed to load ideas.',
     tags: 'Tags (optional)',
     tagsHint: 'Press Enter to add a tag',
     submitIdea: 'Submit Idea',

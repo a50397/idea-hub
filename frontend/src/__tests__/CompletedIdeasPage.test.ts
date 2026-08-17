@@ -5,7 +5,7 @@ import CompletedIdeasPage from '../pages/CompletedIdeasPage.vue';
 import { useAuthStore } from '../stores/auth';
 import { IdeaStatus, Effort, Role, MAX_PAGE_LIMIT } from '../types';
 import type { Idea } from '../types';
-import { createTestI18n, createTestVuetify, paginated as envelope } from './helpers';
+import { createTestI18n, createTestVuetify, paginated } from './helpers';
 
 const { mockPush } = vi.hoisted(() => ({ mockPush: vi.fn() }));
 
@@ -66,9 +66,6 @@ function makeIdea(overrides: Partial<Idea> = {}): Idea {
   };
 }
 
-// This page always asks for the maximum page, so mirror that in the envelope.
-const paginated = (data: Idea[], total = data.length) => envelope(data, total, MAX_PAGE_LIMIT);
-
 // A full server page of distinct ideas, for the truncation boundary.
 const fullPage = () =>
   Array.from({ length: MAX_PAGE_LIMIT }, (_, i) => makeIdea({ id: `idea-${i}`, title: `Idea ${i}` }));
@@ -100,6 +97,7 @@ describe('CompletedIdeasPage', () => {
     expect(mockedIdeas.getAll).toHaveBeenCalledWith({
       status: IdeaStatus.DONE,
       limit: MAX_PAGE_LIMIT,
+      page: 1,
     });
     expect(mockedIdeas.getAll.mock.calls[0][0]).not.toHaveProperty('submitterId');
   });
@@ -115,6 +113,7 @@ describe('CompletedIdeasPage', () => {
     expect(mockedIdeas.getAll).toHaveBeenCalledWith({
       status: IdeaStatus.DONE,
       limit: MAX_PAGE_LIMIT,
+      page: 1,
       departmentId: 'd2',
     });
     expect(mockedIdeas.getAll.mock.calls[0][0]).not.toHaveProperty('submitterId');
@@ -131,39 +130,66 @@ describe('CompletedIdeasPage', () => {
     expect(wrapper.text()).toContain('Idea from Other Person');
   });
 
-  it('shows the truncation notice when the server reports more matches than rows', async () => {
+  it('renders the pager when the matches span multiple pages', async () => {
     mockedIdeas.getAll.mockResolvedValue(paginated([makeIdea()], 250));
     const wrapper = mountPage();
     await flushPromises();
 
-    expect(wrapper.text()).toContain('Showing the first 1 of 250 ideas.');
+    const pager = wrapper.findComponent({ name: 'VPagination' });
+    expect(pager.exists()).toBe(true);
+    expect(pager.props('length')).toBe(3);
   });
 
-  it('shows no truncation notice when every match is on the page', async () => {
+  it('renders no pager when every match fits on one page', async () => {
     mockedIdeas.getAll.mockResolvedValue(paginated([makeIdea()]));
     const wrapper = mountPage();
     await flushPromises();
 
-    expect(wrapper.text()).not.toContain('Showing the first');
+    expect(wrapper.findComponent({ name: 'VPagination' }).exists()).toBe(false);
   });
 
-  // Boundary: the notice must fire only when the server actually withheld rows,
+  // Boundary: the pager must appear only when the server actually withheld rows,
   // i.e. at total = MAX_PAGE_LIMIT + 1, never at exactly a full page.
-  it('shows NO truncation notice at exactly a full page (total = rows = MAX_PAGE_LIMIT)', async () => {
+  it('renders no pager at exactly a full page (total = rows = MAX_PAGE_LIMIT)', async () => {
     mockedIdeas.getAll.mockResolvedValue(paginated(fullPage(), MAX_PAGE_LIMIT));
     const wrapper = mountPage();
     await flushPromises();
 
-    expect(wrapper.text()).not.toContain('Showing the first');
+    expect(wrapper.findComponent({ name: 'VPagination' }).exists()).toBe(false);
   });
 
-  it('shows the truncation notice one match past a full page (total = MAX_PAGE_LIMIT + 1)', async () => {
+  it('renders the pager one match past a full page (total = MAX_PAGE_LIMIT + 1)', async () => {
     mockedIdeas.getAll.mockResolvedValue(paginated(fullPage(), MAX_PAGE_LIMIT + 1));
     const wrapper = mountPage();
     await flushPromises();
 
-    expect(wrapper.text()).toContain(
-      `Showing the first ${MAX_PAGE_LIMIT} of ${MAX_PAGE_LIMIT + 1} ideas.`
-    );
+    const pager = wrapper.findComponent({ name: 'VPagination' });
+    expect(pager.exists()).toBe(true);
+    expect(pager.props('length')).toBe(2);
+  });
+
+  it('fetches the selected page and resets to page 1 when a filter changes', async () => {
+    mockedIdeas.getAll.mockResolvedValue(paginated(fullPage(), 250));
+    const wrapper = mountPage();
+    await flushPromises();
+    mockedIdeas.getAll.mockClear();
+
+    wrapper.findComponent({ name: 'VPagination' }).vm.$emit('update:modelValue', 2);
+    await flushPromises();
+    expect(mockedIdeas.getAll).toHaveBeenCalledWith({
+      status: IdeaStatus.DONE,
+      limit: MAX_PAGE_LIMIT,
+      page: 2,
+    });
+
+    mockedIdeas.getAll.mockClear();
+    wrapper.findComponent({ name: 'VSelect' }).vm.$emit('update:modelValue', 'd2');
+    await flushPromises();
+    expect(mockedIdeas.getAll).toHaveBeenCalledWith({
+      status: IdeaStatus.DONE,
+      limit: MAX_PAGE_LIMIT,
+      page: 1,
+      departmentId: 'd2',
+    });
   });
 });

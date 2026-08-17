@@ -63,8 +63,7 @@
       <v-col cols="12">
         <v-card>
           <v-card-title class="d-flex align-center">
-            <!-- The full match count, not the page size: `ideas.length` would
-                 contradict the truncation notice below (100 vs "of 250"). -->
+            <!-- The full match count across all pages, not the page size. -->
             <span class="flex-grow-1">{{ $t('reports.filteredResults') }} ({{ total }})</span>
             <v-btn
               @click="exportCSV"
@@ -76,14 +75,15 @@
             </v-btn>
           </v-card-title>
           <v-card-text>
-            <v-alert v-if="truncated" type="info" variant="tonal" density="compact" class="mb-4">
-              {{ $t('ideas.showingFirst', { shown: ideas.length, total }) }}
-            </v-alert>
+            <!-- One server page per view: the client table never paginates on
+                 its own (footer hidden), the v-pagination below drives fetches. -->
             <v-data-table
               :headers="headers"
               :items="ideas"
               :loading="loading"
               item-value="id"
+              :items-per-page="MAX_PAGE_LIMIT"
+              hide-default-footer
             >
               <template v-slot:item.title="{ item }">
                 <v-btn
@@ -131,6 +131,14 @@
                 </v-btn>
               </template>
             </v-data-table>
+            <v-pagination
+              v-if="totalPages > 1"
+              v-model="page"
+              :length="totalPages"
+              :disabled="loading"
+              class="mt-4"
+              @update:model-value="onPageChange"
+            ></v-pagination>
           </v-card-text>
         </v-card>
       </v-col>
@@ -168,6 +176,7 @@ import { IdeaStatus, Effort, statusColors, MAX_PAGE_LIMIT } from '../types';
 import type { Idea } from '../types';
 import { useAuthStore } from '../stores/auth';
 import { useDepartmentsStore } from '../stores/departments';
+import { clampedPage } from '../utils/pagination';
 
 const { t, locale } = useI18n();
 const router = useRouter();
@@ -177,6 +186,14 @@ const loading = ref(false);
 const exporting = ref(false);
 const ideas = ref<Idea[]>([]);
 const total = ref(0);
+const page = ref(1);
+const lastLoadedPage = ref(1);
+const totalPages = ref(0);
+// Filters take effect only via Apply/Reset. fetchPage and exportCSV read this
+// snapshot, never the live form state, so a pager click or an export cannot
+// silently apply half-edited filters — and the export message's `total` always
+// describes the same filter set the export was produced with.
+const appliedFilters = ref<any>({});
 const snackbar = ref(false);
 const snackbarText = ref('');
 const snackbarColor = ref('success');
@@ -234,9 +251,6 @@ const headers = computed(() => {
   return cols;
 });
 
-// The server caps a page at MAX_PAGE_LIMIT, so tell the user when there is more.
-const truncated = computed(() => total.value > ideas.value.length);
-
 // Reports are org-wide for every role: no submitter scoping is applied here.
 function buildFilterParams() {
   const filterParams: any = {};
@@ -247,23 +261,49 @@ function buildFilterParams() {
   return filterParams;
 }
 
-async function applyFilters() {
+async function fetchPage() {
   loading.value = true;
   try {
     const { data, pagination } = await reportsApi.getFiltered({
-      ...buildFilterParams(),
+      ...appliedFilters.value,
       limit: MAX_PAGE_LIMIT,
+      page: page.value,
     });
+    // Landing past the last page (its last row was deleted or filtered away)
+    // would show an empty table — snap back into the real range.
+    const snap = clampedPage(data.length, page.value, pagination.totalPages);
+    if (snap !== null) {
+      page.value = snap;
+      return await fetchPage();
+    }
     ideas.value = data;
     total.value = pagination.total;
+    totalPages.value = pagination.totalPages;
+    lastLoadedPage.value = page.value;
   } catch (error) {
     console.error('Error applying filters:', error);
+    // The pager's v-model already advanced; the table did not. Revert so the
+    // highlighted page stays truthful and re-clicking it works again.
+    page.value = lastLoadedPage.value;
     snackbarText.value = t('reports.filterFailed');
     snackbarColor.value = 'error';
     snackbar.value = true;
   } finally {
     loading.value = false;
   }
+}
+
+// Applying (or resetting) filters snapshots the form state and starts a new
+// result set: back to page 1.
+function applyFilters() {
+  appliedFilters.value = buildFilterParams();
+  page.value = 1;
+  return fetchPage();
+}
+
+function onPageChange() {
+  fetchPage();
+  window.scrollTo({ top: 0 });
 }
 
 function resetFilters() {
@@ -277,7 +317,7 @@ function resetFilters() {
 async function exportCSV() {
   exporting.value = true;
   try {
-    const blob = await reportsApi.exportCSV(buildFilterParams());
+    const blob = await reportsApi.exportCSV(appliedFilters.value);
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -285,10 +325,10 @@ async function exportCSV() {
     link.click();
     window.URL.revokeObjectURL(url);
 
-    // The export is one server page (MAX_PAGE_LIMIT rows). `total` comes from
-    // the table fetch made with the same filters, so it is the true match count.
-    // A capped export is not a plain success: flag it 'info' (same convention as
-    // the reject action on the review queue), not 'success'.
+    // The export is one server page (MAX_PAGE_LIMIT rows). Both the export and
+    // `total` derive from the SAME applied-filters snapshot, so the message
+    // always describes the export just produced. A capped export is not a plain
+    // success: flag it 'info' (review-queue reject convention), not 'success'.
     const capped = total.value > MAX_PAGE_LIMIT;
     snackbarText.value = capped
       ? t('reports.exportTruncated', { limit: MAX_PAGE_LIMIT, total: total.value })
@@ -341,7 +381,8 @@ async function deleteIdea() {
     snackbarColor.value = 'success';
     snackbar.value = true;
     deleteDialog.value = false;
-    await applyFilters();
+    // Stay on the current page; fetchPage snaps back if the page emptied.
+    await fetchPage();
   } catch (error: any) {
     snackbarText.value = error.response?.data?.error || t('reports.deleteFailed');
     snackbarColor.value = 'error';

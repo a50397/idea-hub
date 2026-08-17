@@ -3,7 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils';
 import { setActivePinia, createPinia } from 'pinia';
 import MyIdeasPage from '../pages/MyIdeasPage.vue';
 import { useAuthStore } from '../stores/auth';
-import { IdeaStatus, Effort, Role } from '../types';
+import { IdeaStatus, Effort, Role, MAX_PAGE_LIMIT } from '../types';
 import type { Idea } from '../types';
 import { createTestI18n, createTestVuetify, paginated } from './helpers';
 
@@ -68,8 +68,7 @@ function makeIdea(overrides: Partial<Idea> = {}): Idea {
   };
 }
 
-// ideasApi.getAll resolves the paginated envelope (see `paginated` in helpers);
-// MyIdeasPage requests no explicit limit, so the server default of 20 applies.
+// ideasApi.getAll resolves the paginated envelope (see `paginated` in helpers).
 
 function mountPage() {
   return mount(MyIdeasPage, {
@@ -95,7 +94,11 @@ describe('MyIdeasPage', () => {
     await flushPromises();
 
     expect(mockedIdeas.getAll).toHaveBeenCalledTimes(1);
-    expect(mockedIdeas.getAll).toHaveBeenCalledWith({ submitterId: 'u1' });
+    expect(mockedIdeas.getAll).toHaveBeenCalledWith({
+      limit: MAX_PAGE_LIMIT,
+      page: 1,
+      submitterId: 'u1',
+    });
   });
 
   it('renders an IdeaCard per returned idea', async () => {
@@ -140,7 +143,12 @@ describe('MyIdeasPage', () => {
       await flushPromises();
 
       expect(mockedIdeas.getAll).toHaveBeenCalledTimes(1);
-      expect(mockedIdeas.getAll).toHaveBeenCalledWith({ status, submitterId: 'u1' });
+      expect(mockedIdeas.getAll).toHaveBeenCalledWith({
+        limit: MAX_PAGE_LIMIT,
+        page: 1,
+        status,
+        submitterId: 'u1',
+      });
     });
   });
 
@@ -155,7 +163,12 @@ describe('MyIdeasPage', () => {
     await flushPromises();
 
     expect(mockedIdeas.getAll).toHaveBeenCalledTimes(1);
-    expect(mockedIdeas.getAll).toHaveBeenCalledWith({ departmentId: 'd2', submitterId: 'u1' });
+    expect(mockedIdeas.getAll).toHaveBeenCalledWith({
+      limit: MAX_PAGE_LIMIT,
+      page: 1,
+      departmentId: 'd2',
+      submitterId: 'u1',
+    });
   });
 
   it('omits submitterId when there is no authenticated user', async () => {
@@ -164,7 +177,52 @@ describe('MyIdeasPage', () => {
     mountPage();
     await flushPromises();
 
-    expect(mockedIdeas.getAll).toHaveBeenCalledWith({});
+    expect(mockedIdeas.getAll).toHaveBeenCalledWith({ limit: MAX_PAGE_LIMIT, page: 1 });
+  });
+
+  it('renders the pager when my ideas span multiple pages and fetches the selected page', async () => {
+    mockedIdeas.getAll.mockResolvedValue(paginated([makeIdea()], 250));
+    const wrapper = mountPage();
+    await flushPromises();
+
+    const pager = wrapper.findComponent({ name: 'VPagination' });
+    expect(pager.exists()).toBe(true);
+    expect(pager.props('length')).toBe(3);
+
+    mockedIdeas.getAll.mockClear();
+    pager.vm.$emit('update:modelValue', 2);
+    await flushPromises();
+    expect(mockedIdeas.getAll).toHaveBeenCalledWith({
+      limit: MAX_PAGE_LIMIT,
+      page: 2,
+      submitterId: 'u1',
+    });
+  });
+
+  it('renders no pager when everything fits on one page', async () => {
+    mockedIdeas.getAll.mockResolvedValue(paginated([makeIdea()]));
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.findComponent({ name: 'VPagination' }).exists()).toBe(false);
+  });
+
+  it('resets to page 1 when the status filter changes after paging', async () => {
+    mockedIdeas.getAll.mockResolvedValue(paginated([makeIdea()], 250));
+    const wrapper = mountPage();
+    await flushPromises();
+    wrapper.findComponent({ name: 'VPagination' }).vm.$emit('update:modelValue', 2);
+    await flushPromises();
+    mockedIdeas.getAll.mockClear();
+
+    wrapper.findAllComponents({ name: 'VSelect' })[0].vm.$emit('update:modelValue', IdeaStatus.DONE);
+    await flushPromises();
+    expect(mockedIdeas.getAll).toHaveBeenCalledWith({
+      limit: MAX_PAGE_LIMIT,
+      page: 1,
+      status: IdeaStatus.DONE,
+      submitterId: 'u1',
+    });
   });
 
   it('navigates to the idea detail page on "view"', async () => {
