@@ -851,29 +851,23 @@ describe('Reports API', () => {
       );
     });
 
-    test('scopes the breakdown to a standard USER own ideas', async () => {
-      const { agent, user } = await loginAsUser(app, 'USER');
-      mockPrismaFunctions.idea.groupBy.mockResolvedValue([]);
+    // Ideas are readable org-wide by every role (the /summary precedent), so the
+    // breakdown is never scoped to the caller.
+    test.each(['USER', 'POWER_USER', 'ADMIN'])(
+      'returns the org-wide breakdown for a %s (no submitterId scoping)',
+      async (role) => {
+        const { agent } = await loginAsUser(app, role);
+        mockPrismaFunctions.idea.groupBy.mockResolvedValue([]);
 
-      await agent.get('/api/reports/jira-statuses');
+        await agent.get('/api/reports/jira-statuses');
 
-      expect(mockPrismaFunctions.idea.groupBy).toHaveBeenCalledWith(
-        expect.objectContaining({ where: expect.objectContaining({ submitterId: user.id }) })
-      );
-    });
-
-    test('does not scope the breakdown for a POWER_USER or ADMIN', async () => {
-      const { agent } = await loginAsUser(app, 'POWER_USER');
-      mockPrismaFunctions.idea.groupBy.mockResolvedValue([]);
-
-      await agent.get('/api/reports/jira-statuses');
-
-      expect(mockPrismaFunctions.idea.groupBy).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.not.objectContaining({ submitterId: expect.anything() }),
-        })
-      );
-    });
+        expect(mockPrismaFunctions.idea.groupBy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.not.objectContaining({ submitterId: expect.anything() }),
+          })
+        );
+      }
+    );
 
     test('drops a null bucket defensively', async () => {
       const { agent } = await loginAsUser(app, 'ADMIN');

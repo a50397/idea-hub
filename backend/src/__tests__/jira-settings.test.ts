@@ -22,6 +22,9 @@ const mockPrismaFunctions: Record<string, any> = {
     findUnique: jest.fn(),
     // The PUT write path is a single atomic upsert on the unique singleton key.
     upsert: jest.fn(),
+    // resolveAndBindCloudId persists a freshly resolved id via a compare-and-set
+    // updateMany (where carries the baseUrl the id was resolved for).
+    updateMany: jest.fn(),
   },
 };
 
@@ -38,22 +41,29 @@ jest.mock('@prisma/client', () => {
 
 jest.mock('bcrypt');
 
-// Partial mock of utils/jira: the pure helpers stay REAL, only the two
-// network-touching diagnostics are stubbed.
+// Partial mock of utils/jira: the pure helpers stay REAL, only the three
+// network-touching helpers are stubbed (resolveJiraCloudId would otherwise issue a
+// REAL request to the tenant_info endpoint from the PUT and /test handlers).
 jest.mock('../utils/jira', () => {
   const actual = jest.requireActual('../utils/jira');
-  return { ...actual, testJiraConnection: jest.fn(), listJiraProjects: jest.fn() };
+  return {
+    ...actual,
+    testJiraConnection: jest.fn(),
+    listJiraProjects: jest.fn(),
+    resolveJiraCloudId: jest.fn(),
+  };
 });
 
 // Import routes AFTER mocks.
 import bcrypt from 'bcrypt';
 import authRoutes from '../routes/auth';
 import jiraSettingsRoutes from '../routes/jira-settings';
-import { testJiraConnection, listJiraProjects } from '../utils/jira';
+import { testJiraConnection, listJiraProjects, resolveJiraCloudId } from '../utils/jira';
 import { decrypt } from '../utils/secretbox';
 
 const mockedTestJira = jest.mocked(testJiraConnection);
 const mockedListProjects = jest.mocked(listJiraProjects);
+const mockedResolveCloudId = jest.mocked(resolveJiraCloudId);
 
 // 64 hex chars == 32 bytes.
 const TEST_KEY = '00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff';
@@ -157,6 +167,9 @@ describe('Jira settings API', () => {
         Promise.resolve({ ...settingsDoc(), ...update })
     );
     mockPrismaFunctions.jiraSettings.findUnique.mockResolvedValue(null);
+    // Default: resolution fails (stores null) — the pre-cloud-id behavior, so every
+    // legacy test keeps meaning what it meant. Cloud-id tests override per case.
+    mockedResolveCloudId.mockResolvedValue(null);
   });
 
   // -------------------------------------------------------------------------
@@ -398,6 +411,148 @@ describe('Jira settings API', () => {
 
       expect(response.status).toBe(400);
       expect(mockPrismaFunctions.jiraSettings.upsert).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Cloud id (scoped-API-token gateway routing) — resolved on save, best-effort.
+  // -------------------------------------------------------------------------
+  describe('PUT /api/jira-settings — cloud id resolution', () => {
+    // The resolution chain is fire-and-forget: it starts after the response is
+    // sent, so its effects (or their absence) are asserted after a macrotask flush.
+    const flushBackground = async () => {
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+    };
+
+    test('saves immediately with a null cloud id, then binds the resolved id via a baseUrl-guarded CAS', async () => {
+      const { agent } = await loginAsUser(app);
+      mockedResolveCloudId.mockResolvedValue('11111111-2222-3333-4444-555555555555');
+
+      const response = await agent.put('/api/jira-settings').send(validBody({ enabled: true }));
+
+      expect(response.status).toBe(200);
+      // The write the response reflects carries NO freshly resolved id — resolution
+      // must never run inside the F2 read→write section (deep-review P1).
+      const { create, update } = mockPrismaFunctions.jiraSettings.upsert.mock.calls[0][0];
+      expect(create.cloudId).toBeNull();
+      expect(update.cloudId).toBeNull();
+
+      await flushBackground();
+      expect(mockedResolveCloudId).toHaveBeenCalledWith('https://acme.atlassian.net');
+      // Compare-and-set: the persist is guarded by the URL the id was resolved
+      // for, so a save that changed the base URL mid-resolution is never bound
+      // to the OLD site's id.
+      expect(mockPrismaFunctions.jiraSettings.updateMany).toHaveBeenCalledWith({
+        where: { singleton: 'singleton', baseUrl: 'https://acme.atlassian.net' },
+        data: { cloudId: '11111111-2222-3333-4444-555555555555' },
+      });
+    });
+
+    // Regression pin for the deep-review P1: an awaited resolution between the F2
+    // snapshot read and the upsert stretched the credential-binding race window to
+    // ~10 attacker-stretchable seconds. The settings write must land FIRST.
+    test('the settings write lands BEFORE any resolution call', async () => {
+      const { agent } = await loginAsUser(app);
+      mockedResolveCloudId.mockResolvedValue('abc-123');
+
+      await agent.put('/api/jira-settings').send(validBody({ enabled: true }));
+      await flushBackground();
+
+      expect(mockedResolveCloudId).toHaveBeenCalled();
+      expect(mockPrismaFunctions.jiraSettings.upsert.mock.invocationCallOrder[0]).toBeLessThan(
+        mockedResolveCloudId.mock.invocationCallOrder[0]
+      );
+    });
+
+    test('persists nothing when the background resolution fails (site-origin fallback stays)', async () => {
+      const { agent } = await loginAsUser(app);
+      mockedResolveCloudId.mockResolvedValue(null);
+
+      const response = await agent.put('/api/jira-settings').send(validBody({ enabled: true }));
+      await flushBackground();
+
+      expect(response.status).toBe(200);
+      expect(mockPrismaFunctions.jiraSettings.updateMany).not.toHaveBeenCalled();
+    });
+
+    test('keeps the stored cloud id WITHOUT re-resolving when the base URL is unchanged', async () => {
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.jiraSettings.findUnique.mockResolvedValue(
+        settingsDoc({
+          baseUrl: 'https://acme.atlassian.net',
+          email: 'tech@corp.example',
+          cloudId: 'stored-cloud-id',
+        })
+      );
+
+      const response = await agent.put('/api/jira-settings').send(validBody({ enabled: true }));
+      await flushBackground();
+
+      expect(response.status).toBe(200);
+      expect(mockedResolveCloudId).not.toHaveBeenCalled();
+      const { update } = mockPrismaFunctions.jiraSettings.upsert.mock.calls[0][0];
+      expect(update.cloudId).toBe('stored-cloud-id');
+    });
+
+    test('DISCARDS the old cloud id on a base-URL change and re-resolves against the NEW URL', async () => {
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.jiraSettings.findUnique.mockResolvedValue(
+        settingsDoc({
+          baseUrl: 'https://acme.atlassian.net',
+          email: 'tech@corp.example',
+          apiTokenEnc: 'existing-ciphertext',
+          cloudId: 'old-cloud-id',
+        })
+      );
+      mockedResolveCloudId.mockResolvedValue('new-cloud-id');
+
+      // F2 requires a token SET alongside the base-URL change.
+      const response = await agent
+        .put('/api/jira-settings')
+        .send(validBody({ enabled: true, baseUrl: 'https://other.atlassian.net', apiToken: 'fresh-token' }));
+
+      expect(response.status).toBe(200);
+      // The synchronous write already dropped the OLD site's id...
+      const { update } = mockPrismaFunctions.jiraSettings.upsert.mock.calls[0][0];
+      expect(update.cloudId).toBeNull();
+
+      // ...and the background bind targets the NEW URL only.
+      await flushBackground();
+      expect(mockedResolveCloudId).toHaveBeenCalledWith('https://other.atlassian.net');
+      expect(mockPrismaFunctions.jiraSettings.updateMany).toHaveBeenCalledWith({
+        where: { singleton: 'singleton', baseUrl: 'https://other.atlassian.net' },
+        data: { cloudId: 'new-cloud-id' },
+      });
+    });
+
+    test('does NOT resolve for a disabled configuration (no socket for a pre-staged save)', async () => {
+      const { agent } = await loginAsUser(app);
+
+      const response = await agent.put('/api/jira-settings').send(validBody({ enabled: false }));
+      await flushBackground();
+
+      expect(response.status).toBe(200);
+      expect(mockedResolveCloudId).not.toHaveBeenCalled();
+    });
+
+    test('SKIPS resolution while the JIRA_API_BASE_URL override is active (e2e/mock runs)', async () => {
+      const savedOverride = process.env.JIRA_API_BASE_URL;
+      try {
+        process.env.JIRA_API_BASE_URL = 'http://localhost:8098';
+        const { agent } = await loginAsUser(app);
+
+        const response = await agent.put('/api/jira-settings').send(validBody({ enabled: true }));
+        await flushBackground();
+
+        expect(response.status).toBe(200);
+        expect(mockedResolveCloudId).not.toHaveBeenCalled();
+        const { update } = mockPrismaFunctions.jiraSettings.upsert.mock.calls[0][0];
+        expect(update.cloudId).toBeNull();
+      } finally {
+        if (savedOverride === undefined) delete process.env.JIRA_API_BASE_URL;
+        else process.env.JIRA_API_BASE_URL = savedOverride;
+      }
     });
   });
 
@@ -700,6 +855,112 @@ describe('Jira settings API', () => {
       const response = await agent.post('/api/jira-settings/test').send({});
 
       expect(response.status).toBe(500);
+    });
+
+    // Cloud-id REFRESH: the test button resolves + persists the id BEFORE probing,
+    // so one click migrates a pre-cloud-id document to the gateway — and repairs a
+    // STALE id (site re-created under the same URL) — while the probe exercises
+    // exactly the routing dispatch/poller will use.
+    test('refreshes a missing cloud id (CAS-bound to the base URL) BEFORE probing', async () => {
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.jiraSettings.findUnique.mockResolvedValue(
+        settingsDoc({ enabled: true, baseUrl: 'https://acme.atlassian.net', email: 'tech@corp.example' })
+      );
+      mockedResolveCloudId.mockResolvedValue('healed-cloud-id');
+      mockedTestJira.mockResolvedValue({ ok: true });
+
+      const response = await agent.post('/api/jira-settings/test').send({});
+
+      expect(response.status).toBe(200);
+      expect(mockedResolveCloudId).toHaveBeenCalledWith('https://acme.atlassian.net');
+      expect(mockPrismaFunctions.jiraSettings.updateMany).toHaveBeenCalledWith({
+        where: { singleton: 'singleton', baseUrl: 'https://acme.atlassian.net' },
+        data: { cloudId: 'healed-cloud-id' },
+      });
+      // BEFORE probing, or the probe validates routing the poller will not use.
+      expect(mockedResolveCloudId.mock.invocationCallOrder[0]).toBeLessThan(
+        mockedTestJira.mock.invocationCallOrder[0]
+      );
+      expect(response.body).toEqual({ ok: true });
+    });
+
+    test('re-resolves even over a valid-looking stored id (stale-id remediation)', async () => {
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.jiraSettings.findUnique.mockResolvedValue(
+        settingsDoc({
+          enabled: true,
+          baseUrl: 'https://acme.atlassian.net',
+          email: 'tech@corp.example',
+          cloudId: 'stale-cloud-id',
+        })
+      );
+      mockedResolveCloudId.mockResolvedValue('fresh-cloud-id');
+      mockedTestJira.mockResolvedValue({ ok: true });
+
+      const response = await agent.post('/api/jira-settings/test').send({});
+
+      expect(response.status).toBe(200);
+      expect(mockPrismaFunctions.jiraSettings.updateMany).toHaveBeenCalledWith({
+        where: { singleton: 'singleton', baseUrl: 'https://acme.atlassian.net' },
+        data: { cloudId: 'fresh-cloud-id' },
+      });
+    });
+
+    test('skips the refresh for a disabled configuration (no socket before config_error)', async () => {
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.jiraSettings.findUnique.mockResolvedValue(
+        settingsDoc({ enabled: false, baseUrl: 'https://acme.atlassian.net', email: 'tech@corp.example' })
+      );
+      mockedTestJira.mockResolvedValue({ ok: false, reason: 'config_error' });
+
+      const response = await agent.post('/api/jira-settings/test').send({});
+
+      expect(response.status).toBe(200);
+      expect(mockedResolveCloudId).not.toHaveBeenCalled();
+      expect(response.body).toEqual({ ok: false, reason: 'config_error' });
+    });
+
+    test('a failed resolution persists nothing and the probe still runs', async () => {
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.jiraSettings.findUnique.mockResolvedValue(
+        settingsDoc({ enabled: true, baseUrl: 'https://acme.atlassian.net', email: 'tech@corp.example' })
+      );
+      mockedResolveCloudId.mockResolvedValue(null);
+      mockedTestJira.mockResolvedValue({ ok: false, reason: 'invalid_credentials' });
+
+      const response = await agent.post('/api/jira-settings/test').send({});
+
+      expect(response.status).toBe(200);
+      expect(mockPrismaFunctions.jiraSettings.updateMany).not.toHaveBeenCalled();
+      expect(response.body).toEqual({ ok: false, reason: 'invalid_credentials' });
+    });
+
+    // The route's contract is ALWAYS 200 with a closed reason code (the FE codes
+    // against it); the refresh must never turn a DB hiccup into a 500.
+    test('stays 200 with the probe result when the refresh DB read fails', async () => {
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.jiraSettings.findUnique.mockRejectedValue(new Error('db down'));
+      mockedTestJira.mockResolvedValue({ ok: false, reason: 'config_error' });
+
+      const response = await agent.post('/api/jira-settings/test').send({});
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ ok: false, reason: 'config_error' });
+    });
+
+    test('stays 200 when persisting the refreshed id fails', async () => {
+      const { agent } = await loginAsUser(app);
+      mockPrismaFunctions.jiraSettings.findUnique.mockResolvedValue(
+        settingsDoc({ enabled: true, baseUrl: 'https://acme.atlassian.net', email: 'tech@corp.example' })
+      );
+      mockedResolveCloudId.mockResolvedValue('x-id');
+      mockPrismaFunctions.jiraSettings.updateMany.mockRejectedValue(new Error('write failed'));
+      mockedTestJira.mockResolvedValue({ ok: true });
+
+      const response = await agent.post('/api/jira-settings/test').send({});
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ ok: true });
     });
   });
 

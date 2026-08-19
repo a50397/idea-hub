@@ -9,9 +9,10 @@
 //
 // Jira-specific hardening on top of the Webex baseline (all of it security review
 // findings F1/F4/F5/F9 — do not relax any of these without re-reviewing):
-//   - `redirect: 'manual'` on EVERY request. The base URL is admin-controlled, so an
-//     honored 3xx would replay the Basic credential to an attacker-chosen origin.
-//     A 3xx is treated as a plain failure (F1).
+//   - `redirect: 'manual'` on EVERY request. The API base is admin-controlled (the
+//     stored site origin) or derived from it (the api.atlassian.com gateway route),
+//     so an honored 3xx would replay the Basic credential to an attacker-chosen
+//     origin. A 3xx is treated as a plain failure (F1).
 //   - `AbortSignal.timeout(10s)` on every request and an explicit Content-Length
 //     ceiling, so a hung or gigantic remote body cannot pin memory or a tick (F4).
 //   - DEFENSIVE, field-by-field parsing (the parseWebexRooms pattern): remote JSON
@@ -26,6 +27,7 @@
 
 import {
   getEffectiveJiraConfig,
+  isValidJiraCloudId,
   type EffectiveJiraConfig,
 } from '../config/jira';
 
@@ -276,11 +278,13 @@ interface JiraRequestInit {
 }
 
 /**
- * Issue one Jira request. Every call in this module funnels through here so the
- * auth header, the ~10s abort, `redirect: 'manual'` (F1) and the JSON headers are
- * IDENTICAL everywhere — there is no way to add a call that forgets one of them.
- * The AbortSignal.timeout timer is unref'd by Node, so a pending call never keeps
- * the process alive.
+ * Issue one AUTHENTICATED Jira REST request. Every credentialed call in this
+ * module funnels through here so the auth header, the ~10s abort,
+ * `redirect: 'manual'` (F1) and the JSON headers are IDENTICAL everywhere. The ONE
+ * deliberate bypass is resolveJiraCloudId: it targets a public endpoint and must
+ * NOT send the Authorization header, so it issues its own bare fetch carrying the
+ * same transport discipline — keep it the only one. The AbortSignal.timeout timer
+ * is unref'd by Node, so a pending call never keeps the process alive.
  */
 function jiraFetch(cfg: EffectiveJiraConfig, path: string, init: JiraRequestInit): Promise<Response> {
   const headers: Record<string, string> = {
@@ -289,7 +293,11 @@ function jiraFetch(cfg: EffectiveJiraConfig, path: string, init: JiraRequestInit
   };
   if (init.body !== undefined) headers['Content-Type'] = 'application/json';
 
-  return fetch(`${cfg.baseUrl}${path}`, {
+  // `apiBaseUrl`, NOT `baseUrl`: with a resolved cloud id this is the
+  // api.atlassian.com/ex/jira/{cloudId} gateway (the only base a SCOPED API token
+  // authenticates against); otherwise the two are the same origin. Browse URLs
+  // keep using `baseUrl` — see buildJiraBrowseUrl.
+  return fetch(`${cfg.apiBaseUrl}${path}`, {
     method: init.method,
     headers,
     ...(init.body !== undefined ? { body: init.body } : {}),
@@ -770,6 +778,67 @@ export async function getJiraIssue(cfg: EffectiveJiraConfig, issueId: string): P
   }
 
   return { ok: true, found: true, issue: parseIssueSnapshot(payload) };
+}
+
+// ---------------------------------------------------------------------------
+// Cloud-id resolution (scoped-API-token support)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the Atlassian cloud id of a Jira Cloud site from its PUBLIC
+ * `{site}/_edge/tenant_info` endpoint ({"cloudId": "<uuid>"}). Returns the id, or
+ * null on ANY failure (the caller stores null and the client falls back to calling
+ * the site origin directly, which keeps classic unscoped tokens working).
+ *
+ * Called ONLY by routes/jira-settings.ts (save + test-button self-heal) with the
+ * save-time-validated https site URL — never from a dispatch or a poll tick, so a
+ * hot path never grows a second network round-trip.
+ *
+ * SECURITY:
+ *   - The endpoint is unauthenticated and this request carries NO Authorization
+ *     header — the credential is never sent to a URL that resolution itself is
+ *     about to influence.
+ *   - Same transport discipline as every other call in this module: 10s abort,
+ *     `redirect: 'manual'` (a 3xx is a failure, never followed), Content-Length
+ *     ceiling before the body is read.
+ *   - The returned id passes isValidJiraCloudId before it is accepted, so nothing
+ *     the remote side sends can smuggle a path or origin into the gateway URL join.
+ */
+export async function resolveJiraCloudId(siteBaseUrl: string): Promise<string | null> {
+  const base = siteBaseUrl.trim().replace(/\/+$/, '');
+  if (base.length === 0) return null;
+
+  let res: Response;
+  try {
+    res = await fetch(`${base}/_edge/tenant_info`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      redirect: 'manual',
+      signal: AbortSignal.timeout(JIRA_TIMEOUT_MS),
+    });
+  } catch (err) {
+    const code = fetchCauseCode(err);
+    console.error(`[JIRA] cloud-id resolution failed${code ? ` cause=${code}` : ''}:`, err);
+    return null;
+  }
+
+  if (!res.ok) {
+    console.error(`[JIRA] cloud-id resolution failed status=${res.status}`);
+    return null;
+  }
+
+  if (isBodyTooLarge(res)) {
+    console.error('[JIRA] cloud-id resolution response exceeded the size limit');
+    return null;
+  }
+
+  const payload = await readJson(res);
+  const cloudId = (payload as { cloudId?: unknown } | null)?.cloudId;
+  if (!isValidJiraCloudId(cloudId)) {
+    console.error('[JIRA] cloud-id resolution returned an unusable body');
+    return null;
+  }
+  return cloudId;
 }
 
 // ---------------------------------------------------------------------------

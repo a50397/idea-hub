@@ -116,6 +116,7 @@ function cfg(overrides: Partial<EffectiveJiraConfig> = {}): EffectiveJiraConfig 
     enabled: true,
     effectiveEnabled: true,
     baseUrl: 'https://acme.atlassian.net',
+    apiBaseUrl: 'https://acme.atlassian.net',
     baseUrlFromEnv: false,
     email: 'tech@corp.example',
     token: 'jira-api-token',
@@ -138,6 +139,7 @@ function storedRecord(overrides: Partial<JiraSettingsRecord> = {}): JiraSettings
   return {
     enabled: true,
     baseUrl: 'https://acme.atlassian.net',
+    cloudId: null,
     email: 'tech@corp.example',
     apiTokenEnc: 'ciphertext',
     defaultProjectKey: 'OPS',

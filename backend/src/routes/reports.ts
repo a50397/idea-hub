@@ -135,18 +135,15 @@ router.get('/by-department', requireAuth, async (_req, res) => {
 // backfill exists for), so `not: null` alone would silently drop rows on some
 // documents and match nothing on others.
 //
-// Scoping mirrors /summary and /by-department exactly: a USER only ever sees their
-// own ideas, every other role sees all of them.
-router.get('/jira-statuses', requireAuth, async (req, res) => {
+// Scoping mirrors /summary and /by-department exactly: ideas are readable
+// org-wide, so the breakdown is never scoped to the caller regardless of role.
+router.get('/jira-statuses', requireAuth, async (_req, res) => {
   try {
-    const userFilter = req.session.role === Role.USER ? { submitterId: req.session.userId } : {};
-
     const grouped = await prisma.idea.groupBy({
       by: ['jiraStatus'],
       where: {
         jiraIssueKey: { isSet: true },
         jiraStatus: { isSet: true, not: null },
-        ...userFilter,
       },
       _count: { id: true },
     });

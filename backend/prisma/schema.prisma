@@ -341,7 +341,9 @@ model WebexSettings {
 //     returned by the API (routes/jira-settings.ts exposes only a `hasToken`
 //     boolean). Nullable because a fresh install simply has no token.
 //   - `baseUrl` is a CREDENTIAL TARGET: the stored email+token are sent as a Basic
-//     auth header to whatever origin this names. The PUT route therefore validates
+//     auth header to whatever origin this names — directly, or via the Atlassian
+//     gateway route derived from its cloud id (see `cloudId` below), which only
+//     ever narrows the target to api.atlassian.com. The PUT route therefore validates
 //     it hard (https only, no userinfo/query/fragment, no IP-literal, no
 //     localhost/loopback host, normalized to a bare origin) and REQUIRES the token
 //     to be re-set (or wiped) whenever baseUrl/email changes, so an admin can never
@@ -356,6 +358,14 @@ model JiraSettings {
   // Jira Cloud site origin, e.g. "https://acme.atlassian.net" (no trailing slash,
   // no path). Validated + normalized on save; see the security note above.
   baseUrl   String  @default("")
+  // The Atlassian cloud id of that site, resolved from its public (unauthenticated)
+  // /_edge/tenant_info endpoint on save (best-effort; re-attempted by POST /test).
+  // When present, OUTBOUND REST calls go through the api.atlassian.com/ex/jira/{id}
+  // gateway — required for SCOPED API tokens, which reject site-origin calls;
+  // classic unscoped tokens work on both. Browse URLs always keep the site origin.
+  // Nullable with no default: null (or a document predating the field) means
+  // "unresolved" and the client falls back to calling the site origin directly.
+  cloudId   String?
   // Jira account (tech user) email — the Basic auth username.
   email     String  @default("")
   // AES-256-GCM ciphertext of the Jira API token. null / empty == no token stored.

@@ -13,8 +13,9 @@
 // base URL AND an account email AND a usable DECRYPTED token — the email+token pair
 // IS the Basic credential — so a half-configured deployment never opens a socket.
 //
-// The ONLY environment variable this feature touches is JIRA_API_BASE_URL (plus
-// MAIL_SETTINGS_KEY, consumed solely by utils/secretbox.ts for token encryption).
+// The only environment variables this feature touches are JIRA_API_BASE_URL, the
+// test-only poll accelerator JIRA_POLL_INTERVAL_MS (utils/jira-sync.ts), and
+// MAIL_SETTINGS_KEY (consumed solely by utils/secretbox.ts for token encryption).
 // JIRA_API_BASE_URL is the WEBEX_API_BASE_URL precedent: a test/proxy override that
 // takes precedence over the stored base URL for BOTH outbound calls and the browse
 // URL handed to the browser. It is deliberately allowed to be http:// (the e2e mock
@@ -74,6 +75,36 @@ function envBaseUrlOverride(): string {
   return stripTrailingSlashes(process.env.JIRA_API_BASE_URL ?? '');
 }
 
+/**
+ * Whether the JIRA_API_BASE_URL override is in effect. The cloud-id machinery keys
+ * off this: with the override active every call goes to the override origin (the
+ * e2e mock), so resolving or routing through the Atlassian gateway would be
+ * meaningless — routes/jira-settings.ts skips resolution entirely.
+ */
+export function jiraBaseUrlEnvOverrideActive(): boolean {
+  return envBaseUrlOverride().length > 0;
+}
+
+// Fixed Atlassian API gateway prefix. SCOPED API tokens only authenticate against
+// `https://api.atlassian.com/ex/jira/{cloudId}/rest/...` — site-origin calls reject
+// them — while classic unscoped tokens work on both. When a cloud id is stored,
+// ALL outbound REST calls therefore go through the gateway (one code path for both
+// token kinds); the site base URL remains the browse-link origin.
+export const JIRA_GATEWAY_BASE = 'https://api.atlassian.com/ex/jira';
+
+// Atlassian cloud ids are UUIDs in practice; accept a conservative superset. The
+// guard is SECURITY-relevant, not cosmetic: the stored value is joined into the
+// gateway URL, so a hand-edited document must never be able to smuggle a path
+// (slash), a query, or another origin into that join.
+const JIRA_CLOUD_ID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
+export function isValidJiraCloudId(value: unknown): value is string {
+  return typeof value === 'string' && JIRA_CLOUD_ID_PATTERN.test(value);
+}
+
+// Set on the first malformed-cloudId warning so it fires once per process, not once
+// per config read (see getEffectiveJiraConfig).
+let warnedMalformedCloudId = false;
+
 // The in-code defaults used when no JiraSettings document exists yet — the read
 // path returns these so an absent document simply means "Jira disabled with
 // defaults" (no boot seed). `apiTokenEnc` is null (the column is nullable) and is
@@ -81,6 +112,10 @@ function envBaseUrlOverride(): string {
 export interface JiraSettingsRecord {
   enabled: boolean;
   baseUrl: string;
+  // Atlassian cloud id of the site at `baseUrl`, or null while unresolved — see
+  // prisma/schema.prisma. Written by routes/jira-settings.ts (save + test), read
+  // here to pick the outbound API base.
+  cloudId: string | null;
   email: string;
   apiTokenEnc: string | null;
   defaultProjectKey: string;
@@ -108,6 +143,7 @@ export interface JiraSettingsRecord {
 export const JIRA_SETTINGS_DEFAULTS: JiraSettingsRecord = {
   enabled: false,
   baseUrl: '',
+  cloudId: null,
   email: '',
   apiTokenEnc: null,
   defaultProjectKey: '',
@@ -139,6 +175,13 @@ export interface EffectiveJiraConfig {
   effectiveEnabled: boolean;
   /** Origin without a trailing slash. Env override wins over the stored value. */
   baseUrl: string;
+  /**
+   * Base for OUTBOUND REST calls (utils/jira.ts jiraFetch): the env override when
+   * active, else the api.atlassian.com/ex/jira/{cloudId} gateway when a cloud id is
+   * stored (required for scoped API tokens), else `baseUrl` itself. Browse URLs
+   * NEVER use this — they are built from `baseUrl` (buildJiraBrowseUrl).
+   */
+  apiBaseUrl: string;
   /** True when `baseUrl` came from JIRA_API_BASE_URL rather than the database. */
   baseUrlFromEnv: boolean;
   email: string;
@@ -167,6 +210,9 @@ export async function getJiraSettingsRecord(): Promise<JiraSettingsRecord> {
   return {
     enabled: doc.enabled,
     baseUrl: doc.baseUrl,
+    // `?? null`: a document predating the field has no such key (see the lastSync*
+    // note below) — normalize to the one "unresolved" value.
+    cloudId: doc.cloudId ?? null,
     email: doc.email,
     apiTokenEnc: doc.apiTokenEnc,
     defaultProjectKey: doc.defaultProjectKey,
@@ -227,6 +273,21 @@ export async function getEffectiveJiraConfig(): Promise<EffectiveJiraConfig> {
   const baseUrlFromEnv = override.length > 0;
   const baseUrl = baseUrlFromEnv ? override : stripTrailingSlashes(s.baseUrl ?? '');
 
+  // Outbound API base: gateway routing applies only to a real (DB-configured) site.
+  // A stored cloud id that fails the shape guard is treated as unresolved — falling
+  // back to the site origin keeps unscoped tokens working and, more importantly,
+  // keeps a hand-edited value out of the URL join (see isValidJiraCloudId).
+  const cloudId = isValidJiraCloudId(s.cloudId) ? s.cloudId : null;
+  if (s.cloudId !== null && cloudId === null && !warnedMalformedCloudId) {
+    // Once per process: this read path runs per OPERATION — including the
+    // browse-URL attach on every ideas list/detail request — so a hand-edited
+    // document must not turn every page load into a log line.
+    warnedMalformedCloudId = true;
+    console.warn('[JIRA] stored cloudId has an unexpected shape; calling the site base URL directly');
+  }
+  const apiBaseUrl =
+    baseUrlFromEnv || cloudId === null ? baseUrl : `${JIRA_GATEWAY_BASE}/${cloudId}`;
+
   const email = (s.email ?? '').trim();
 
   const rawInterval = Number(s.pollIntervalMinutes);
@@ -239,6 +300,7 @@ export async function getEffectiveJiraConfig(): Promise<EffectiveJiraConfig> {
     effectiveEnabled:
       s.enabled && baseUrl.length > 0 && email.length > 0 && token.length > 0,
     baseUrl,
+    apiBaseUrl,
     baseUrlFromEnv,
     email,
     token,

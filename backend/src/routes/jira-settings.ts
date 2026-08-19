@@ -3,8 +3,10 @@
 // routes/mail-settings.ts) for the third, EXECUTION channel.
 //
 //   GET  /api/jira-settings           -> masked settings + hasToken (no ciphertext)
-//   PUT  /api/jira-settings           -> save (upsert) the single document
-//   POST /api/jira-settings/test      -> probe the SAVED config (GET /rest/api/3/myself)
+//   PUT  /api/jira-settings           -> save (upsert) the single document; triggers
+//                                        background cloud-id resolution (scoped tokens)
+//   POST /api/jira-settings/test      -> refresh the stored cloud id, then probe the
+//                                        SAVED config (GET /rest/api/3/myself)
 //   GET  /api/jira-settings/projects  -> list projects the tech user can see
 //
 // Every route requires an ADMIN session (requireRole). The effective jira-enabled
@@ -27,11 +29,40 @@ import { encrypt } from '../utils/secretbox';
 import {
   JIRA_SETTINGS_DEFAULTS,
   JIRA_SETTINGS_SINGLETON,
+  isValidJiraCloudId,
+  jiraBaseUrlEnvOverrideActive,
   type JiraSettingsRecord,
 } from '../config/jira';
-import { testJiraConnection, listJiraProjects } from '../utils/jira';
+import { testJiraConnection, listJiraProjects, resolveJiraCloudId } from '../utils/jira';
 
 const router = Router();
+
+/**
+ * Resolve the cloud id for `siteBaseUrl` and persist it — but only onto a document
+ * whose baseUrl is STILL the URL the id was resolved for. The compare-and-set (an
+ * updateMany whose where carries the baseUrl, not just the singleton key) is what
+ * guards the deep-review races: a save that changes the base URL during the up-to-
+ * 10s resolution round-trip must never receive the OLD site's id (a lasting
+ * wrong-tenant binding otherwise invisible to the admin), and the fire-and-forget
+ * PUT path must never clobber a newer configuration. A failed resolution persists
+ * nothing (the stored id — or the site-origin fallback — stays in place). NEVER
+ * throws: both callers run it best-effort, one of them with no await at all.
+ */
+async function resolveAndBindCloudId(siteBaseUrl: string): Promise<void> {
+  try {
+    const cloudId = await resolveJiraCloudId(siteBaseUrl);
+    if (cloudId === null) return;
+    await prisma.jiraSettings.updateMany({
+      where: { singleton: JIRA_SETTINGS_SINGLETON, baseUrl: siteBaseUrl },
+      data: { cloudId },
+    });
+  } catch (error) {
+    console.error(
+      'Error persisting resolved jira cloud id:',
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+}
 
 // The last background-sync outcome, as the admin page consumes it:
 //   { ok: true, at }                    -> the poller is healthy (since `at`)
@@ -182,9 +213,32 @@ router.put('/', requireRole(Role.ADMIN), async (req, res) => {
       apiTokenEnc = '';
     }
 
+    // ---------------------------------------------------------------------
+    // CLOUD ID (scoped-API-token support).
+    //
+    // Scoped Atlassian API tokens only authenticate against the
+    // api.atlassian.com/ex/jira/{cloudId} gateway, so the site's cloud id is
+    // resolved from the site's PUBLIC, unauthenticated /_edge/tenant_info endpoint
+    // and stored alongside the settings. Best-effort: while it is null, outbound
+    // calls fall back to the site origin (classic unscoped tokens keep working).
+    //
+    // The synchronous part below only KEEPS or DISCARDS: a shape-valid stored id
+    // survives while the base URL is unchanged; a CHANGED base URL always discards
+    // it (it identified the OLD site). Resolution itself runs AFTER the upsert
+    // commits, fire-and-forget (see resolveAndBindCloudId + the trigger after
+    // res.json). It must NOT be awaited here: an awaited network round-trip would
+    // sit inside the F2 read→write section and stretch its race window from
+    // sub-millisecond to ~10 attacker-stretchable seconds — long enough for a
+    // concurrent save to store a token that this request's stale snapshot would
+    // then silently re-target (deep-review P1).
+    // ---------------------------------------------------------------------
+    let cloudId = isValidJiraCloudId(existing?.cloudId) ? (existing!.cloudId as string) : null;
+    if (data.baseUrl !== (existing?.baseUrl ?? JIRA_SETTINGS_DEFAULTS.baseUrl)) cloudId = null;
+
     const values = {
       enabled: data.enabled,
       baseUrl: data.baseUrl,
+      cloudId,
       email: data.email,
       apiTokenEnc,
       defaultProjectKey: data.defaultProjectKey,
@@ -216,6 +270,15 @@ router.put('/', requireRole(Role.ADMIN), async (req, res) => {
     });
 
     res.json(serializeJiraSettings(saved));
+
+    // Post-commit resolution trigger (see the CLOUD ID comment above). Gated on
+    // `enabled` so a disabled, pre-staged configuration never opens a socket —
+    // the save that later flips `enabled` on re-triggers this — and on the
+    // JIRA_API_BASE_URL override, under which every call targets the e2e mock and
+    // a gateway id would be meaningless.
+    if (cloudId === null && data.enabled && data.baseUrl.length > 0 && !jiraBaseUrlEnvOverrideActive()) {
+      void resolveAndBindCloudId(data.baseUrl);
+    }
   } catch (error) {
     // Convergence on a lost first-save race: a concurrent creator won the unique
     // `singleton` key and this request's create hit P2002. The one document already
@@ -262,6 +325,33 @@ router.put('/', requireRole(Role.ADMIN), async (req, res) => {
 // the mail/Webex test sends there is no recipient to name.
 router.post('/test', requireRole(Role.ADMIN), async (req, res) => {
   try {
+    // Cloud-id REFRESH, before the probe so the probe exercises exactly the
+    // routing the dispatch endpoint and the poller will use. It re-resolves even
+    // over a valid-LOOKING stored id, which makes the Test button the one-click
+    // remediation for a STALE id (an Atlassian site deleted and re-created under
+    // the same URL rotates its cloud id server-side); a failed resolution
+    // persists nothing, so a transient hiccup never clears a working id. Skipped
+    // for a disabled configuration (the probe answers config_error with no
+    // network call — resolving first would be a socket for nothing) and under
+    // the JIRA_API_BASE_URL override (every call targets the e2e mock).
+    //
+    // In its OWN try/catch: this route's contract is "ALWAYS 200 with a closed
+    // reason code" (the FE codes against it), so a DB error in the refresh must
+    // degrade to probing with the stored routing, never to a 500.
+    try {
+      if (!jiraBaseUrlEnvOverrideActive()) {
+        const doc = await prisma.jiraSettings.findUnique({ where: { singleton: JIRA_SETTINGS_SINGLETON } });
+        if (doc && doc.enabled && doc.baseUrl.length > 0) {
+          await resolveAndBindCloudId(doc.baseUrl);
+        }
+      }
+    } catch (error) {
+      console.error(
+        'Error refreshing jira cloud id before the connection test:',
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+
     const result = await testJiraConnection();
     res.json(result);
   } catch (error) {

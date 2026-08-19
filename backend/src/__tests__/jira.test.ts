@@ -38,7 +38,14 @@ import {
   testJiraConnection,
   type JiraFailureReason,
 } from '../utils/jira';
-import { getEffectiveJiraConfig, type EffectiveJiraConfig } from '../config/jira';
+import {
+  getEffectiveJiraConfig,
+  isValidJiraCloudId,
+  jiraBaseUrlEnvOverrideActive,
+  JIRA_GATEWAY_BASE,
+  type EffectiveJiraConfig,
+} from '../config/jira';
+import { resolveJiraCloudId } from '../utils/jira';
 import { encrypt } from '../utils/secretbox';
 
 const findUnique = mockPrisma.jiraSettings.findUnique;
@@ -132,6 +139,7 @@ function cfg(overrides: Partial<EffectiveJiraConfig> = {}): EffectiveJiraConfig 
     enabled: true,
     effectiveEnabled: true,
     baseUrl: 'https://acme.atlassian.net',
+    apiBaseUrl: 'https://acme.atlassian.net',
     baseUrlFromEnv: false,
     email: 'tech@corp.example',
     token: 'jira-api-token',
@@ -235,7 +243,51 @@ describe('getEffectiveJiraConfig', () => {
     findUnique.mockResolvedValue(configuredDoc());
     const c = await getEffectiveJiraConfig();
     expect(c.baseUrl).toBe('http://localhost:8098');
+    expect(c.apiBaseUrl).toBe('http://localhost:8098');
     expect(c.baseUrlFromEnv).toBe(true);
+  });
+
+  // ---- cloud id -> outbound gateway routing (scoped-API-token support) -------
+
+  it('routes the API base through the Atlassian gateway when a cloud id is stored', async () => {
+    findUnique.mockResolvedValue(configuredDoc({ cloudId: 'abc-123' }));
+    const c = await getEffectiveJiraConfig();
+    // Outbound calls go to the gateway; the browse-link origin stays the site.
+    expect(c.apiBaseUrl).toBe(`${JIRA_GATEWAY_BASE}/abc-123`);
+    expect(c.baseUrl).toBe('https://acme.atlassian.net');
+  });
+
+  it('keeps the site origin as the API base when no cloud id is stored (legacy document)', async () => {
+    // configuredDoc carries NO cloudId key at all — a document predating the field.
+    findUnique.mockResolvedValue(configuredDoc());
+    const c = await getEffectiveJiraConfig();
+    expect(c.apiBaseUrl).toBe('https://acme.atlassian.net');
+  });
+
+  it('IGNORES a malformed stored cloud id (falls back to the site origin, warns)', async () => {
+    // A slash could smuggle a path into the gateway join — the shape guard rejects it.
+    findUnique.mockResolvedValue(configuredDoc({ cloudId: 'abc/../../evil' }));
+    const c = await getEffectiveJiraConfig();
+    expect(c.apiBaseUrl).toBe('https://acme.atlassian.net');
+    expect(warnSpy).toHaveBeenCalled();
+  });
+
+  it('lets the env override win over a stored cloud id (the e2e mock sees every call)', async () => {
+    process.env.JIRA_API_BASE_URL = 'http://localhost:8098';
+    findUnique.mockResolvedValue(configuredDoc({ cloudId: 'abc-123' }));
+    const c = await getEffectiveJiraConfig();
+    expect(c.apiBaseUrl).toBe('http://localhost:8098');
+  });
+
+  // Hand-edited-document corner: a cloud id with no site origin routes to the
+  // gateway but must NOT count as configured — effectiveEnabled keys off the SITE
+  // base URL, and a refactor keying it off apiBaseUrl would silently enable a
+  // half-configured channel.
+  it('a cloudId-only document (empty baseUrl) stays not effectively enabled', async () => {
+    findUnique.mockResolvedValue(configuredDoc({ baseUrl: '', cloudId: 'abc-123' }));
+    const c = await getEffectiveJiraConfig();
+    expect(c.apiBaseUrl).toBe(`${JIRA_GATEWAY_BASE}/abc-123`);
+    expect(c.effectiveEnabled).toBe(false);
   });
 
   // TEST-ONLY, ENFORCED. Outside a test run the override is a credential-retarget
@@ -280,6 +332,149 @@ describe('getEffectiveJiraConfig', () => {
   it('parses cancelResolutions into a trimmed, lowercased, blank-free list', async () => {
     findUnique.mockResolvedValue(configuredDoc({ cancelResolutions: "  Won't Do , ,DUPLICATE ," }));
     expect((await getEffectiveJiraConfig()).cancelResolutions).toEqual(["won't do", 'duplicate']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// jiraBaseUrlEnvOverrideActive — the resolution-skip gate must obey the same
+// NODE_ENV=test enforcement as the override itself
+// ---------------------------------------------------------------------------
+describe('jiraBaseUrlEnvOverrideActive', () => {
+  it('is true only under NODE_ENV=test with the variable set', () => {
+    process.env.JIRA_API_BASE_URL = 'http://localhost:8098';
+    expect(jiraBaseUrlEnvOverrideActive()).toBe(true);
+
+    // A stray production JIRA_API_BASE_URL must not suppress cloud-id resolution
+    // (scoped tokens would silently 401 forever with every suite green).
+    const savedEnv = process.env.NODE_ENV;
+    try {
+      process.env.NODE_ENV = 'production';
+      expect(jiraBaseUrlEnvOverrideActive()).toBe(false);
+    } finally {
+      process.env.NODE_ENV = savedEnv;
+    }
+
+    delete process.env.JIRA_API_BASE_URL;
+    expect(jiraBaseUrlEnvOverrideActive()).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gateway routing in the client — every outbound call uses apiBaseUrl, browse
+// links keep the site origin (scoped-API-token support)
+// ---------------------------------------------------------------------------
+describe('gateway routing (apiBaseUrl)', () => {
+  const gatewayCfg = () =>
+    cfg({ apiBaseUrl: `${JIRA_GATEWAY_BASE}/abc-123` });
+
+  it('createJiraIssue posts to the gateway while the browse URL keeps the site origin', async () => {
+    fetchMock.mockResolvedValue(response({ status: 201, json: { id: '10001', key: 'OPS-1' } }));
+
+    const result = await createJiraIssue(gatewayCfg(), {
+      projectKey: 'OPS',
+      summary: 'x',
+      description: 'y',
+    });
+
+    expect(fetchCall()[0]).toBe(`${JIRA_GATEWAY_BASE}/abc-123/rest/api/3/issue`);
+    // The user-facing link is NEVER the gateway URL.
+    expect(result).toMatchObject({ ok: true, browseUrl: 'https://acme.atlassian.net/browse/OPS-1' });
+  });
+
+  it('getJiraIssue and testJiraConnection hit the gateway too', async () => {
+    fetchMock.mockResolvedValue(response({ status: 200, json: { fields: {} } }));
+    await getJiraIssue(gatewayCfg(), '10001');
+    expect(fetchCall(0)[0]).toBe(
+      `${JIRA_GATEWAY_BASE}/abc-123/rest/api/3/issue/10001?fields=status,assignee,resolution`
+    );
+
+    findUnique.mockResolvedValue(configuredDoc({ cloudId: 'abc-123' }));
+    fetchMock.mockResolvedValue(response({ status: 200, json: {} }));
+    await testJiraConnection();
+    expect(fetchCall(1)[0]).toBe(`${JIRA_GATEWAY_BASE}/abc-123/rest/api/3/myself`);
+  });
+
+  it('searchJiraIssuesByIds and listJiraProjects hit the gateway too', async () => {
+    fetchMock.mockResolvedValue(response({ status: 200, json: { issues: [] } }));
+    await searchJiraIssuesByIds(gatewayCfg(), ['10001']);
+    expect(fetchCall(0)[0]).toBe(`${JIRA_GATEWAY_BASE}/abc-123/rest/api/3/search/jql`);
+
+    findUnique.mockResolvedValue(configuredDoc({ cloudId: 'abc-123' }));
+    fetchMock.mockResolvedValue(response({ status: 200, json: { values: [], isLast: true } }));
+    await listJiraProjects();
+    expect(fetchCall(1)[0]).toBe(
+      `${JIRA_GATEWAY_BASE}/abc-123/rest/api/3/project/search?startAt=0&maxResults=50`
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveJiraCloudId — the public tenant_info probe (save-time / test-button)
+// ---------------------------------------------------------------------------
+describe('resolveJiraCloudId', () => {
+  it('returns the cloud id from a well-formed tenant_info response', async () => {
+    fetchMock.mockResolvedValue(
+      response({ status: 200, json: { cloudId: '11111111-2222-3333-4444-555555555555' } })
+    );
+
+    await expect(resolveJiraCloudId('https://acme.atlassian.net/')).resolves.toBe(
+      '11111111-2222-3333-4444-555555555555'
+    );
+    // Trailing slashes are stripped before the join.
+    expect(fetchCall()[0]).toBe('https://acme.atlassian.net/_edge/tenant_info');
+  });
+
+  it('sends NO Authorization header, asks for JSON, aborts on timeout, never follows a redirect', async () => {
+    fetchMock.mockResolvedValue(response({ status: 200, json: { cloudId: 'abc-123' } }));
+
+    await resolveJiraCloudId('https://acme.atlassian.net');
+
+    const [, init] = fetchCall();
+    expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
+    expect((init.headers as Record<string, string>).Accept).toBe('application/json');
+    expect(init.redirect).toBe('manual');
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it.each([
+    ['a non-OK response', response({ status: 404, text: 'not here' })],
+    ['an unparseable 2xx body', response({ status: 200 })],
+    ['a body without a cloudId', response({ status: 200, json: { tenantId: 'x' } })],
+    // The shape guard is the injection barrier: a slash could smuggle a path into
+    // the gateway URL join.
+    ['a malformed cloudId', response({ status: 200, json: { cloudId: 'abc/../../evil' } })],
+    ['an oversized body', response({ status: 200, json: { cloudId: 'abc' }, headers: { 'content-length': '999999999' } })],
+  ])('returns null on %s', async (_label, res) => {
+    fetchMock.mockResolvedValue(res);
+    await expect(resolveJiraCloudId('https://acme.atlassian.net')).resolves.toBeNull();
+  });
+
+  it('returns null when the fetch throws (transport failure)', async () => {
+    fetchMock.mockRejectedValue(transportError('ENOTFOUND'));
+    await expect(resolveJiraCloudId('https://acme.atlassian.net')).resolves.toBeNull();
+  });
+
+  it('returns null for an empty base URL without calling fetch', async () => {
+    await expect(resolveJiraCloudId('')).resolves.toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isValidJiraCloudId — the gateway-join shape guard
+// ---------------------------------------------------------------------------
+describe('isValidJiraCloudId', () => {
+  it.each([
+    ['a UUID', '11111111-2222-3333-4444-555555555555', true],
+    ['a short alphanumeric id', 'abc-123', true],
+    ['null', null, false],
+    ['an empty string', '', false],
+    ['a path traversal', 'abc/../../evil', false],
+    ['a query injection', 'abc?x=1', false],
+    ['another origin', 'evil.example/abc', false],
+    ['overlength input', 'a'.repeat(65), false],
+  ])('%s -> %s', (_label, value, expected) => {
+    expect(isValidJiraCloudId(value)).toBe(expected);
   });
 });
 

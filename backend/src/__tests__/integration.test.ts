@@ -95,6 +95,7 @@ const JIRA_CFG = {
   enabled: true,
   effectiveEnabled: true,
   baseUrl: 'https://acme.atlassian.net',
+  apiBaseUrl: 'https://acme.atlassian.net',
   baseUrlFromEnv: false,
   email: 'tech@corp.example',
   token: 'jira-token',

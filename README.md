@@ -14,9 +14,9 @@ Interná webová aplikácia na správu interných zlepšovacích nápadov, urče
 
 ### Realizácia cez Jira (Jira Cloud)
 
-> **Dôležitá zmena (breaking change):** Pôvodný spôsob realizácie „prevzatím" (`PATCH /api/ideas/:id/claim`) bol **odstránený**. Realizáciu schváleného nápadu teraz spúšťa Pokročilý používateľ alebo Administrátor tlačidlom **„Vytvoriť úlohu v Jire"**, ktoré vyžaduje, aby administrátor najprv nakonfiguroval Jira integráciu (stránka **Nastavenia Jiry**) — kým sa tak nestane, je tlačidlo skryté a schválené nápady nemožno odoslať do realizácie. Nápady, ktoré boli v čase nasadenia už rozpracované (`IN_PROGRESS`) pôvodným prevzatím, si zachovávajú kroky priebehu a dokončenie (grandfathering) — dokončí ich pôvodný riešiteľ, novo sa už neprideľujú. Zmena schémy databázy je **aditívna** a aplikuje sa sama pri štarte backendu (`prisma db push` + automatické doplnenie poľa `jiraSyncActive` existujúcim nápadom) — netreba žiadny manuálny krok v databáze. Nasadenie navyše musí povoľovať **odchádzajúce HTTPS na hostiteľa Jira Cloud** (napr. `https://firma.atlassian.net`) — bez neho sa odoslanie úloh do Jiry ani pravidelný poller nikdy nepripoja.
+> **Dôležitá zmena (breaking change):** Pôvodný spôsob realizácie „prevzatím" (`PATCH /api/ideas/:id/claim`) bol **odstránený**. Realizáciu schváleného nápadu teraz spúšťa Pokročilý používateľ alebo Administrátor tlačidlom **„Vytvoriť úlohu v Jire"**, ktoré vyžaduje, aby administrátor najprv nakonfiguroval Jira integráciu (stránka **Nastavenia Jiry**) — kým sa tak nestane, je tlačidlo skryté a schválené nápady nemožno odoslať do realizácie. Nápady, ktoré boli v čase nasadenia už rozpracované (`IN_PROGRESS`) pôvodným prevzatím, si zachovávajú kroky priebehu a dokončenie (grandfathering) — dokončí ich pôvodný riešiteľ, novo sa už neprideľujú. Zmena schémy databázy je **aditívna** a aplikuje sa sama pri štarte backendu (`prisma db push` + automatické doplnenie poľa `jiraSyncActive` existujúcim nápadom) — netreba žiadny manuálny krok v databáze. Nasadenie navyše musí povoľovať **odchádzajúce HTTPS na hostiteľa Jira Cloud** (napr. `https://firma.atlassian.net`) **a na `https://api.atlassian.com`** (API brána Atlassianu, cez ktorú aplikácia smeruje REST volania — vďaka tomu fungujú klasické aj **scoped** API tokeny) — bez nich sa odoslanie úloh do Jiry ani pravidelný poller nikdy nepripoja.
 
-- Pokročilý používateľ/Administrátor vytvorí zo schváleného nápadu úlohu v Jire (REST API v3, Basic autentifikácia e-mailom a API tokenom technického účtu); nová úloha sa otvorí v novej karte prehliadača
+- Pokročilý používateľ/Administrátor vytvorí zo schváleného nápadu úlohu v Jire (REST API v3, Basic autentifikácia e-mailom a API tokenom technického účtu — podporované sú klasické aj **scoped** API tokeny: aplikácia si pri uložení nastavení sama zistí cloud id lokality z verejného endpointu `/_edge/tenant_info` a REST volania smeruje cez bránu `https://api.atlassian.com/ex/jira/{cloudId}`); nová úloha sa otvorí v novej karte prehliadača
 - Nápad po odoslaní zostáva v stave **Schválený** (so značkou „V Jire: KEY", anglicky „Jira: KEY") — do stavu **Rozpracovaný** prejde, až keď sa práca v Jire naozaj začne
 - Keďže aplikácia beží v segmente bez prichádzajúcich webhookov, backend Jiru pravidelne pollinguje (interval nastaviteľný administrátorom) a mapuje kategóriu stavu Jira na stav nápadu: `new` (čaká sa) → Schválený, `indeterminate` → Rozpracovaný, `done` s bežným riešením → Dokončený, `done` so „zrušujúcim" riešením (predvolene „Won't Do", „Cancelled", „Duplicate" — nastaviteľné) → späť na Schválený, s možnosťou opätovného odoslania
 - Ak je úloha v Jire zmazaná alebo sa k nej stratí prístup, nápad sa po dvoch po sebe idúcich potvrdeniach vráti do stavu Schválený rovnakým spôsobom
@@ -394,7 +394,7 @@ npm run test:watch       # Vitest v režime watch
 - `GET /api/reports/by-department` – Počty nápadov podľa oddelení (za celú organizáciu, pre všetky roly)
 - `GET /api/reports/monthly-trend` – Mesačný trend dokončených nápadov (za celú organizáciu, pre všetky roly)
 - `GET /api/reports/top-contributors` – Najaktívnejší prispievatelia (Pokročilý používateľ/Administrátor)
-- `GET /api/reports/jira-statuses` – Počty nápadov odoslaných do Jiry podľa surového stavu Jira (bežní používatelia: len vlastné nápady)
+- `GET /api/reports/jira-statuses` – Počty nápadov odoslaných do Jiry podľa surového stavu Jira (za celú organizáciu, pre všetky roly)
 - `GET /api/reports/filtered` – Filtrované nápady so stránkovaním (vrátane exportu do CSV; CSV navyše obsahuje stĺpce Jira Key/Status/Assignee/Resolution)
 
 ### Endpointy oddelení
@@ -421,8 +421,8 @@ npm run test:watch       # Vitest v režime watch
 ### Endpointy nastavení Jiry (len administrátor)
 
 - `GET /api/jira-settings` – Získanie konfigurácie Jira (API token sa nikdy nevracia, len príznak `hasToken`), vrátane READ-ONLY stavu poslednej synchronizácie `lastSync` (`{ ok, reason?, at }` — odkedy poller synchronizuje úspešne, resp. zlyháva; `null`, ak sa ešte nič nezaznamenalo)
-- `PUT /api/jira-settings` – Uloženie konfigurácie Jira (token sa ukladá šifrovane); zmena `baseUrl` alebo `email` pri už uloženom tokene vyžaduje token buď znova zadať, alebo výslovne vymazať — inak `400`; vracia rovnaký tvar ako `GET` vrátane `lastSync` (uloženie ho nemôže nastaviť ani vymazať — píše ho výhradne poller)
-- `POST /api/jira-settings/test` – Overenie uložených nastavení (`GET /rest/api/3/myself`)
+- `PUT /api/jira-settings` – Uloženie konfigurácie Jira (token sa ukladá šifrovane); zmena `baseUrl` alebo `email` pri už uloženom tokene vyžaduje token buď znova zadať, alebo výslovne vymazať — inak `400`; vracia rovnaký tvar ako `GET` vrátane `lastSync` (uloženie ho nemôže nastaviť ani vymazať — píše ho výhradne poller); uloženie zapnutej konfigurácie navyše na pozadí zistí cloud id lokality (pre scoped API tokeny)
+- `POST /api/jira-settings/test` – Overenie uložených nastavení (`GET /rest/api/3/myself`); pred testom obnoví uložené cloud id lokality — jeden klik tak „migruje" aj existujúcu inštaláciu na bránu api.atlassian.com
 - `GET /api/jira-settings/projects` – Zoznam projektov Jira viditeľných pre technický účet (pre výber predvoleného projektu / prepísania oddelenia); ak je Jira vypnutá alebo nedostupná, vráti prázdny zoznam s kódom dôvodu
 
 ### Endpointy používateľov (len administrátor)
@@ -443,7 +443,7 @@ npm run test:watch       # Vitest v režime watch
 - Podávanie nových nápadov
 - Zobrazenie všetkých nápadov (globálny zoznam aj vlastné nápady)
 - Realizácia nápadov už neprebieha prevzatím — o odoslanie schváleného nápadu do Jiry sa stará Pokročilý používateľ/Administrátor; bežný používateľ len sleduje priebeh. Staršie nápady prevzaté pred touto zmenou si zachovávajú pôvodné správanie (ich riešiteľ naďalej zapisuje kroky priebehu a označí nápad za dokončený — grandfathering)
-- Prehľad a reporty obmedzené na vlastné nápady
+- Prehľad a reporty za celú organizáciu, len na čítanie (bez rebríčka prispievateľov)
 
 ### POWER_USER
 - Všetky oprávnenia roly USER
@@ -528,6 +528,7 @@ npm run test:watch       # Vitest v režime watch
 ### Model JiraSettings (singleton)
 - `enabled`: Hlavný vypínač Jira integrácie
 - `baseUrl`: Základná URL inštancie Jira Cloud (musí byť https, bez IP adresy a bez localhost)
+- `cloudId`: Automaticky zistené cloud id lokality Atlassian (nullable); ak je známe, REST volania smerujú cez bránu `api.atlassian.com/ex/jira/{cloudId}` (podpora scoped API tokenov)
 - `email`: E-mail technického účtu Jira použitý pre Basic autentifikáciu
 - API token uložený šifrovane (AES-256-GCM), API ho nikdy nevracia
 - `defaultProjectKey`: Predvolený kľúč cieľového projektu (možno prepísať na úrovni oddelenia)
@@ -542,8 +543,8 @@ IdeaHub má **komplexné pokrytie testami** naprieč backendom, frontendom a end
 
 ### Súhrn pokrytia testami
 
-- **Backend**: 1058 testov v 24 Jest sadách (bežia proti mockovanej Prisme — databáza nie je potrebná)
-- **Backend integračné**: 110 testov v 12 Jest sadách proti reálnej MongoDB (`npm run test:integration`)
+- **Backend**: 1099 testov v 24 Jest sadách (bežia proti mockovanej Prisme — databáza nie je potrebná)
+- **Backend integračné**: 113 testov v 12 Jest sadách proti reálnej MongoDB (`npm run test:integration`)
 - **Frontend**: 635 Vitest testov v 24 súboroch (stránky, stores, API klient, i18n)
 - **E2E**: 22 Playwright testov v 12 súboroch, pokrývajúcich lokálne a SSO prihlásenie, RBAC (vrátane admin-only Nastavení Jiry), životný cyklus nápadu (vrátane odoslania do Jiry, pollovania stavu, zrušenia a opätovného odoslania), oddelenia, nastavenia e-mailu, nastavenia Webexu, nastavenia Jiry a pravidlo F2, odber notifikácií pri nápade a i18n
 

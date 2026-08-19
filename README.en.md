@@ -14,9 +14,9 @@ A modern web application for managing internal improvement ideas, designed for e
 
 ### Jira Execution (Jira Cloud)
 
-> **Breaking change:** The original "claim" execution flow (`PATCH /api/ideas/:id/claim`) has been **removed**. Executing an approved idea is now started by a Power User or Admin clicking **"Create Jira task"**, which requires an admin to first configure the Jira integration (the **Jira settings** page) — until that happens, the button stays hidden and approved ideas cannot be dispatched. Ideas that were already in progress (`IN_PROGRESS`) via the old claim flow at deploy time keep their progress steps and completion (grandfathered) — the original assignee finishes them; new ideas are never assigned this way. The database schema change is **additive** and applies itself at backend boot (`prisma db push` + automatic backfill of the `jiraSyncActive` field on existing ideas) — no manual database step is required. The deployment must also allow **outbound HTTPS to the Jira Cloud host** (e.g. `https://yourcompany.atlassian.net`) — without it, neither dispatching to Jira nor the background poller can ever connect.
+> **Breaking change:** The original "claim" execution flow (`PATCH /api/ideas/:id/claim`) has been **removed**. Executing an approved idea is now started by a Power User or Admin clicking **"Create Jira task"**, which requires an admin to first configure the Jira integration (the **Jira settings** page) — until that happens, the button stays hidden and approved ideas cannot be dispatched. Ideas that were already in progress (`IN_PROGRESS`) via the old claim flow at deploy time keep their progress steps and completion (grandfathered) — the original assignee finishes them; new ideas are never assigned this way. The database schema change is **additive** and applies itself at backend boot (`prisma db push` + automatic backfill of the `jiraSyncActive` field on existing ideas) — no manual database step is required. The deployment must also allow **outbound HTTPS to the Jira Cloud host** (e.g. `https://yourcompany.atlassian.net`) **and to `https://api.atlassian.com`** (the Atlassian API gateway the app routes REST calls through, which is what makes both classic and **scoped** API tokens work) — without them, neither dispatching to Jira nor the background poller can ever connect.
 
-- A Power User/Admin creates a Jira issue from an approved idea (REST API v3, Basic auth with the tech account's email and API token); the new issue opens in a new browser tab
+- A Power User/Admin creates a Jira issue from an approved idea (REST API v3, Basic auth with the tech account's email and API token — both classic and **scoped** API tokens are supported: on save the app resolves the site's cloud id from the public `/_edge/tenant_info` endpoint and routes REST calls through the `https://api.atlassian.com/ex/jira/{cloudId}` gateway); the new issue opens in a new browser tab
 - After dispatch the idea stays **Approved** (with a "Jira: KEY" chip, Slovak UI: „V Jire: KEY") — it moves to **In Progress** only once work in Jira actually starts
 - Because the app runs in a segment with no inbound webhooks, the backend polls Jira on a schedule (interval configurable by the admin) and maps the Jira status **category** onto the idea status: `new` (waiting) → Approved, `indeterminate` → In Progress, `done` with an ordinary resolution → Done, `done` with a "cancelling" resolution (default `Won't Do`, `Cancelled`, `Duplicate` — configurable) → back to Approved, with re-dispatch allowed
 - If the Jira issue is deleted or access to it is lost, the idea returns to Approved the same way, after two consecutive confirmations
@@ -31,7 +31,7 @@ A modern web application for managing internal improvement ideas, designed for e
 - Monthly trend charts showing completed ideas over time
 - Average time metrics (submission to approval, approval to completion)
 - Top contributors leaderboard (power users and admins)
-- Regular users see statistics scoped to their own ideas
+- All logged-in users see statistics for the whole organization
 
 ### Reporting
 - Advanced filtering (status, department, date range, submitter, assignee, tags)
@@ -387,11 +387,11 @@ npm run test:watch       # Vitest in watch mode
 
 ### Reports Endpoints
 
-- `GET /api/reports/summary` - Dashboard summary statistics (regular users: own ideas only)
-- `GET /api/reports/by-department` - Idea counts per department (regular users: own ideas only)
-- `GET /api/reports/monthly-trend` - Monthly completion trend (regular users: own ideas only)
+- `GET /api/reports/summary` - Dashboard summary statistics (org-wide, for all roles)
+- `GET /api/reports/by-department` - Idea counts per department (org-wide, for all roles)
+- `GET /api/reports/monthly-trend` - Monthly completion trend (org-wide, for all roles)
 - `GET /api/reports/top-contributors` - Top contributors (Power User/Admin)
-- `GET /api/reports/jira-statuses` - Counts of ideas dispatched to Jira, grouped by raw Jira status (regular users: own ideas only)
+- `GET /api/reports/jira-statuses` - Counts of ideas dispatched to Jira, grouped by raw Jira status (org-wide, for all roles)
 - `GET /api/reports/filtered` - Filtered ideas with pagination (with CSV export; the CSV additionally carries Jira Key/Status/Assignee/Resolution columns)
 
 ### Departments Endpoints
@@ -418,8 +418,8 @@ npm run test:watch       # Vitest in watch mode
 ### Jira Settings Endpoints (Admin Only)
 
 - `GET /api/jira-settings` - Get Jira configuration (the API token is never returned, only a `hasToken` flag), including the read-only last-sync status `lastSync` (`{ ok, reason?, at }` — since when the poller has been succeeding or failing; `null` when nothing has been recorded yet)
-- `PUT /api/jira-settings` - Save Jira configuration (token stored encrypted); changing `baseUrl` or `email` while a token is already stored requires the token to be either re-entered or explicitly cleared — otherwise `400`; returns the same shape as `GET`, including `lastSync` (a save can neither set nor clear it — only the poller writes it)
-- `POST /api/jira-settings/test` - Verify the saved settings (`GET /rest/api/3/myself`)
+- `PUT /api/jira-settings` - Save Jira configuration (token stored encrypted); changing `baseUrl` or `email` while a token is already stored requires the token to be either re-entered or explicitly cleared — otherwise `400`; returns the same shape as `GET`, including `lastSync` (a save can neither set nor clear it — only the poller writes it); saving an enabled configuration also resolves the site's cloud id in the background (for scoped API tokens)
+- `POST /api/jira-settings/test` - Verify the saved settings (`GET /rest/api/3/myself`); refreshes the stored site cloud id first — one click also migrates an existing install to the api.atlassian.com gateway
 - `GET /api/jira-settings/projects` - List the Jira projects visible to the tech account (for the default-project / department-override picker); returns an empty list with a reason code when Jira is disabled or unreachable
 
 ### Users Endpoints (Admin Only)
@@ -440,7 +440,7 @@ npm run test:watch       # Vitest in watch mode
 - Submit new ideas
 - View all ideas (global list and own ideas)
 - No longer executes ideas by claiming them — dispatching an approved idea to Jira is done by a Power User/Admin; a regular user only tracks progress. Ideas claimed before this change keep their original behavior (their assignee still logs progress steps and marks the idea completed — grandfathered)
-- Dashboard and reports scoped to own ideas
+- Read-only dashboard and reports for the whole organization (without the contributors leaderboard)
 
 ### POWER_USER
 - All USER permissions
@@ -525,6 +525,7 @@ npm run test:watch       # Vitest in watch mode
 ### JiraSettings Model (singleton)
 - `enabled`: Master switch for the Jira integration
 - `baseUrl`: Base URL of the Jira Cloud instance (must be https, no IP address, no localhost)
+- `cloudId`: Auto-resolved Atlassian cloud id of the site (nullable); when known, REST calls route through the `api.atlassian.com/ex/jira/{cloudId}` gateway (scoped API token support)
 - `email`: Jira tech account email used for Basic auth
 - API token stored encrypted (AES-256-GCM), never returned by the API
 - `defaultProjectKey`: Default target project key (overridable per department)
@@ -539,8 +540,8 @@ IdeaHub has **comprehensive test coverage** across backend, frontend, and end-to
 
 ### Test Coverage Summary
 
-- **Backend**: 1058 tests across 24 Jest suites (run against mocked Prisma — no database needed)
-- **Backend integration**: 110 tests across 12 Jest suites against a real MongoDB (`npm run test:integration`)
+- **Backend**: 1099 tests across 24 Jest suites (run against mocked Prisma — no database needed)
+- **Backend integration**: 113 tests across 12 Jest suites against a real MongoDB (`npm run test:integration`)
 - **Frontend**: 635 Vitest tests across 24 files (pages, stores, API client, i18n)
 - **E2E**: 22 Playwright tests across 12 files, covering local & SSO login, RBAC (including the admin-only Jira settings page), the idea lifecycle (including dispatch to Jira, status polling, cancellation, and re-dispatch), departments, email settings, Webex settings, Jira settings and the F2 rule, the per-idea notification opt-in, and i18n
 

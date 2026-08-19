@@ -249,10 +249,13 @@ describe('jira status breakdown (real DB)', () => {
     ]);
   });
 
-  test("GET /jira-statuses as USER is scoped to the user's own ideas", async () => {
+  test('GET /jira-statuses as USER returns the same org-wide breakdown', async () => {
     const res = await userAgent.get('/api/reports/jira-statuses');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual([{ status: 'In Review', count: 1 }]);
+    expect(res.body).toEqual([
+      { status: 'In Review', count: 2 },
+      { status: 'To Do', count: 1 },
+    ]);
   });
 
   test('the CSV export carries the mirrored Jira cells', async () => {
