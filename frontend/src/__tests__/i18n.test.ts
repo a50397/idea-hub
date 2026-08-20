@@ -48,7 +48,9 @@ describe('i18n translation files', () => {
     // like 'common.appName' and 'users.sso' below.
     // jiraSettings.apiToken: "API token" is the correct technical term in BOTH
     // locales (the SK catalog deliberately does not translate it).
-    const allowedIdentical = ['common.appName', 'users.sso', 'events.actorJira', 'jiraSettings.apiToken'];
+    // ideas.jiraKey: user decision 2026-08-20 — the label reads "Jira issue" in
+    // both locales.
+    const allowedIdentical = ['common.appName', 'users.sso', 'events.actorJira', 'jiraSettings.apiToken', 'ideas.jiraKey'];
     const unexpected = identical.filter((k) => !allowedIdentical.includes(k));
     expect(unexpected).toEqual([]);
   });
@@ -156,7 +158,8 @@ describe('translation coverage for components', () => {
       'validation.titleMinLength', 'validation.effortRequired',
     ],
     IdeaCard: [
-      'ideas.viewDetails', 'ideas.approvedBy', 'ideas.assignedTo', 'ideas.submittedBy',
+      'ideas.viewDetails', 'ideas.approvedBy', 'ideas.rejectedBy', 'ideas.assignedTo', 'ideas.submittedBy',
+      'ideas.jiraSyncHint', 'ideas.jiraFinalHint',
       'status.submitted', 'status.approved', 'status.inProgress', 'status.done', 'status.rejected',
       'effort.lessThanOneDay', 'effort.oneToThreeDays', 'effort.moreThanThreeDays',
     ],
@@ -180,8 +183,9 @@ describe('translation coverage for components', () => {
     ],
     IdeaDetailPage: [
       'ideas.description', 'ideas.benefits', 'ideas.details',
-      'ideas.submittedBy', 'ideas.approvedByLabel', 'ideas.assignedToLabel',
+      'ideas.submittedBy', 'ideas.approvedByLabel', 'ideas.rejectedByLabel', 'ideas.assignedToLabel',
       'ideas.activityTimeline', 'ideas.ideaNotFound', 'ideas.notifyToggle',
+      'ideas.jiraSyncHint', 'ideas.jiraFinalHint', 'ideas.jiraCancelledKey',
     ],
     ReportsPage: [
       'reports.title', 'reports.filters', 'reports.status', 'reports.startDate',

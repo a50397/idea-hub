@@ -113,8 +113,11 @@
                   <v-list-item-title>{{ $t('ideas.department') }}</v-list-item-title>
                   <v-list-item-subtitle>{{ idea.department.name }}</v-list-item-subtitle>
                 </v-list-item>
+                <!-- The reviewer lands in `approver` for BOTH outcomes (the reject
+                     endpoint writes the same field), so the label must follow the
+                     status or a rejected idea reads "Approved By". -->
                 <v-list-item v-if="idea.approver">
-                  <v-list-item-title>{{ $t('ideas.approvedByLabel') }}</v-list-item-title>
+                  <v-list-item-title>{{ $t(idea.status === IdeaStatus.REJECTED ? 'ideas.rejectedByLabel' : 'ideas.approvedByLabel') }}</v-list-item-title>
                   <v-list-item-subtitle>{{ idea.approver.name }}</v-list-item-subtitle>
                 </v-list-item>
                 <v-list-item v-if="idea.assignee">
@@ -178,13 +181,18 @@
 
           <!-- Jira execution block: the key/status/assignee/resolution mirror once
                dispatched, and/or the dispatch button itself for an eligible APPROVED
-               idea (same gating + new-tab UX as ApprovedIdeasPage). -->
+               idea (same gating + new-tab UX as ApprovedIdeasPage). After a
+               Jira-side cancellation the kept key still renders, but labelled as a
+               cancelled task (user decision 2026-08-20) — presenting it as the live
+               "Jira issue" of a re-dispatchable idea would mislead. -->
           <v-card class="mt-4" v-if="idea.jiraIssueKey || canCreateJiraTask">
             <v-card-title>{{ $t('ideas.jiraTask') }}</v-card-title>
             <v-card-text>
               <v-list v-if="idea.jiraIssueKey" density="compact">
                 <v-list-item>
-                  <v-list-item-title>{{ $t('ideas.jiraKey') }}</v-list-item-title>
+                  <v-list-item-title>{{
+                    $t(hasLiveJiraIssue ? 'ideas.jiraKey' : 'ideas.jiraCancelledKey')
+                  }}</v-list-item-title>
                   <v-list-item-subtitle>
                     <a v-if="idea.jiraBrowseUrl" :href="idea.jiraBrowseUrl" target="_blank" rel="noopener">
                       {{ idea.jiraIssueKey }}
@@ -207,6 +215,12 @@
                   <v-list-item-subtitle>{{ idea.jiraResolution }}</v-list-item-subtitle>
                 </v-list-item>
               </v-list>
+              <!-- Two distinct explanations: a watched issue updates within the
+                   poll interval; a final state (completed or cancelled in Jira)
+                   never will. -->
+              <div v-if="hasLiveJiraIssue" class="text-caption text-medium-emphasis">
+                {{ $t(idea.jiraSyncActive ? 'ideas.jiraSyncHint' : 'ideas.jiraFinalHint') }}
+              </div>
               <v-btn
                 v-if="canCreateJiraTask"
                 color="success"
@@ -331,6 +345,13 @@ const canCreateJiraTask = computed(() => {
     !idea.value?.jiraSyncActive
   );
 });
+
+// Same gate as IdeaCard: a Jira-side cancellation turns sync off and nulls the raw
+// status but keeps the key — that key renders under the "cancelled task" label
+// instead of the live "Jira issue" one.
+const hasLiveJiraIssue = computed(() =>
+  Boolean(idea.value?.jiraIssueKey && (idea.value?.jiraSyncActive || idea.value?.jiraStatus))
+);
 
 // Colored by Jira's status CATEGORY; falls back to a neutral color when the
 // category is not (yet) known.

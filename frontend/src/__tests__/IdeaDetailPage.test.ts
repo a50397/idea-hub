@@ -399,6 +399,31 @@ describe('IdeaDetailPage Jira sidebar block', () => {
     expect(wrapper.findAll('a').find((a) => a.text().trim() === 'OPS-7')).toBeUndefined();
   });
 
+  it('labels the key a "Cancelled task" (not the live "Jira issue") after a Jira-side cancellation', async () => {
+    mockedIdeas.getOne.mockResolvedValue(
+      makeIdea({
+        status: IdeaStatus.APPROVED,
+        jiraIssueKey: 'OPS-7',
+        jiraStatus: null,
+        jiraSyncActive: false,
+        jiraBrowseUrl: 'https://acme.atlassian.net/browse/OPS-7',
+      })
+    );
+    mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, jiraEnabled: true, ssoShowLogout: false });
+    signInAsPowerUser();
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Cancelled task');
+    expect(wrapper.text()).not.toContain('Jira issue'); // the live-issue label
+    // Still a link — the cancelled issue usually still exists in Jira.
+    const link = wrapper.findAll('a').find((a) => a.text().trim() === 'OPS-7');
+    expect(link).toBeTruthy();
+    expect(link!.attributes('href')).toBe('https://acme.atlassian.net/browse/OPS-7');
+    // And the idea is re-dispatchable.
+    expect(wrapper.text()).toContain('Create Jira task');
+  });
+
   it('shows the resolution only once the idea is DONE', async () => {
     mockedIdeas.getOne.mockResolvedValue(
       makeIdea({

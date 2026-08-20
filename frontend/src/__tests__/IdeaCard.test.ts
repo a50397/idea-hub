@@ -76,6 +76,17 @@ describe('IdeaCard', () => {
     expect(wrapper.text()).toContain('Assigned to Carol Assignee');
   });
 
+  it('labels the reviewer "Rejected by" on a REJECTED idea (the reject endpoint writes the same approver field)', () => {
+    const wrapper = mountCard(
+      makeIdea({
+        status: IdeaStatus.REJECTED,
+        approver: { id: 'a1', name: 'Bob Approver', email: 'bob@x.com', role: 'POWER_USER' as any },
+      })
+    );
+    expect(wrapper.text()).toContain('Rejected by Bob Approver');
+    expect(wrapper.text()).not.toContain('Approved by');
+  });
+
   const statusCases: Array<{ status: IdeaStatus; label: string }> = [
     { status: IdeaStatus.SUBMITTED, label: 'Submitted' },
     { status: IdeaStatus.APPROVED, label: 'Approved' },
@@ -127,19 +138,118 @@ describe('IdeaCard', () => {
     expect(chip.text()).toBe('Odoslané');
   });
 
-  describe('Jira raw-status chip', () => {
+  describe('Jira chip', () => {
+    /** Chip texts only — wrapper.text() would also match the "Submitted By …" caption. */
+    function chipTexts(wrapper: ReturnType<typeof mountCard>): string[] {
+      return wrapper.findAllComponents({ name: 'VChip' }).map((c) => c.text().trim());
+    }
+
     it('renders no Jira chip when the idea was never dispatched', () => {
       const wrapper = mountCard(makeIdea({ tags: [] }));
-      expect(wrapper.text()).not.toContain('In Review');
+      expect(wrapper.text()).not.toContain('OPS-1');
       // Only the status + effort chips (no department, no tags).
       expect(wrapper.findAllComponents({ name: 'VChip' })).toHaveLength(2);
     });
 
-    it('renders the raw Jira status name as its own chip, ahead of the canonical status chip', () => {
-      const wrapper = mountCard(makeIdea({ jiraStatus: 'In Review', jiraStatusCategory: 'indeterminate' }));
+    it('renders a separate key chip + status chip, replacing the canonical status chip, once the raw status is known', () => {
+      const wrapper = mountCard(
+        makeIdea({
+          status: IdeaStatus.IN_PROGRESS,
+          jiraIssueKey: 'OPS-1',
+          jiraSyncActive: true,
+          jiraStatus: 'In Review',
+          jiraStatusCategory: 'indeterminate',
+        })
+      );
       const chips = wrapper.findAllComponents({ name: 'VChip' });
-      expect(chips[0].text()).toBe('In Review');
-      expect(chips[1].text()).toBe('Submitted'); // the canonical status chip, unchanged
+      expect(chips[0].text()).toBe('OPS-1'); // the link chip
+      expect(chips[1].text()).toBe('In Review'); // the (non-link) status chip
+      expect(chipTexts(wrapper)).not.toContain('In Progress'); // canonical chip replaced
+    });
+
+    it('shows the key chip next to the still-canonical status right after dispatch (first poll pending)', () => {
+      const wrapper = mountCard(
+        makeIdea({
+          status: IdeaStatus.APPROVED,
+          jiraIssueKey: 'OPS-1',
+          jiraSyncActive: true,
+          jiraStatus: null,
+          jiraStatusCategory: 'new',
+        })
+      );
+      const chips = wrapper.findAllComponents({ name: 'VChip' });
+      expect(chips[0].text()).toBe('OPS-1');
+      // No raw status yet, so the canonical chip stays (it is still accurate).
+      expect(chips[1].text()).toBe('Approved');
+    });
+
+    it('suppresses the chip when a Jira-side cancellation left a stale key behind (sync off, raw status nulled)', () => {
+      const wrapper = mountCard(
+        makeIdea({
+          status: IdeaStatus.APPROVED,
+          jiraIssueKey: 'OPS-1',
+          jiraSyncActive: false,
+          jiraStatus: null,
+          jiraStatusCategory: null,
+        })
+      );
+      expect(wrapper.text()).not.toContain('OPS-1');
+      expect(chipTexts(wrapper)).toContain('Approved'); // back to the canonical chip
+    });
+
+    it('keeps both chips on an idea finished through Jira (sync off, raw status retained)', () => {
+      const wrapper = mountCard(
+        makeIdea({
+          status: IdeaStatus.DONE,
+          jiraIssueKey: 'OPS-1',
+          jiraSyncActive: false,
+          jiraStatus: 'Resolved',
+          jiraStatusCategory: 'done',
+        })
+      );
+      const chips = wrapper.findAllComponents({ name: 'VChip' });
+      expect(chips[0].text()).toBe('OPS-1');
+      expect(chips[1].text()).toBe('Resolved');
+      expect(chips[1].props('color')).toBe('success');
+    });
+
+    it('links the KEY chip (only) to the server-built browse URL (new tab, noopener)', () => {
+      const wrapper = mountCard(
+        makeIdea({
+          jiraIssueKey: 'OPS-1',
+          jiraSyncActive: true,
+          jiraStatus: 'In Review',
+          jiraStatusCategory: 'indeterminate',
+          jiraBrowseUrl: 'https://acme.atlassian.net/browse/OPS-1',
+        })
+      );
+      const chips = wrapper.findAllComponents({ name: 'VChip' });
+      expect(chips[0].attributes('href')).toBe('https://acme.atlassian.net/browse/OPS-1');
+      expect(chips[0].attributes('target')).toBe('_blank');
+      expect(chips[0].attributes('rel')).toBe('noopener');
+      // The status chip must NOT navigate — clicking a "status" that opens Jira
+      // reads as a misclick.
+      expect(chips[1].attributes('href')).toBeUndefined();
+    });
+
+    it('renders a plain (non-link) key chip when the server omitted the browse URL', () => {
+      const wrapper = mountCard(makeIdea({ jiraIssueKey: 'OPS-1', jiraSyncActive: true }));
+      const chip = wrapper.findAllComponents({ name: 'VChip' })[0];
+      expect(chip.text()).toBe('OPS-1');
+      expect(chip.attributes('href')).toBeUndefined();
+    });
+
+    // The tooltip TEXT (active "synced periodically" vs final "no longer updated")
+    // renders only on hover, so these pin the placement: exactly one explanation
+    // tooltip per card, and none once no Jira chip is shown.
+    it.each([
+      ['sync on, no raw status yet (tooltip on the key chip)', { jiraSyncActive: true, jiraStatus: null }, 1],
+      ['sync on, raw status known (tooltip on the status chip)', { jiraSyncActive: true, jiraStatus: 'In Review' }, 1],
+      ['final state (tooltip on the status chip)', { jiraSyncActive: false, jiraStatus: 'Resolved' }, 1],
+      ['stale key after a cancel (no chip, no tooltip)', { jiraSyncActive: false, jiraStatus: null }, 0],
+    ])('explanation tooltip: %s', (_label, jiraFields, count) => {
+      const wrapper = mountCard(makeIdea({ jiraIssueKey: 'OPS-1', ...jiraFields }));
+      expect(wrapper.findAllComponents({ name: 'VTooltip' })).toHaveLength(count);
     });
 
     const categoryCases: Array<{ category: 'new' | 'indeterminate' | 'done'; color: string }> = [
@@ -149,30 +259,34 @@ describe('IdeaCard', () => {
     ];
 
     describe.each(categoryCases)('category $category', ({ category, color }) => {
-      it(`colors the chip ${color}`, () => {
-        const wrapper = mountCard(makeIdea({ jiraStatus: 'Some Status', jiraStatusCategory: category }));
-        const chip = wrapper.findAllComponents({ name: 'VChip' })[0];
+      it(`colors the status chip ${color}`, () => {
+        const wrapper = mountCard(
+          makeIdea({ jiraIssueKey: 'OPS-1', jiraSyncActive: true, jiraStatus: 'Some Status', jiraStatusCategory: category })
+        );
+        // chips[0] is the key chip; the status chip carries the category color.
+        const chip = wrapper.findAllComponents({ name: 'VChip' })[1];
         expect(chip.props('color')).toBe(color);
       });
     });
 
     it('falls back to a neutral color when the status is known but the category is not (yet)', () => {
-      const wrapper = mountCard(makeIdea({ jiraStatus: 'To Do', jiraStatusCategory: null }));
-      const chip = wrapper.findAllComponents({ name: 'VChip' })[0];
+      const wrapper = mountCard(
+        makeIdea({ jiraIssueKey: 'OPS-1', jiraSyncActive: true, jiraStatus: 'To Do', jiraStatusCategory: null })
+      );
+      const chip = wrapper.findAllComponents({ name: 'VChip' })[1];
       expect(chip.props('color')).toBe('default');
     });
 
-    it('caps an absurdly long remote status name so the canonical status chip still renders (deep-review fix A2)', () => {
+    it('caps an absurdly long remote status name behind an ellipsis (deep-review fix A2)', () => {
       const wrapper = mountCard(
-        makeIdea({ jiraStatus: 'X'.repeat(255), jiraStatusCategory: 'indeterminate' })
+        makeIdea({ jiraIssueKey: 'OPS-1', jiraSyncActive: true, jiraStatus: 'X'.repeat(255), jiraStatusCategory: 'indeterminate' })
       );
       const chips = wrapper.findAllComponents({ name: 'VChip' });
-      // Both chips exist; the Jira chip carries the max-width class and an inner
-      // truncating span, and the canonical chip refuses to shrink away.
-      expect(chips[0].classes()).toContain('jira-status-chip');
-      expect(chips[0].find('span.text-truncate').exists()).toBe(true);
-      expect(chips[1].text()).toBe('Submitted');
-      expect(chips[1].classes()).toContain('flex-shrink-0');
+      // The status chip carries the max-width class and an inner truncating span,
+      // and the effort chip next to it still renders.
+      expect(chips[1].classes()).toContain('jira-status-chip');
+      expect(chips[1].find('span.text-truncate').exists()).toBe(true);
+      expect(chips[2].text()).toBe('1-3 days');
     });
   });
 });

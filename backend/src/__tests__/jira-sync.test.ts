@@ -541,6 +541,42 @@ describe('runJiraSyncOnce — transition matrix', () => {
     }
   );
 
+  // Live-bug regression (2026-08-20): team-managed Jira Cloud projects have no
+  // resolution field — cancelling there is a done-category STATUS literally named
+  // "Won't Do" with resolution null, which the resolution-only check counted as a
+  // successful completion (idea stuck DONE, unreachable for re-dispatch).
+  it.each(["Won't Do", "WON'T DO"])(
+    '-> done via the cancel-list STATUS NAME %s with a null resolution: cancelled, not completed',
+    async (statusName) => {
+      arrange(
+        [
+          ideaRow({
+            status: 'IN_PROGRESS',
+            startedAt: new Date('2026-01-01T00:00:00Z'),
+            jiraStatusCategory: 'indeterminate',
+            jiraStatus: 'In Progress',
+          }),
+        ],
+        { '10001': snapshot({ statusName, categoryKey: 'done', resolution: null }) }
+      );
+
+      await runJiraSyncOnce(cfg());
+
+      expect(ideaWrites()[0].data).toMatchObject({
+        status: 'APPROVED',
+        startedAt: null,
+        completedAt: null,
+        jiraSyncActive: false,
+        jiraStatus: null,
+      });
+      const event = eventWrites()[0];
+      expect(event).toMatchObject({ type: 'JIRA_CANCELLED', byUserId: null });
+      // No "(resolution: …)" suffix when the match came from the status name alone.
+      expect(String(event.note)).not.toContain('resolution');
+      expect(mockedNotify.mock.calls[0][0]).toMatchObject({ event: 'JIRA_CANCELLED' });
+    }
+  );
+
   it('indeterminate -> new: back to APPROVED, startedAt KEPT, sync stays on, NO notification', async () => {
     const startedAt = new Date('2026-01-01T00:00:00Z');
     arrange(
@@ -753,6 +789,45 @@ describe('runJiraSyncOnce — missing issues (F11)', () => {
     // jiraLastSyncAt keeps them at the front of the next oldest-first batch.
     expect(ideaWrites()).toHaveLength(25);
   });
+
+  // Live-bug regression (2026-08-20): one DELETED issue id 400s the entire
+  // `id in (...)` JQL, which used to abort every run — the deleted issue's idea sat
+  // wedged in APPROVED with sync active (no re-dispatch button) and every other
+  // synced idea froze with it. An invalid_request search now degrades the run to
+  // the per-issue probes instead of aborting.
+  it('search invalid_request does NOT abort: alive ideas still sync via individual probes', async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([ideaRow({ jiraStatusCategory: 'new' })]);
+    mockPrisma.idea.updateMany.mockResolvedValue({ count: 1 });
+    mockedSearch.mockResolvedValue({ ok: false, reason: 'invalid_request' });
+    mockedGetIssue.mockResolvedValue({
+      ok: true,
+      found: true,
+      issue: snapshot({ statusName: 'In Progress', categoryKey: 'indeterminate' }),
+    });
+
+    await runJiraSyncOnce(cfg());
+
+    expect(mockedGetIssue).toHaveBeenCalledWith(expect.anything(), '10001');
+    expect(ideaWrites()[0].data).toMatchObject({ status: 'IN_PROGRESS' });
+  });
+
+  it('search invalid_request + a second confirmed 404 still cancels the deleted issue (batch heals)', async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([
+      ideaRow({ status: 'IN_PROGRESS', startedAt: new Date(), jiraMissingCount: 1 }),
+    ]);
+    mockPrisma.idea.updateMany.mockResolvedValue({ count: 1 });
+    mockedSearch.mockResolvedValue({ ok: false, reason: 'invalid_request' });
+    mockedGetIssue.mockResolvedValue({ ok: true, found: false });
+
+    await runJiraSyncOnce(cfg());
+
+    expect(ideaWrites()[0].data).toMatchObject({
+      status: 'APPROVED',
+      jiraSyncActive: false,
+      jiraMissingCount: null,
+    });
+    expect(eventWrites()[0]).toMatchObject({ type: 'JIRA_CANCELLED' });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -804,6 +879,22 @@ describe('sync health record', () => {
       lastSyncReason: reason,
       lastSyncAt: expect.any(Date),
     });
+  });
+
+  it('a degraded run (invalid_request → per-issue probes) records SUCCESS, not a failing integration', async () => {
+    mockPrisma.idea.findMany.mockResolvedValue([ideaRow()]);
+    mockPrisma.idea.updateMany.mockResolvedValue({ count: 1 });
+    mockedSearch.mockResolvedValue({ ok: false, reason: 'invalid_request' });
+    mockedGetIssue.mockResolvedValue({ ok: true, found: false }); // first missing tick
+    // Stored state says "failing", so an ok outcome is a transition that must write.
+    mockedGetRecord.mockResolvedValue(
+      storedRecord({ lastSyncOk: false, lastSyncReason: 'invalid_request', lastSyncAt: new Date() })
+    );
+
+    await runJiraSyncOnce(cfg());
+
+    expect(statusWrites()).toHaveLength(1);
+    expect(statusWrites()[0].update).toMatchObject({ lastSyncOk: true, lastSyncReason: null });
   });
 
   it('the FIRST failure is written once; an identical repeat writes NOTHING (transition only)', async () => {

@@ -27,23 +27,13 @@
         <v-col v-for="idea in ideas" :key="idea.id" cols="12" md="6" lg="4">
           <IdeaCard :idea="idea" @view="viewIdea">
             <template #actions>
-              <!-- Once dispatched, the button is replaced by a status chip. When the
-                   server provided a browse URL the chip IS a link (new tab, noopener):
-                   Safari and strict-Firefox popup blockers can swallow the post-await
-                   window.open on dispatch, and the snackbar fallback expires — this
-                   chip is the durable way back to the issue (deep-review fix). -->
-              <v-chip
-                v-if="idea.jiraSyncActive"
-                color="info"
-                variant="tonal"
-                :href="idea.jiraBrowseUrl || undefined"
-                :target="idea.jiraBrowseUrl ? '_blank' : undefined"
-                :rel="idea.jiraBrowseUrl ? 'noopener' : undefined"
-              >
-                {{ $t('ideas.jiraChip', { key: idea.jiraIssueKey }) }}
-              </v-chip>
+              <!-- Once dispatched, the button disappears and IdeaCard's own linked
+                   Jira chip (title row) takes over as the durable way back to the
+                   issue — Safari and strict-Firefox popup blockers can swallow the
+                   post-await window.open on dispatch, and the snackbar fallback
+                   expires. -->
               <v-btn
-                v-else-if="canCreateJiraTask(idea)"
+                v-if="canCreateJiraTask(idea)"
                 color="success"
                 variant="elevated"
                 @click="createJiraTask(idea)"

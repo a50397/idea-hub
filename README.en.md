@@ -531,7 +531,7 @@ npm run test:watch       # Vitest in watch mode
 - `defaultProjectKey`: Default target project key (overridable per department)
 - `issueTypeName`: Issue type created in Jira (default „Task")
 - `pollIntervalMinutes`: Status poll interval (1-1440 minutes)
-- `cancelResolutions`: List of Jira resolution names that mean "not completed/cancelled" and return the idea to Approved (default `Won't Do,Cancelled,Duplicate`)
+- `cancelResolutions`: List of Jira resolution or closing-status names that mean "not completed/cancelled" and return the idea to Approved (default `Won't Do,Cancelled,Duplicate`). The status name is compared too because team-managed projects have no resolution field
 - `lastSyncOk`, `lastSyncReason`, `lastSyncAt`: Read-only status of the last poller run ("in this state since" — written only on a state change); `null` until anything has been recorded; read by the **Jira settings** page and the `jiraSyncFailing` banner
 
 ## Testing
@@ -861,16 +861,13 @@ If frontend can't reach backend:
 2. Ensure backend is running
 3. Check browser console for CORS errors
 
-## Support
+## Tests (from root)
 
-For issues and questions:
-- Create an issue in the repository
-- Check existing documentation
-- Review API endpoint examples
+- Frontend unit: `cd frontend && npm test`
+- Frontend typecheck: `cd frontend && npx vue-tsc --noEmit`
+- Frontend i18n smoke: `cd frontend && npx vite-node scripts/i18n-smoke.ts`
 
-## Acknowledgments
+- FE and BE: `npm run test`
+- E2E: `npm run test:e2e`
 
-- Built with Vue 3, Vuetify, Express, and Prisma
-- Chart.js for analytics visualization
-- MongoDB for flexible data storage
-- Docker for containerization
+- Integration: `cd backend && npm run test:integration` (Mongo container up)

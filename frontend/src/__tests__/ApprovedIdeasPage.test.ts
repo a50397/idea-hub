@@ -317,23 +317,23 @@ describe('ApprovedIdeasPage', () => {
       expect(wrapper.text()).not.toContain('Create Jira task');
     });
 
-    it('replaces the button with a passive "Jira: KEY" chip once dispatched (jiraSyncActive)', async () => {
+    it("replaces the button with IdeaCard's linked Jira chip once dispatched (jiraSyncActive)", async () => {
       mockedIdeas.getAll.mockResolvedValue(paginated([makeIdea({ jiraSyncActive: true, jiraIssueKey: 'OPS-1' })]));
       signIn(Role.POWER_USER);
       const wrapper = mountPage();
       await flushPromises();
 
       expect(wrapper.text()).not.toContain('Create Jira task');
-      expect(wrapper.text()).toContain('Jira: OPS-1');
+      expect(wrapper.text()).toContain('OPS-1');
     });
 
-    it('shows the passive chip to a regular USER too (it is not power-user gated)', async () => {
+    it('shows the chip to a regular USER too (it is not power-user gated)', async () => {
       mockedIdeas.getAll.mockResolvedValue(paginated([makeIdea({ jiraSyncActive: true, jiraIssueKey: 'OPS-1' })]));
       signIn(Role.USER);
       const wrapper = mountPage();
       await flushPromises();
 
-      expect(wrapper.text()).toContain('Jira: OPS-1');
+      expect(wrapper.text()).toContain('OPS-1');
     });
 
     it('renders the chip as a new-tab noopener LINK when the server provided a browse URL', async () => {
@@ -358,7 +358,7 @@ describe('ApprovedIdeasPage', () => {
       expect(link).toBeTruthy();
       expect(link!.attributes('target')).toBe('_blank');
       expect(link!.attributes('rel')).toBe('noopener');
-      expect(link!.text()).toContain('Jira: OPS-1');
+      expect(link!.text()).toContain('OPS-1');
     });
 
     it('renders a plain (non-link) chip when no browse URL is present', async () => {
@@ -367,9 +367,9 @@ describe('ApprovedIdeasPage', () => {
       const wrapper = mountPage();
       await flushPromises();
 
-      expect(wrapper.text()).toContain('Jira: OPS-1');
+      expect(wrapper.text()).toContain('OPS-1');
       expect(
-        wrapper.findAll('a').find((a) => (a.text() || '').includes('Jira: OPS-1'))
+        wrapper.findAll('a').find((a) => (a.text() || '').includes('OPS-1'))
       ).toBeUndefined();
     });
   });

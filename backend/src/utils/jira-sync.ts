@@ -387,8 +387,16 @@ function decidePresentIssue(
   // --- reached a FINAL state ---------------------------------------------
   if (category === 'done' && previousCategory !== 'done') {
     const resolution = snapshot.resolution;
+    // The cancel list matches the RESOLUTION when Jira provides one, and ALSO the
+    // raw STATUS NAME: team-managed Jira Cloud projects often have no resolution
+    // field at all — closing an issue there as "Won't Do" arrives as a
+    // done-category status literally named "Won't Do" with resolution: null
+    // (observed live 2026-08-20), and keying on the resolution alone counted that
+    // as a successful completion.
     const cancelled =
-      resolution !== null && cancelResolutions.includes(resolution.toLowerCase());
+      (resolution !== null && cancelResolutions.includes(resolution.toLowerCase())) ||
+      (snapshot.statusName !== null &&
+        cancelResolutions.includes(snapshot.statusName.toLowerCase()));
 
     if (cancelled) {
       // Unsuccessful final state: the idea returns to APPROVED and may be
@@ -413,7 +421,8 @@ function decidePresentIssue(
         data,
         event: {
           type: EventType.JIRA_CANCELLED,
-          note: `${note} (resolution: ${resolution})`,
+          // No resolution suffix when the cancel matched on the status name alone.
+          note: resolution !== null ? `${note} (resolution: ${resolution})` : note,
         },
         notify: 'JIRA_CANCELLED',
       };
@@ -698,7 +707,7 @@ export async function runJiraSyncOnce(cfgOverride?: EffectiveJiraConfig): Promis
     .filter((id): id is string => typeof id === 'string' && id.length > 0);
 
   const search = await searchJiraIssuesByIds(cfg, ids);
-  if (!search.ok) {
+  if (!search.ok && search.reason !== 'invalid_request') {
     // A partial result would look like deletions, so a failed chunk aborts the whole
     // run. A 429 (Retry-After) or a 5xx additionally parks the poller (F13).
     if (search.retryAfterSeconds !== undefined) {
@@ -713,6 +722,20 @@ export async function runJiraSyncOnce(cfgOverride?: EffectiveJiraConfig): Promis
     return;
   }
 
+  // invalid_request means Jira rejected the JQL itself — and one DELETED issue id
+  // does exactly that: `id in (...)` 400s when an id no longer resolves, so a
+  // single deleted task used to abort every subsequent run, wedging its idea in
+  // APPROVED with sync active (no re-dispatch button) and freezing every other
+  // synced idea with it (observed live 2026-08-20). Degrade such a run to an empty
+  // result instead: every idea then takes the missing path below, whose per-issue
+  // GET probes still fully sync the alive ones (found → decidePresentIssue) while
+  // a real deletion confirms via 404 on two consecutive ticks (F11), stops syncing,
+  // and thereby leaves the batch — the JQL heals itself.
+  if (!search.ok) {
+    console.error('[JIRA] batch search rejected (invalid_request) — probing issues individually this run');
+  }
+  const issuesById = search.ok ? search.issues : new Map<string, JiraIssueSnapshot>();
+
   // --- apply --------------------------------------------------------------
   let missingProbes = 0;
   // Set once a probe came back with an advisory wait (F13): the remaining missing
@@ -721,7 +744,7 @@ export async function runJiraSyncOnce(cfgOverride?: EffectiveJiraConfig): Promis
   for (const idea of ideas) {
     // Each idea is independent: one failure must not abort the batch.
     try {
-      const snapshot = search.issues.get(idea.jiraIssueId as string);
+      const snapshot = issuesById.get(idea.jiraIssueId as string);
 
       if (snapshot === undefined) {
         if (probesParked || missingProbes >= MAX_MISSING_PROBES_PER_RUN) {

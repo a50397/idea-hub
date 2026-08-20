@@ -1,5 +1,5 @@
 import { Router, type Request } from 'express';
-import { IdeaStatus, EventType, Role, Prisma } from '@prisma/client';
+import { IdeaStatus, EventType, Role, Prisma, Effort } from '@prisma/client';
 import { rateLimit } from 'express-rate-limit';
 import prisma from '../lib/prisma';
 import { requireAuth, requireRole } from '../middleware/auth';
@@ -52,6 +52,14 @@ async function attachJiraBrowseUrls<T extends { jiraIssueKey: string | null }>(
     return browseUrl === null ? idea : { ...idea, jiraBrowseUrl: browseUrl };
   });
 }
+
+// Effort wording for the Jira task description — Slovak, because Slovak staff are
+// who reads the created tasks; values mirror the frontend's sk `effort.*` catalog.
+const JIRA_EFFORT_LABELS: Record<Effort, string> = {
+  [Effort.LESS_THAN_ONE_DAY]: '< 1 deň',
+  [Effort.ONE_TO_THREE_DAYS]: '1-3 dni',
+  [Effort.MORE_THAN_THREE_DAYS]: '> 3 dni',
+};
 
 // Best-effort, fire-and-forget submitter notification, built from the actor in req.session.
 function notifySubmitter(req: Request, idea: NotifiableIdea, event: MaybeNotifyArgs['event'], stepText?: string): void {
@@ -785,13 +793,14 @@ router.post('/:id/jira-task', jiraTaskLimiter as any, requireRole(Role.POWER_USE
     const link = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/ideas/${existingIdea.id}`;
     // Plain text; utils/jira.ts converts it to ADF (REST v3 rejects a plain-string
     // description). No labels are sent — Jira rejects labels containing whitespace
-    // and idea tags are free text, so tags stay in-app.
+    // and idea tags are free text, so tags stay in-app. Wording is Slovak, same as
+    // the audience of the created tasks.
     const description = [
       existingIdea.description,
-      `Benefits: ${existingIdea.benefits}`,
-      `Effort: ${existingIdea.effort}`,
-      `Department: ${existingIdea.department?.name ?? '-'}`,
-      `Submitted by: ${existingIdea.submitter.name}`,
+      `Prínosy: ${existingIdea.benefits}`,
+      `Náročnosť: ${JIRA_EFFORT_LABELS[existingIdea.effort]}`,
+      `Oddelenie: ${existingIdea.department?.name ?? '-'}`,
+      `Odoslal/a: ${existingIdea.submitter.name}`,
       `IdeaHub: ${link}`,
     ].join('\n');
 

@@ -163,8 +163,9 @@ test('idea lifecycle: submit → approve → create Jira task → poller mirrors
     await popup.waitForURL((url) => url.toString() === body.jiraBrowseUrl);
     await popup.close();
 
-    // The button is replaced by a passive "Jira: KEY" chip.
-    await expect(card(title).getByText(`Jira: ${body.jiraIssueKey}`)).toBeVisible();
+    // The button is replaced by IdeaCard's linked Jira chip (issue key, and the raw
+    // status once the first poll lands — substring match keeps this race-free).
+    await expect(card(title).getByText(body.jiraIssueKey)).toBeVisible();
 
     return { id: body.id, jiraIssueId: body.jiraIssueId, jiraIssueKey: body.jiraIssueKey, jiraBrowseUrl: body.jiraBrowseUrl };
   }

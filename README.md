@@ -534,7 +534,7 @@ npm run test:watch       # Vitest v režime watch
 - `defaultProjectKey`: Predvolený kľúč cieľového projektu (možno prepísať na úrovni oddelenia)
 - `issueTypeName`: Typ úlohy vytváraný v Jire (predvolene „Task")
 - `pollIntervalMinutes`: Interval pollovania stavu (1 – 1440 minút)
-- `cancelResolutions`: Zoznam názvov riešení (resolution) v Jire, ktoré znamenajú „nedokončené/zrušené" a vrátia nápad do stavu Schválený (predvolene `Won't Do,Cancelled,Duplicate`)
+- `cancelResolutions`: Zoznam názvov riešení (resolution) alebo koncových stavov v Jire, ktoré znamenajú „nedokončené/zrušené" a vrátia nápad do stavu Schválený (predvolene `Won't Do,Cancelled,Duplicate`). Porovnáva sa aj názov stavu, pretože tímovo spravované (team-managed) projekty nemajú pole resolution
 - `lastSyncOk`, `lastSyncReason`, `lastSyncAt`: READ-ONLY stav posledného behu pollera („v tomto stave od" — zapisuje sa len pri zmene stavu); `null`, kým sa nič nezaznamenalo; číta ho stránka **Nastavenia Jiry** aj banner `jiraSyncFailing`
 
 ## Testovanie
@@ -870,16 +870,14 @@ Ak sa frontend nevie spojiť s backendom:
 2. Overte, či backend beží
 3. Skontrolujte konzolu prehliadača na chyby CORS
 
-## Podpora
+## Tests (from root)
 
-Pri problémoch a otázkach:
-- Vytvorte issue v repozitári
-- Prezrite si existujúcu dokumentáciu
-- Pozrite si príklady API endpointov
+- Frontend unit: `cd frontend && npm test`
+- Frontend typecheck: `cd frontend && npx vue-tsc --noEmit`
+- Frontend i18n smoke: `cd frontend && npx vite-node scripts/i18n-smoke.ts`
 
-## Poďakovanie
+- FE and BE: `npm run test`
+- E2E: `npm run test:e2e`
 
-- Postavené na Vue 3, Vuetify, Express a Prisma
-- Chart.js na vizualizáciu analytiky
-- MongoDB na flexibilné ukladanie dát
-- Docker na kontajnerizáciu
+- Integration: `cd backend && npm run test:integration` (Mongo container up)
+

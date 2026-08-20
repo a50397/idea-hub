@@ -2,19 +2,43 @@
   <v-card>
     <v-card-title class="d-flex align-center">
       <span class="flex-grow-1 text-truncate card-title-text">{{ idea.title }}</span>
-      <!-- The raw Jira status is remote-controlled text (up to 255 chars): cap and
-           ellipsize it so it can never squeeze the title to nothing or push the
-           canonical status chip out of the clipped title row (deep-review fix). -->
+      <!-- Dispatched ideas get TWO separate chips: the issue KEY carries the link
+           (an explicitly clickable-looking element), and the status chip is never
+           one — a "status" that navigates to Jira reads as a misclick. The raw Jira
+           status REPLACES the canonical chip once known (the two would say the same
+           thing twice); it is remote-controlled text (up to 255 chars): cap and
+           ellipsize it so it can never squeeze the title to nothing (deep-review
+           fix). -->
+      <v-chip
+        v-if="showJiraLink"
+        size="small"
+        variant="outlined"
+        class="mr-2 flex-shrink-0"
+        :href="idea.jiraBrowseUrl || undefined"
+        :target="idea.jiraBrowseUrl ? '_blank' : undefined"
+        :rel="idea.jiraBrowseUrl ? 'noopener' : undefined"
+      >
+        {{ idea.jiraIssueKey }}
+        <v-icon v-if="idea.jiraBrowseUrl" end size="x-small">mdi-open-in-new</v-icon>
+        <!-- The sync explanation lives on the status chip once one exists; before
+             the first poll the key chip is all there is, so it explains the gap. -->
+        <v-tooltip v-if="!idea.jiraStatus" activator="parent" location="top">{{ $t('ideas.jiraSyncHint') }}</v-tooltip>
+      </v-chip>
       <v-chip
         v-if="idea.jiraStatus"
         :color="jiraStatusColor"
         size="small"
         variant="tonal"
-        class="mr-2 jira-status-chip"
+        class="jira-status-chip flex-shrink-0"
       >
         <span class="text-truncate">{{ idea.jiraStatus }}</span>
+        <!-- Two distinct explanations: a watched issue updates within the poll
+             interval; a final state (completed or cancelled in Jira) never will. -->
+        <v-tooltip activator="parent" location="top">{{
+          $t(idea.jiraSyncActive ? 'ideas.jiraSyncHint' : 'ideas.jiraFinalHint')
+        }}</v-tooltip>
       </v-chip>
-      <v-chip :color="statusColors[idea.status]" size="small" class="flex-shrink-0">
+      <v-chip v-else :color="statusColors[idea.status]" size="small" class="flex-shrink-0">
         {{ $t(`status.${statusKeyMap[idea.status]}`) }}
       </v-chip>
     </v-card-title>
@@ -36,9 +60,12 @@
       </div>
       <v-divider class="my-3"></v-divider>
       <div class="text-caption">
+        <!-- The reviewer lands in `approver` for BOTH outcomes (the reject endpoint
+             writes the same field), so the label must follow the status or a
+             rejected idea reads "Approved by …". -->
         <div v-if="idea.approver">
-          <v-icon size="small">mdi-check</v-icon>
-          {{ $t('ideas.approvedBy') }} {{ idea.approver.name }}
+          <v-icon size="small">{{ isRejected ? 'mdi-close' : 'mdi-check' }}</v-icon>
+          {{ $t(isRejected ? 'ideas.rejectedBy' : 'ideas.approvedBy') }} {{ idea.approver.name }}
         </div>
         <div v-if="idea.assignee">
           <v-icon size="small">mdi-account</v-icon>
@@ -100,6 +127,15 @@ defineEmits<{
 const jiraStatusColor = computed(() =>
   props.idea.jiraStatusCategory ? jiraCategoryColors[props.idea.jiraStatusCategory] : 'default'
 );
+
+// Gated on an active sync OR a known raw status, NOT on the bare issue key: a
+// Jira-side cancellation turns sync off and nulls the raw status but leaves the
+// stale key behind, and that idea is back to plain APPROVED — no chip, no dead link.
+const showJiraLink = computed(() =>
+  Boolean(props.idea.jiraIssueKey && (props.idea.jiraSyncActive || props.idea.jiraStatus))
+);
+
+const isRejected = computed(() => props.idea.status === IdeaStatus.REJECTED);
 
 function truncate(text: string, length: number): string {
   if (text.length <= length) return text;
