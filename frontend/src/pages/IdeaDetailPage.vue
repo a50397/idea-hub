@@ -62,7 +62,12 @@
                     </div>
                   </template>
                   <div v-if="item.kind === 'event'">
-                    <strong>{{ item.event!.type }}</strong> by {{ item.event!.byUser.name }}
+                    <!-- The connective between label and actor is locale-owned: the
+                         old hardcoded " by " produced mixed-language Slovak rows
+                         ("Schválené by Peter") once the labels got localized. -->
+                    <strong>{{ eventLabel(item.event!) }}</strong>
+                    {{ $t('events.actorConnective') }}
+                    {{ item.event!.byUser?.name ?? $t('events.actorJira') }}
                     <p v-if="item.event!.note" class="text-caption mt-1">{{ item.event!.note }}</p>
                   </div>
                   <div v-else>
@@ -108,8 +113,11 @@
                   <v-list-item-title>{{ $t('ideas.department') }}</v-list-item-title>
                   <v-list-item-subtitle>{{ idea.department.name }}</v-list-item-subtitle>
                 </v-list-item>
+                <!-- The reviewer lands in `approver` for BOTH outcomes (the reject
+                     endpoint writes the same field), so the label must follow the
+                     status or a rejected idea reads "Approved By". -->
                 <v-list-item v-if="idea.approver">
-                  <v-list-item-title>{{ $t('ideas.approvedByLabel') }}</v-list-item-title>
+                  <v-list-item-title>{{ $t(idea.status === IdeaStatus.REJECTED ? 'ideas.rejectedByLabel' : 'ideas.approvedByLabel') }}</v-list-item-title>
                   <v-list-item-subtitle>{{ idea.approver.name }}</v-list-item-subtitle>
                 </v-list-item>
                 <v-list-item v-if="idea.assignee">
@@ -170,6 +178,62 @@
               </v-btn>
             </v-card-text>
           </v-card>
+
+          <!-- Jira execution block: the key/status/assignee/resolution mirror once
+               dispatched, and/or the dispatch button itself for an eligible APPROVED
+               idea (same gating + new-tab UX as ApprovedIdeasPage). After a
+               Jira-side cancellation the kept key still renders, but labelled as a
+               cancelled task (user decision 2026-08-20) — presenting it as the live
+               "Jira issue" of a re-dispatchable idea would mislead. -->
+          <v-card class="mt-4" v-if="idea.jiraIssueKey || canCreateJiraTask">
+            <v-card-title>{{ $t('ideas.jiraTask') }}</v-card-title>
+            <v-card-text>
+              <v-list v-if="idea.jiraIssueKey" density="compact">
+                <v-list-item>
+                  <v-list-item-title>{{
+                    $t(hasLiveJiraIssue ? 'ideas.jiraKey' : 'ideas.jiraCancelledKey')
+                  }}</v-list-item-title>
+                  <v-list-item-subtitle>
+                    <a v-if="idea.jiraBrowseUrl" :href="idea.jiraBrowseUrl" target="_blank" rel="noopener">
+                      {{ idea.jiraIssueKey }}
+                    </a>
+                    <span v-else>{{ idea.jiraIssueKey }}</span>
+                  </v-list-item-subtitle>
+                </v-list-item>
+                <v-list-item v-if="idea.jiraStatus">
+                  <v-list-item-title>{{ $t('ideas.jiraStatus') }}</v-list-item-title>
+                  <template v-slot:append>
+                    <v-chip size="small" :color="jiraStatusColor" variant="tonal">{{ idea.jiraStatus }}</v-chip>
+                  </template>
+                </v-list-item>
+                <v-list-item v-if="idea.jiraAssignee">
+                  <v-list-item-title>{{ $t('ideas.jiraAssignee') }}</v-list-item-title>
+                  <v-list-item-subtitle>{{ idea.jiraAssignee }}</v-list-item-subtitle>
+                </v-list-item>
+                <v-list-item v-if="idea.status === IdeaStatus.DONE && idea.jiraResolution">
+                  <v-list-item-title>{{ $t('ideas.jiraResolution') }}</v-list-item-title>
+                  <v-list-item-subtitle>{{ idea.jiraResolution }}</v-list-item-subtitle>
+                </v-list-item>
+              </v-list>
+              <!-- Two distinct explanations: a watched issue updates within the
+                   poll interval; a final state (completed or cancelled in Jira)
+                   never will. -->
+              <div v-if="hasLiveJiraIssue" class="text-caption text-medium-emphasis">
+                {{ $t(idea.jiraSyncActive ? 'ideas.jiraSyncHint' : 'ideas.jiraFinalHint') }}
+              </div>
+              <v-btn
+                v-if="canCreateJiraTask"
+                color="success"
+                variant="elevated"
+                block
+                :class="idea.jiraIssueKey ? 'mt-4' : ''"
+                @click="createJiraTask"
+                :loading="creatingJiraTask"
+              >
+                {{ $t('ideas.createJiraTask') }}
+              </v-btn>
+            </v-card-text>
+          </v-card>
         </v-col>
       </v-row>
     </div>
@@ -200,8 +264,11 @@
       </v-card>
     </v-dialog>
 
-    <v-snackbar v-model="snackbar" :color="snackbarColor">
-      {{ snackbarText }}
+    <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="8000">
+      <div>{{ snackbarText }}</div>
+      <a v-if="jiraLinkUrl" :href="jiraLinkUrl" target="_blank" rel="noopener" class="d-block mt-1 text-white">
+        {{ jiraLinkUrl }}
+      </a>
     </v-snackbar>
   </v-container>
 </template>
@@ -213,7 +280,7 @@ import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '../stores/auth';
 import { useOptionsStore } from '../stores/options';
 import { ideasApi } from '../api/ideas';
-import { IdeaStatus, Effort, statusColors } from '../types';
+import { IdeaStatus, Effort, statusColors, jiraCategoryColors, eventTypeKeyMap } from '../types';
 import type { Idea, IdeaStep, IdeaEvent } from '../types';
 
 interface TimelineItem {
@@ -224,7 +291,7 @@ interface TimelineItem {
   step?: IdeaStep;
 }
 
-const { locale, t } = useI18n();
+const { locale, t, te } = useI18n();
 const route = useRoute();
 const authStore = useAuthStore();
 const optionsStore = useOptionsStore();
@@ -242,6 +309,12 @@ const completing = ref(false);
 const snackbar = ref(false);
 const snackbarText = ref('');
 const snackbarColor = ref('success');
+
+// Jira dispatch state. `jiraLinkUrl` is set alongside the snackbar on a successful
+// dispatch that DID carry a browse URL (the clickable popup-block fallback below the
+// snackbar text); null otherwise, including every failure, so it never lingers.
+const creatingJiraTask = ref(false);
+const jiraLinkUrl = ref<string | null>(null);
 
 // Notification opt-in state. `notifyOn` mirrors idea.notifyOnChange but is driven
 // independently so a flip can be applied optimistically and reverted on failure.
@@ -261,6 +334,30 @@ const canManageSteps = computed(() => {
 const canToggleNotify = computed(() => {
   return notifyEnabled.value && idea.value?.submitterId === authStore.user?.id;
 });
+
+// Same gating as ApprovedIdeasPage's button: POWER_USER/ADMIN, the Jira channel
+// effectively enabled, the idea APPROVED, and not already dispatched.
+const canCreateJiraTask = computed(() => {
+  return (
+    authStore.isPowerUser &&
+    optionsStore.jiraEnabled &&
+    idea.value?.status === IdeaStatus.APPROVED &&
+    !idea.value?.jiraSyncActive
+  );
+});
+
+// Same gate as IdeaCard: a Jira-side cancellation turns sync off and nulls the raw
+// status but keeps the key — that key renders under the "cancelled task" label
+// instead of the live "Jira issue" one.
+const hasLiveJiraIssue = computed(() =>
+  Boolean(idea.value?.jiraIssueKey && (idea.value?.jiraSyncActive || idea.value?.jiraStatus))
+);
+
+// Colored by Jira's status CATEGORY; falls back to a neutral color when the
+// category is not (yet) known.
+const jiraStatusColor = computed(() =>
+  idea.value?.jiraStatusCategory ? jiraCategoryColors[idea.value.jiraStatusCategory] : 'default'
+);
 
 const timelineItems = computed<TimelineItem[]>(() => {
   const items: TimelineItem[] = [];
@@ -291,6 +388,16 @@ const effortKeyMap: Record<Effort, string> = {
   [Effort.ONE_TO_THREE_DAYS]: 'oneToThreeDays',
   [Effort.MORE_THAN_THREE_DAYS]: 'moreThanThreeDays',
 };
+
+// Timeline label for one event: the mapped `events.<key>` translation when one
+// exists, else the raw enum value — so an event type this build doesn't (yet) know
+// about still renders something instead of a missing-key placeholder or a crash.
+function eventLabel(event: IdeaEvent): string {
+  const key = eventTypeKeyMap[event.type];
+  const i18nKey = key ? `events.${key}` : null;
+  if (i18nKey && te(i18nKey)) return t(i18nKey);
+  return event.type;
+}
 
 async function loadIdea() {
   loading.value = true;
@@ -325,6 +432,7 @@ async function onNotifyToggle(value: boolean | null) {
     idea.value.notifyOnChange = enabled;
   } catch (error: any) {
     notifyOn.value = previous;
+    jiraLinkUrl.value = null;
     snackbarText.value = error.response?.data?.error || 'Failed to update notifications';
     snackbarColor.value = 'error';
     snackbar.value = true;
@@ -360,18 +468,64 @@ async function completeIdea() {
   completing.value = true;
   try {
     await ideasApi.complete(idea.value.id, { note: completeNote.value });
+    jiraLinkUrl.value = null;
     snackbarText.value = t('inProgress.completeSuccess');
     snackbarColor.value = 'success';
     snackbar.value = true;
     completeDialog.value = false;
     await loadIdea();
   } catch (error: any) {
+    jiraLinkUrl.value = null;
     snackbarText.value = error.response?.data?.error || 'Failed to complete idea';
     snackbarColor.value = 'error';
     snackbar.value = true;
   } finally {
     completing.value = false;
   }
+}
+
+// Dispatch the current idea to Jira (POWER_USER/ADMIN, gated by canCreateJiraTask).
+// Mirrors ApprovedIdeasPage.createJiraTask: window.open kept synchronous in this
+// promise chain, snackbar always also carries the URL as a clickable fallback when
+// one exists, and the omitted-jiraBrowseUrl case is handled gracefully (no popup,
+// no dead link — just the success message).
+async function createJiraTask() {
+  if (!idea.value) return;
+  creatingJiraTask.value = true;
+  try {
+    const result = await ideasApi.createJiraTask(idea.value.id);
+    if (result.jiraBrowseUrl) {
+      window.open(result.jiraBrowseUrl, '_blank', 'noopener');
+    }
+    jiraLinkUrl.value = result.jiraBrowseUrl ?? null;
+    snackbarText.value = t('ideas.createJiraTaskSuccess', { key: result.jiraIssueKey ?? '' });
+    snackbarColor.value = 'success';
+    snackbar.value = true;
+    await loadIdea();
+  } catch (error: any) {
+    jiraLinkUrl.value = null;
+    snackbarText.value = jiraTaskErrorText(error);
+    snackbarColor.value = 'error';
+    snackbar.value = true;
+  } finally {
+    creatingJiraTask.value = false;
+  }
+}
+
+// Localized message for a failed dispatch — the raw backend `error` string is
+// English and never shown. 409/400 get dispatch-specific wordings; a 502 carries the
+// closed JiraFailureReason enum, resolved through the SAME te()-guarded reason
+// catalog the settings test button uses. Keep in sync with ApprovedIdeasPage.vue's twin.
+function jiraTaskErrorText(error: any): string {
+  const status = error?.response?.status;
+  if (status === 409) return t('ideas.createJiraTaskConflict');
+  if (status === 400) return t('ideas.createJiraTaskBadState');
+  const reason = error?.response?.data?.reason;
+  if (status === 502 && typeof reason === 'string') {
+    const key = `jiraSettings.testReason.${reason}`;
+    if (te(key)) return t(key);
+  }
+  return t('ideas.createJiraTaskFailed');
 }
 
 async function addStep() {

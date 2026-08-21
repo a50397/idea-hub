@@ -104,6 +104,20 @@
             </v-card-text>
           </v-card>
 
+          <v-card v-if="jiraStatuses.length" class="mt-6">
+            <v-card-title>{{ $t('dashboard.jiraStatuses') }}</v-card-title>
+            <v-card-text>
+              <v-list>
+                <v-list-item v-for="item in jiraStatuses" :key="item.status">
+                  <v-list-item-title>{{ item.status }}</v-list-item-title>
+                  <template v-slot:append>
+                    <v-chip size="small" variant="tonal">{{ item.count }}</v-chip>
+                  </template>
+                </v-list-item>
+              </v-list>
+            </v-card-text>
+          </v-card>
+
           <v-card v-if="authStore.isPowerUser" class="mt-6">
             <v-card-title>{{ $t('dashboard.topContributors') }}</v-card-title>
             <v-card-text>
@@ -139,7 +153,7 @@ import {
 } from 'chart.js';
 import { reportsApi } from '../api/reports';
 import { useAuthStore } from '../stores/auth';
-import type { DashboardSummary, MonthlyTrend, TopContributor, DepartmentReport } from '../types';
+import type { DashboardSummary, MonthlyTrend, TopContributor, DepartmentReport, JiraStatusReport } from '../types';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
@@ -150,6 +164,7 @@ const summary = ref<DashboardSummary | null>(null);
 const monthlyTrend = ref<MonthlyTrend[]>([]);
 const topContributors = ref<TopContributor[]>([]);
 const byDepartment = ref<DepartmentReport[]>([]);
+const jiraStatuses = ref<JiraStatusReport[]>([]);
 
 const chartData = computed(() => ({
   labels: monthlyTrend.value.map((item) => item.month),
@@ -202,6 +217,10 @@ const chartOptions = {
 async function loadDashboard() {
   loading.value = true;
   try {
+    // The Jira breakdown is fetched OUTSIDE the all-or-nothing Promise.all: it is
+    // the newest, least-critical widget, and a failure of its endpoint must hide
+    // only its own card — not blank the summary/trend/department widgets with it
+    // (deep-review fix). An empty list keeps the card hidden.
     const [summaryData, trendData, byDepartmentData] = await Promise.all([
       reportsApi.getSummary(),
       reportsApi.getMonthlyTrend(),
@@ -210,6 +229,12 @@ async function loadDashboard() {
     summary.value = summaryData;
     monthlyTrend.value = trendData;
     byDepartment.value = byDepartmentData;
+    try {
+      jiraStatuses.value = await reportsApi.getJiraStatuses();
+    } catch (error) {
+      console.error('Error loading Jira status breakdown:', error);
+      jiraStatuses.value = [];
+    }
 
     if (authStore.isPowerUser) {
       topContributors.value = await reportsApi.getTopContributors(5);

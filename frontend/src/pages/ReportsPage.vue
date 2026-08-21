@@ -119,6 +119,9 @@
               <template v-slot:item.department="{ item }">
                 {{ item.department?.name ?? '' }}
               </template>
+              <template v-slot:item.jira="{ item }">
+                {{ jiraCell(item) }}
+              </template>
               <template v-slot:item.actions="{ item }" v-if="authStore.isAdmin">
                 <v-btn
                   icon
@@ -244,6 +247,7 @@ const headers = computed(() => {
     { title: t('reports.headerSubmitted'), key: 'submittedAt', sortable: true },
     { title: t('reports.headerDuration'), key: 'duration', sortable: true },
     { title: t('reports.headerDepartment'), key: 'department', sortable: true },
+    { title: t('reports.headerJira'), key: 'jira', sortable: false },
   ];
   if (authStore.isAdmin) {
     cols.push({ title: t('reports.headerActions'), key: 'actions', sortable: false });
@@ -365,6 +369,13 @@ function calculateDuration(idea: Idea): string {
   const end = new Date(idea.completedAt);
   const days = Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
   return `${days}`;
+}
+
+// Combined Jira key+status cell: "KEY (raw status)" once a status is known, just the
+// key right after dispatch (before the first poll), else '-' when never dispatched.
+function jiraCell(idea: Idea): string {
+  if (!idea.jiraIssueKey) return '-';
+  return idea.jiraStatus ? `${idea.jiraIssueKey} (${idea.jiraStatus})` : idea.jiraIssueKey;
 }
 
 function showDeleteDialog(idea: Idea) {

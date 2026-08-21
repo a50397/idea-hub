@@ -47,7 +47,12 @@ export const useDepartmentsStore = defineStore('departments', () => {
   // PATCH update returns a bare department (no _count), so refetch for the full shape.
   async function update(
     id: string,
-    payload: { name?: string; notificationEmails?: string[]; webexRoomIds?: string[] }
+    payload: {
+      name?: string;
+      notificationEmails?: string[];
+      webexRoomIds?: string[];
+      jiraProjectKey?: string;
+    }
   ) {
     loading.value = true;
     error.value = null;

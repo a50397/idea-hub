@@ -19,7 +19,7 @@ let userU: { id: string };
 let other: { id: string };
 
 const CSV_HEADER =
-  'ID,Title,Status,Effort,Submitter,Approver,Assignee,Submitted At,Approved At,Started At,Completed At,Duration (days),Tags,Department';
+  'ID,Title,Status,Effort,Submitter,Approver,Assignee,Submitted At,Approved At,Started At,Completed At,Duration (days),Tags,Department,Jira Key,Jira Status,Jira Assignee,Jira Resolution';
 
 beforeAll(async () => {
   await waitForBoot();
@@ -130,7 +130,7 @@ describe('reports aggregations (real DB)', () => {
 
     const lines = res.text.split('\n');
     expect(lines[0]).toBe(CSV_HEADER);
-    expect(lines[0].split(',')).toHaveLength(14);
+    expect(lines[0].split(',')).toHaveLength(18);
     // header + one row per DONE idea
     expect(lines).toHaveLength(3);
   });
@@ -202,5 +202,65 @@ describe('reports /filtered date range (real DB)', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.pagination.total).toBe(0);
+  });
+});
+
+// The Jira breakdown over real aggregations. The fixtures above were created without
+// any Jira fields written explicitly beyond the jiraSyncActive default, so this suite
+// also proves the isSet-based filter ignores them.
+describe('jira status breakdown (real DB)', () => {
+  beforeAll(async () => {
+    await createIdea({
+      submitterId: userU.id,
+      status: IdeaStatus.IN_PROGRESS,
+      jiraSyncActive: true,
+      jiraIssueId: '20001',
+      jiraIssueKey: 'OPS-11',
+      jiraStatus: 'In Review',
+      jiraStatusCategory: 'indeterminate',
+      jiraAssignee: 'Remote Person',
+    });
+    await createIdea({
+      submitterId: other.id,
+      status: IdeaStatus.IN_PROGRESS,
+      jiraSyncActive: true,
+      jiraIssueId: '20002',
+      jiraIssueKey: 'OPS-12',
+      jiraStatus: 'In Review',
+      jiraStatusCategory: 'indeterminate',
+    });
+    await createIdea({
+      submitterId: other.id,
+      status: IdeaStatus.APPROVED,
+      jiraSyncActive: true,
+      jiraIssueId: '20003',
+      jiraIssueKey: 'OPS-13',
+      jiraStatus: 'To Do',
+      jiraStatusCategory: 'new',
+    });
+  });
+
+  test('GET /jira-statuses as ADMIN counts every dispatched idea, biggest bucket first', async () => {
+    const res = await adminAgent.get('/api/reports/jira-statuses');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([
+      { status: 'In Review', count: 2 },
+      { status: 'To Do', count: 1 },
+    ]);
+  });
+
+  test('GET /jira-statuses as USER returns the same org-wide breakdown', async () => {
+    const res = await userAgent.get('/api/reports/jira-statuses');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([
+      { status: 'In Review', count: 2 },
+      { status: 'To Do', count: 1 },
+    ]);
+  });
+
+  test('the CSV export carries the mirrored Jira cells', async () => {
+    const res = await adminAgent.get('/api/reports/filtered').query({ format: 'csv', status: 'IN_PROGRESS' });
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('"OPS-11","In Review","Remote Person",');
   });
 });

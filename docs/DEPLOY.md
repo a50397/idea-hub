@@ -34,6 +34,13 @@ sa zámerne neuvádzajú.
 - Odchádzajúce HTTPS na `https://webexapis.com` — len ak sa bude používať
   voliteľný Webex notifikačný kanál (zapína ho admin v UI). Bez tohto prístupu
   aplikácia funguje normálne, iba Webex správy sa nedoručia.
+- Odchádzajúce HTTPS na hostiteľa Jira Cloud (napr. `https://firma.atlassian.net`)
+  a na `https://api.atlassian.com` (API brána Atlassianu — cez ňu aplikácia
+  smeruje REST volania po zistení cloud id lokality, čo je nutné pre scoped API
+  tokeny) — len ak sa bude používať voliteľná Jira integrácia (zapína ju admin
+  v UI na stránke **Nastavenia Jiry**). Bez tohto prístupu aplikácia funguje
+  normálne, iba sa nikdy nepodarí vytvoriť ani synchronizovať úlohu v Jire
+  (Test pripojenia aj pravidelný poller zlyhajú).
 - Synchronizovaný čas (NTP) — validácia tokenov toleruje len 60 s odchýlky.
 - Privátny kľúč čitateľný pre kontajner: nginx beží ako uid 101 —
   `chown 101 nginx/certs/ideahub.key && chmod 600 nginx/certs/ideahub.key`
@@ -129,6 +136,7 @@ predvolené oddelenie. Počkajte, kým `ps` ukáže všetky služby healthy/runn
 | prihlásenie „nedrží" (cookie) | `COOKIE_SECURE=true` vyžaduje funkčné HTTPS; port 80 v balíku automaticky presmerúva na HTTPS |
 | Webex notifikácie nechodia | v UI **Webex settings** musí byť kanál zapnutý a uložený bot token; doručenie je best-effort (aplikáciu nikdy neblokuje) — dôvod hľadajte v logu backendu (riadky `WEBEX`); overte odchádzajúce HTTPS na `webexapis.com` |
 | Webex správy nechodia LEN do jedného priestoru (ostatné funguje) | bot musí byť ČLENOM daného priestoru — pridajte ho cez jeho e-mailovú adresu (`...@webex.bot`); bez členstva Webex API vráti chybu, ktorá sa len zaloguje (riadky `WEBEX`), UI ju nehlási |
+| Jira synchronizácia zlyháva / tlačidlo „Vytvoriť úlohu v Jire" chýba alebo hlási chybu | zlyhania sa logujú s prefixom `[JIRA]` (`docker logs ideahub-backend`) a dlhodobé zlyhanie navyše zobrazí banner v hlavičke aplikácie a alert na stránke **Nastavenia Jiry**; najčastejšie príčiny: zlý/expirovaný API token, zlá base URL, chýbajúci alebo neviditeľný kľúč projektu pre technický účet, alebo chýbajúce odchádzajúce HTTPS na hostiteľa Jira Cloud či na `https://api.atlassian.com` (po zistení cloud id smerujú VŠETKY volania cez túto bránu — otvorený hostiteľ lokality sám o sebe nestačí; pozri §2) |
 
 ## 8. Prevádzka
 
@@ -150,7 +158,25 @@ predvolené oddelenie. Počkajte, kým `ps` ukáže všetky služby healthy/runn
   Webex priestory (`webexRoomIds`), do ktorých sa popri 1:1 správach posielajú aj
   upozornenia na nové nápady. Aditívne: žiadne nové premenné prostredia, žiadny DB
   krok (chýbajúce pole sa pri čítaní správa ako prázdny zoznam). Bota treba do
-  každého vybraného priestoru pridať ako ČLENA, inak sa doň nič nedoručí.
+  každého vybraného priestoru pridať ako ČLENA, inak sa doň nič nedoručí. Táto
+  verzia navyše nahrádza doterajšiu realizáciu nápadov „prevzatím" **Jira Cloud**
+  integráciou — **breaking change**: endpoint `PATCH /api/ideas/:id/claim` bol
+  odstránený, bežný používateľ (USER) už nápady sám nerealizuje (realizáciu
+  schváleného nápadu spúšťa Pokročilý používateľ/Administrátor tlačidlom
+  „Vytvoriť úlohu v Jire"). Zmena schémy je aditívna a self-applied pri štarte
+  backendu (`prisma db push` + automatické doplnenie poľa `jiraSyncActive`
+  existujúcim nápadom) — netreba žiadny manuálny DB krok; nápady rozpracované
+  pred touto zmenou (grandfathering) fungujú ako doteraz (pôvodný riešiteľ
+  naďalej zapisuje kroky priebehu a dokončí ich). Funkcia je neaktívna, kým ju
+  admin nezapne a nevyplní na stránke **Nastavenia Jiry**: URL Jira Cloud
+  inštancie, e-mail technického účtu, API token, predvolený kľúč projektu a
+  následne overí tlačidlom **Test pripojenia**; do vyplnenia zostáva tlačidlo
+  „Vytvoriť úlohu v Jire" skryté a schválené nápady nemožno odoslať do
+  realizácie. Vyžaduje aj odchádzajúce HTTPS na hostiteľa Jira Cloud a na
+  `https://api.atlassian.com` (pozri §2). Podporované sú klasické aj scoped API
+  tokeny: backend si pri uložení nastavení Jiry zistí cloud id lokality a REST
+  volania odvtedy smeruje cez bránu api.atlassian.com; existujúcej inštalácii
+  cloud id doplní prvé uloženie nastavení alebo klik na **Test pripojenia**.
 - **Zálohy zatiaľ nie sú zriadené** (denný `mongodump` + záloha
   `.env.production` je odporúčaná — v riešení mimo tohto runbooku).
 - Notifikácie (SMTP aj Webex) sa konfigurujú za behu v UI (Email settings /

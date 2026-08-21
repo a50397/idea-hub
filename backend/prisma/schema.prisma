@@ -34,6 +34,11 @@ enum Effort {
   MORE_THAN_THREE_DAYS
 }
 
+// Activity-timeline event kinds. The set PARTITIONS the actor: every pre-Jira kind
+// is performed by a logged-in user (IdeaEvent.byUserId non-null), JIRA_CREATED is
+// performed by the dispatching POWER_USER/ADMIN (also non-null), and the two
+// poller-written kinds (JIRA_STATUS_CHANGED, JIRA_CANCELLED) have NO user actor at
+// all (byUserId null — the actor is Jira itself). See IdeaEvent.byUserId below.
 enum EventType {
   SUBMITTED
   APPROVED
@@ -43,6 +48,13 @@ enum EventType {
   COMPLETED
   UPDATED
   CHANGE_REQUESTED
+  // A POWER_USER/ADMIN dispatched the idea to Jira (POST /api/ideas/:id/jira-task).
+  JIRA_CREATED
+  // The poller mirrored a Jira status change onto the idea (no user actor).
+  JIRA_STATUS_CHANGED
+  // The Jira issue reached an unsuccessful final state (cancel-list resolution) or
+  // is gone (deleted / no longer accessible) — the idea returns to APPROVED.
+  JIRA_CANCELLED
 }
 
 model User {
@@ -102,6 +114,52 @@ model Idea {
   // (utils/init-idea-notify.ts) sets the explicit default on existing deployments.
   notifyOnChange Boolean?
 
+  // ---------------------------------------------------------------------------
+  // Jira execution mirror. An APPROVED idea is DISPATCHED to Jira Cloud by a
+  // POWER_USER/ADMIN (POST /api/ideas/:id/jira-task) and the poller
+  // (utils/jira-sync.ts) then mirrors the remote issue's status/assignee/
+  // resolution back onto these fields and the idea's own lifecycle.
+  //
+  // ALL of them are optional in the schema: they were added after the initial
+  // release, so pre-existing Mongo documents lack the fields entirely and a
+  // required column would fail to read them (the departmentId/notifyOnChange
+  // precedents above).
+  //
+  // MISSING-vs-NULL RULE (critical, proven in this repo — see
+  // utils/init-idea-notify.ts): a Prisma+Mongo where-clause does NOT match a
+  // *missing* scalar. Therefore every where-clause on these fields may only rely
+  // on values this codebase EXPLICITLY WROTE:
+  //   (a) POST /api/ideas writes `jiraSyncActive: false` into the creation data,
+  //   (b) the boot backfill utils/init-idea-jira.ts ($runCommandRaw,
+  //       `{ jiraSyncActive: { $exists: false } } -> $set false`) covers documents
+  //       that predate the feature,
+  //   (c) "has been dispatched" presence filters use Prisma Mongo's `isSet`
+  //       operator, never a bare `not: null`, on fields that may be missing.
+  // Read paths stay null-safe regardless (a missing scalar reads back as null).
+  // ---------------------------------------------------------------------------
+
+  // Numeric Jira issue id (stable across project moves — the poll key) and the
+  // human key (KEY-123, may change; refreshed on every poll). Remote strings are
+  // sanitized (utils/jira.ts sanitizeRemoteString) before they are ever written.
+  jiraIssueId  String?
+  jiraIssueKey String?
+  // Raw Jira status NAME (e.g. "In Review") plus its status CATEGORY key
+  // (new|indeterminate|done). The category drives the canonical IdeaStatus; the
+  // raw name is what the UI/report shows.
+  jiraStatus         String?
+  jiraStatusCategory String?
+  // Remote assignee display name and resolution name, mirrored for display only.
+  jiraAssignee   String?
+  jiraResolution String?
+  // Poll bookkeeping. `jiraSyncActive` is the DISPATCH CLAIM + poll enrolment flag
+  // (set atomically before the outbound create so two concurrent dispatches cannot
+  // both create an issue); `jiraLastSyncAt` orders the poll batch (oldest first);
+  // `jiraMissingCount` counts CONSECUTIVE confirmed 404s so a single transient
+  // search miss / permission blip can never mass-cancel ideas (2 ticks required).
+  jiraSyncActive   Boolean?
+  jiraLastSyncAt   DateTime?
+  jiraMissingCount Int?
+
   submittedAt DateTime  @default(now())
   approvedAt  DateTime?
   startedAt   DateTime?
@@ -148,6 +206,21 @@ model Department {
   // department without the field and reads it back as []).
   webexRoomIds String[]
 
+  // Optional per-department Jira PROJECT KEY override. When an idea from this
+  // department is dispatched to Jira the issue is created in this project;
+  // otherwise the installation-wide JiraSettings.defaultProjectKey is used.
+  //
+  // Nullable with no default: pre-existing Mongo documents predate the field. It is
+  // only ever READ (`dept.jiraProjectKey ?? default`) and NEVER used in a
+  // where-clause, so — unlike Idea.jiraSyncActive — the missing-vs-null limitation
+  // cannot bite and no backfill is required (a missing scalar reads back as null).
+  //
+  // Like notificationEmails/webexRoomIds this is INTERNAL admin-only configuration:
+  // GET /api/departments projects it ONLY for ADMIN sessions (config hygiene — the
+  // resulting issue KEY and browse URL are ordinary internal data every
+  // authenticated user sees on the idea).
+  jiraProjectKey String?
+
   // Relations
   ideas Idea[]
 
@@ -159,8 +232,15 @@ model IdeaEvent {
   ideaId    String    @db.ObjectId
   idea      Idea      @relation(fields: [ideaId], references: [id], onDelete: Cascade)
   type      EventType
-  byUserId  String    @db.ObjectId
-  byUser    User      @relation("EventUser", fields: [byUserId], references: [id])
+  // The acting user — NULLABLE since the Jira poller writes timeline entries with no
+  // human actor (see EventType above: JIRA_STATUS_CHANGED / JIRA_CANCELLED always
+  // carry null; every other kind, including JIRA_CREATED, always carries a user).
+  // The event-type set is what partitions the actor, so no extra discriminator
+  // column is needed. Every existing document has the field, so relaxing
+  // required -> optional needs no backfill; readers must handle null (the timeline
+  // renders "Jira" for a null actor).
+  byUserId  String?   @db.ObjectId
+  byUser    User?     @relation("EventUser", fields: [byUserId], references: [id])
   timestamp DateTime  @default(now())
   note      String?
 
@@ -244,4 +324,98 @@ model WebexSettings {
   updatedAt   DateTime @updatedAt
 
   @@map("webex_settings")
+}
+
+// Admin-UI-managed Jira Cloud integration configuration. A SINGLETON with the exact
+// same shape and semantics as MailSettings/WebexSettings above (findUnique on the
+// unique `singleton` key ?? in-code defaults; a save upserts the one document), and
+// — unlike those two — an OUTBOUND EXECUTION channel rather than a notification one:
+// a POWER_USER/ADMIN dispatches an APPROVED idea to Jira (POST /rest/api/3/issue)
+// and a background poller (utils/jira-sync.ts) mirrors the issue's status back onto
+// the idea. The app sits in a firewalled segment, so there are no inbound webhooks.
+//
+// SECURITY:
+//   - `apiTokenEnc` holds the Jira API token encrypted with the SAME AES-256-GCM
+//     secretbox (utils/secretbox.ts, keyed by MAIL_SETTINGS_KEY) as the SMTP
+//     password and the Webex bot token — never a plaintext secret, and never
+//     returned by the API (routes/jira-settings.ts exposes only a `hasToken`
+//     boolean). Nullable because a fresh install simply has no token.
+//   - `baseUrl` is a CREDENTIAL TARGET: the stored email+token are sent as a Basic
+//     auth header to whatever origin this names — directly, or via the Atlassian
+//     gateway route derived from its cloud id (see `cloudId` below), which only
+//     ever narrows the target to api.atlassian.com. The PUT route therefore validates
+//     it hard (https only, no userinfo/query/fragment, no IP-literal, no
+//     localhost/loopback host, normalized to a bare origin) and REQUIRES the token
+//     to be re-set (or wiped) whenever baseUrl/email changes, so an admin can never
+//     silently re-point an existing credential at a new host.
+model JiraSettings {
+  id        String @id @default(auto()) @map("_id") @db.ObjectId
+  // DB-enforced singleton discriminator — identical to MailSettings.singleton: a
+  // unique index on a constant value keeps the collection at AT MOST ONE document
+  // (the PUT route upserts on this key; a concurrent first-save loses P2002).
+  singleton String @unique @default("singleton")
+  enabled   Boolean @default(false)
+  // Jira Cloud site origin, e.g. "https://acme.atlassian.net" (no trailing slash,
+  // no path). Validated + normalized on save; see the security note above.
+  baseUrl   String  @default("")
+  // The Atlassian cloud id of that site, resolved from its public (unauthenticated)
+  // /_edge/tenant_info endpoint on save (best-effort; re-attempted by POST /test).
+  // When present, OUTBOUND REST calls go through the api.atlassian.com/ex/jira/{id}
+  // gateway — required for SCOPED API tokens, which reject site-origin calls;
+  // classic unscoped tokens work on both. Browse URLs always keep the site origin.
+  // Nullable with no default: null (or a document predating the field) means
+  // "unresolved" and the client falls back to calling the site origin directly.
+  cloudId   String?
+  // Jira account (tech user) email — the Basic auth username.
+  email     String  @default("")
+  // AES-256-GCM ciphertext of the Jira API token. null / empty == no token stored.
+  // NEVER returned by the API.
+  apiTokenEnc String?
+  // Installation-wide fallback project key; Department.jiraProjectKey overrides it.
+  defaultProjectKey String @default("")
+  // Issue type created in that project (Jira's own default name is "Task").
+  issueTypeName     String @default("Task")
+  // Poll period in minutes (clamped to 1..1440 on save and on read).
+  pollIntervalMinutes Int @default(5)
+  // Comma-separated Jira RESOLUTION names that mean "not actually done": an issue
+  // reaching a done-category status with one of these resolutions returns the idea
+  // to APPROVED (re-dispatch allowed) instead of completing it. Compared
+  // case-insensitively after trimming.
+  cancelResolutions String @default("Won't Do,Cancelled,Duplicate")
+
+  // --- Background-sync HEALTH (written only by the poller, read by admins) ------
+  // The poller is the one part of this integration nobody watches: it runs on a
+  // timer with no request behind it, so until now a failing run existed ONLY in the
+  // server log. A rotated MAIL_SETTINGS_KEY (the stored token stops decrypting) or
+  // an expired API token would silently stop mirroring Jira while the UI kept
+  // looking healthy. These three fields make the last outcome durable so the
+  // settings page can explain it and GET /api/options can raise an admin banner.
+  //
+  // They are STATUS, not configuration: routes/jira-settings.ts PUT never writes
+  // them (its upsert payload omits them, so an admin save cannot clobber the
+  // poller's verdict) and the API never accepts them as input.
+  //
+  // Written on TRANSITION ONLY — an identical repeat outcome writes nothing — which
+  // is what gives `lastSyncAt` its meaning: the moment the CURRENT state was
+  // ENTERED ("in this state since"), NOT the time of the last attempt.
+  //
+  // All three are nullable with no default: the singleton document of an existing
+  // installation predates them and reads them back as null (Prisma+Mongo reads a
+  // missing scalar as null), which is exactly the intended "nothing recorded yet"
+  // state. No backfill — and no where-clause ever matches on them, so the
+  // missing-vs-null limitation that bites Idea.jiraSyncActive cannot bite here.
+  //
+  // null = never recorded; true = the last run completed; false = it failed.
+  lastSyncOk     Boolean?
+  // The failure this refers to, as one of the CLOSED JiraFailureReason codes
+  // (utils/jira.ts) — never upstream error text (security review F9). null while
+  // healthy (a success clears it).
+  lastSyncReason String?
+  // When the state above was entered (see the "since" semantics above).
+  lastSyncAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("jira_settings")
 }

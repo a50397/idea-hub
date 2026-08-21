@@ -1,5 +1,5 @@
 import { Router, type Request } from 'express';
-import { IdeaStatus, EventType, Role, Prisma } from '@prisma/client';
+import { IdeaStatus, EventType, Role, Prisma, Effort } from '@prisma/client';
 import { rateLimit } from 'express-rate-limit';
 import prisma from '../lib/prisma';
 import { requireAuth, requireRole } from '../middleware/auth';
@@ -11,8 +11,55 @@ import { sendWebexMessage, getEffectiveWebexConfig, WEBEX_SEND_CONCURRENCY } fro
 import { runBounded } from '../utils/concurrency';
 import { newIdeaWebexMessage } from '../utils/webex-templates';
 import { maybeNotifySubmitter, type NotifiableIdea, type MaybeNotifyArgs } from '../utils/lifecycle-notify';
+import { getEffectiveJiraConfig } from '../config/jira';
+import { createJiraIssue, buildJiraBrowseUrl } from '../utils/jira';
 
 const router = Router();
+
+// An idea as it leaves this router, optionally carrying the browser-facing Jira
+// link. `jiraBrowseUrl` is a DERIVED field (not a column): it is the effective Jira
+// base URL joined with the stored issue key, and it is OMITTED ENTIRELY whenever it
+// cannot be built safely (see the F7 protocol rule in utils/jira.ts
+// buildJiraBrowseUrl) — never emitted as null/'' that a client might still render.
+type WithJiraBrowseUrl<T> = T & { jiraBrowseUrl?: string };
+
+/**
+ * Attach `jiraBrowseUrl` to every idea in the list that has been dispatched.
+ *
+ * The base URL lives in the admin settings (or the JIRA_API_BASE_URL override), so
+ * the link is built SERVER-SIDE and handed to the SPA ready-made — the FE never
+ * learns the base URL and never concatenates a URL itself. The settings read is
+ * skipped entirely when no idea on the page carries an issue key, so an
+ * installation that does not use Jira pays nothing on the list endpoints, and a
+ * settings-read failure only means "no links" (it can never fail the request).
+ */
+async function attachJiraBrowseUrls<T extends { jiraIssueKey: string | null }>(
+  ideas: T[]
+): Promise<Array<WithJiraBrowseUrl<T>>> {
+  const anyDispatched = ideas.some((idea) => typeof idea.jiraIssueKey === 'string' && idea.jiraIssueKey.length > 0);
+  if (!anyDispatched) return ideas;
+
+  let cfg;
+  try {
+    cfg = await getEffectiveJiraConfig();
+  } catch (error) {
+    console.error('Error reading jira config for browse URLs:', error);
+    return ideas;
+  }
+
+  return ideas.map((idea) => {
+    const browseUrl = buildJiraBrowseUrl(cfg, idea.jiraIssueKey);
+    return browseUrl === null ? idea : { ...idea, jiraBrowseUrl: browseUrl };
+  });
+}
+
+// Effort wording for the Jira task description — Slovak, because Slovak staff are
+// who reads the created tasks; values mirror the frontend's sk `effort.*` catalog.
+const JIRA_EFFORT_LABELS: Record<Effort, string> = {
+  [Effort.LESS_THAN_ONE_DAY]: '< 1 deň',
+  [Effort.ONE_TO_THREE_DAYS]: '1-3 dni',
+  [Effort.MORE_THAN_THREE_DAYS]: '> 3 dni',
+};
 
 // Best-effort, fire-and-forget submitter notification, built from the actor in req.session.
 function notifySubmitter(req: Request, idea: NotifiableIdea, event: MaybeNotifyArgs['event'], stepText?: string): void {
@@ -63,6 +110,22 @@ const stepCreateLimiter = rateLimit({
   legacyHeaders: false,
   skip: () => process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development',
   message: { error: 'Too many progress updates. Please try again later.' },
+});
+
+// Dedicated limiter for Jira dispatch, cloning the two above exactly (window, max,
+// headers, and the SAME test||development skip parity so the integration tier and
+// local dev are never throttled). This route is the only one that makes an
+// OUTBOUND, state-changing call to a third-party system on user demand: each POST
+// creates a real Jira issue. Even though it is POWER_USER/ADMIN-gated, a per-IP cap
+// bounds both the burst of remote writes (and the 429 it would earn from Jira) and
+// the amount of noise a compromised elevated session can create over there.
+const jiraTaskLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development',
+  message: { error: 'Too many Jira task requests. Please try again later.' },
 });
 
 // Get all ideas with filters
@@ -122,7 +185,9 @@ router.get('/', requireAuth, async (req, res) => {
     ]);
 
     res.json({
-      data: ideas,
+      // Dispatched ideas carry the ready-made Jira link (the card renders it as a
+      // chip); ideas without an issue key are returned untouched.
+      data: await attachJiraBrowseUrls(ideas),
       pagination: {
         page,
         limit,
@@ -178,7 +243,10 @@ router.get('/:id', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Idea not found' });
     }
 
-    res.json(idea);
+    // Same derived Jira link as the list endpoint (single-element list so the rule
+    // and the settings-read guard live in exactly one place).
+    const [serialized] = await attachJiraBrowseUrls([idea]);
+    res.json(serialized);
   } catch (error) {
     console.error('Error fetching idea:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -213,6 +281,13 @@ router.post('/', ideaCreateLimiter as any, requireAuth, async (req, res) => {
           // Strict opt-out default: persist an explicit boolean even when the
           // client omits the flag, so the field is never absent on a new doc.
           notifyOnChange: data.notifyOnChange ?? false,
+          // Explicit not-dispatched default, for the SAME missing-vs-null reason:
+          // the Jira dispatch endpoint claims the idea with
+          // `updateMany({ where: { ..., jiraSyncActive: false } })`, and a
+          // Prisma+Mongo where-clause does NOT match a *missing* scalar — a new idea
+          // without this field would be permanently un-dispatchable (409). Legacy
+          // documents are covered by the boot backfill (utils/init-idea-jira.ts).
+          jiraSyncActive: false,
         },
         include: {
           submitter: {
@@ -431,7 +506,9 @@ router.patch('/:id', requireAuth, async (req, res) => {
 // PATCH /:id (which is submitter-only WHILE SUBMITTED) because the submitter must
 // be able to opt in/out in ANY status. Submitter-only; writes NO IdeaEvent (this
 // is a preference change, not a lifecycle action); returns the idea in the usual
-// include shape.
+// include shape, through the SAME jiraBrowseUrl serialization as the read
+// endpoints — the FE replaces its idea state from this response, so skipping it
+// would silently drop the Jira link from an already-dispatched idea.
 router.patch('/:id/notify', requireAuth, async (req, res) => {
   try {
     const idParsed = objectIdParamSchema.safeParse(req.params.id);
@@ -473,7 +550,8 @@ router.patch('/:id/notify', requireAuth, async (req, res) => {
       },
     });
 
-    res.json(updatedIdea);
+    const [serialized] = await attachJiraBrowseUrls([updatedIdea]);
+    res.json(serialized);
   } catch (error) {
     if (error instanceof Error) {
       res.status(400).json({ error: error.message });
@@ -621,8 +699,23 @@ router.patch('/:id/reject', requireRole(Role.POWER_USER, Role.ADMIN), async (req
   }
 });
 
-// Claim idea (start working on approved idea)
-router.patch('/:id/claim', requireAuth, async (req, res) => {
+// Dispatch an APPROVED idea to Jira (Power User or Admin only).
+//
+// This REPLACES the removed in-app claim flow: execution now happens in Jira. The
+// handler creates the issue, records a JIRA_CREATED timeline event and enrols the
+// idea in the poller (utils/jira-sync.ts), which mirrors the issue's status back
+// onto the idea from then on.
+//
+// The idea deliberately STAYS APPROVED here: the canonical status follows the Jira
+// status CATEGORY, and a freshly created issue is in the `new` category (To Do). It
+// becomes IN_PROGRESS only when work actually starts in Jira. `assigneeId` is left
+// untouched — a Jira-driven idea never gets an in-app assignee, which is exactly
+// what keeps the grandfathered steps/complete endpoints (assignee-gated) closed for
+// it while old claim-era ideas keep working.
+//
+// jiraTaskLimiter runs before requireRole (same ordering and `as any` bridge as the
+// create route) so the per-IP cap applies regardless of session state.
+router.post('/:id/jira-task', jiraTaskLimiter as any, requireRole(Role.POWER_USER, Role.ADMIN), async (req, res) => {
   try {
     const idParsed = objectIdParamSchema.safeParse(req.params.id);
     if (!idParsed.success) {
@@ -631,8 +724,20 @@ router.patch('/:id/claim', requireAuth, async (req, res) => {
     const id = idParsed.data;
     const userId = req.session.userId!;
 
+    // Load the submitter (for the issue description) and the department INCLUDING
+    // its optional Jira project override in one query. NOTE: jiraProjectKey is
+    // admin-only data — it is used here to pick the target project and is NEVER part
+    // of the response (the response include below selects id+name only).
     const existingIdea = await prisma.idea.findUnique({
       where: { id },
+      include: {
+        submitter: {
+          select: { id: true, name: true, email: true },
+        },
+        department: {
+          select: { id: true, name: true, jiraProjectKey: true },
+        },
+      },
     });
 
     if (!existingIdea) {
@@ -640,16 +745,109 @@ router.patch('/:id/claim', requireAuth, async (req, res) => {
     }
 
     if (existingIdea.status !== IdeaStatus.APPROVED) {
-      return res.status(400).json({ error: 'Can only claim ideas in APPROVED status' });
+      return res.status(400).json({ error: 'Can only create a Jira task for ideas in APPROVED status' });
+    }
+
+    const cfg = await getEffectiveJiraConfig();
+    if (!cfg.effectiveEnabled) {
+      // Disabled / half-configured: refuse up front rather than opening a socket to
+      // nowhere. The FE hides the button on the same flag (GET /api/options).
+      return res.status(400).json({ error: 'Jira integration is not configured' });
+    }
+
+    // Per-department override wins over the installation-wide default.
+    const projectKey = existingIdea.department?.jiraProjectKey ?? cfg.defaultProjectKey;
+    if (!projectKey) {
+      return res.status(400).json({ error: 'No Jira project is configured for this department' });
+    }
+
+    // ---------------------------------------------------------------------
+    // ATOMIC DISPATCH CLAIM (security review F6).
+    //
+    // Everything above is a read, so two concurrent dispatches would both pass it
+    // and both create a Jira issue (a TOCTOU that produces duplicate external
+    // state — unfixable after the fact). This single conditional write is the
+    // serialization point: it flips jiraSyncActive false -> true only for an idea
+    // that is still APPROVED and NOT already claimed, so exactly one request can
+    // win and the loser gets a 409 without ever calling Jira.
+    //
+    // `jiraIssueId: null` is written EXPLICITLY (not left as-is) for two reasons:
+    // it clears a previous issue id after a cancel/re-dispatch cycle, and it makes
+    // the claim visible to the poller's stale-claim sweep, which releases a claim
+    // that never got an issue id within 10 minutes (a crash between here and the
+    // update below).
+    //
+    // The `jiraSyncActive: false` match relies on the field being EXPLICITLY
+    // present — guaranteed by the create handler for new ideas and by the boot
+    // backfill (utils/init-idea-jira.ts) for legacy ones, because a Prisma+Mongo
+    // where-clause does not match a missing scalar.
+    // ---------------------------------------------------------------------
+    const claim = await prisma.idea.updateMany({
+      where: { id, status: IdeaStatus.APPROVED, jiraSyncActive: false },
+      data: { jiraSyncActive: true, jiraIssueId: null },
+    });
+    if (claim.count === 0) {
+      return res.status(409).json({ error: 'A Jira task for this idea is already being created' });
+    }
+
+    const link = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/ideas/${existingIdea.id}`;
+    // Plain text; utils/jira.ts converts it to ADF (REST v3 rejects a plain-string
+    // description). No labels are sent — Jira rejects labels containing whitespace
+    // and idea tags are free text, so tags stay in-app. Wording is Slovak, same as
+    // the audience of the created tasks.
+    const description = [
+      existingIdea.description,
+      `Prínosy: ${existingIdea.benefits}`,
+      `Náročnosť: ${JIRA_EFFORT_LABELS[existingIdea.effort]}`,
+      `Oddelenie: ${existingIdea.department?.name ?? '-'}`,
+      `Odoslal/a: ${existingIdea.submitter.name}`,
+      `IdeaHub: ${link}`,
+    ].join('\n');
+
+    const created = await createJiraIssue(cfg, {
+      projectKey,
+      summary: existingIdea.title,
+      description,
+    });
+
+    if (!created.ok) {
+      // RELEASE the claim so the idea can be dispatched again immediately. Guarded
+      // on the claim we made (still active, still without an issue id) so a
+      // concurrent winner's state is never clobbered, and wrapped in its own
+      // try/catch so a DB hiccup here cannot mask the real failure below.
+      try {
+        await prisma.idea.updateMany({
+          where: { id, jiraSyncActive: true, jiraIssueId: null },
+          data: { jiraSyncActive: false },
+        });
+      } catch (releaseError) {
+        console.error(`Failed to release the Jira dispatch claim ideaId=${id}:`, releaseError);
+      }
+      // 502: the failure is upstream, not the client's. `reason` is one of the
+      // CLOSED JiraFailureReason codes (never upstream text — F9); the FE
+      // translates it through a te()-guarded lookup.
+      return res.status(502).json({ error: 'Failed to create the Jira issue', reason: created.reason });
     }
 
     const updatedIdea = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const updated = await tx.idea.update({
         where: { id },
         data: {
-          status: IdeaStatus.IN_PROGRESS,
-          assigneeId: userId,
-          startedAt: new Date(),
+          // Both values already passed the client's ingest sanitizer + id format
+          // check; nothing else from the remote response is stored.
+          jiraIssueId: created.issueId,
+          jiraIssueKey: created.issueKey,
+          // A brand-new issue is in the `new` category by definition; the raw status
+          // name/assignee/resolution are unknown until the first poll, and stale
+          // values from a previous dispatch must not survive a re-dispatch.
+          jiraStatus: null,
+          jiraStatusCategory: 'new',
+          jiraAssignee: null,
+          jiraResolution: null,
+          jiraSyncActive: true,
+          jiraLastSyncAt: new Date(),
+          jiraMissingCount: null,
+          // status stays APPROVED and assigneeId is untouched — see the header.
         },
         include: {
           submitter: {
@@ -670,25 +868,26 @@ router.patch('/:id/claim', requireAuth, async (req, res) => {
       await tx.ideaEvent.create({
         data: {
           ideaId: id,
-          type: EventType.CLAIMED,
+          type: EventType.JIRA_CREATED,
+          // The dispatching user IS the actor here (unlike the poller-written Jira
+          // events, which carry a null actor).
           byUserId: userId,
-          note: 'Claimed and started working on idea',
+          note: `Jira task ${created.issueKey} created`,
         },
       });
 
       return updated;
     });
 
-    res.json(updatedIdea);
-
-    // Best-effort, fire-and-forget submitter notification (after the response).
-    notifySubmitter(req, updatedIdea, 'CLAIMED');
+    // The link the FE opens in a new tab. Built by the client under the F7 protocol
+    // rule and OMITTED entirely when it cannot be built safely.
+    res.json(created.browseUrl === null ? updatedIdea : { ...updatedIdea, jiraBrowseUrl: created.browseUrl });
   } catch (error) {
-    if (error instanceof Error) {
-      res.status(400).json({ error: error.message });
-    } else {
-      res.status(500).json({ error: 'Internal server error' });
-    }
+    // Unlike the older handlers in this file, nothing here throws on bad INPUT (the
+    // id is safeParsed and there is no request body), so any exception is genuinely
+    // internal and must not be reported as a 400.
+    console.error('Error creating jira task:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -813,7 +1012,7 @@ router.post('/:id/steps', stepCreateLimiter as any, requireAuth, async (req, res
 
     // Load the submitter alongside the existence check so the lifecycle
     // notification (below) has the recipient without a second query — unlike the
-    // approve/claim/complete paths, this route has no transaction returning it.
+    // approve/reject/complete paths, this route has no transaction returning it.
     const existingIdea = await prisma.idea.findUnique({
       where: { id },
       include: {

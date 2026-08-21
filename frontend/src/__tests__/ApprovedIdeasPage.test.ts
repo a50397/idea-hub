@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { setActivePinia, createPinia } from 'pinia';
@@ -6,7 +6,7 @@ import ApprovedIdeasPage from '../pages/ApprovedIdeasPage.vue';
 import { useAuthStore } from '../stores/auth';
 import { IdeaStatus, Effort, Role, MAX_PAGE_LIMIT } from '../types';
 import type { Idea } from '../types';
-import { createTestI18n, createTestVuetify, findByText, paginated } from './helpers';
+import { createTestI18n, createTestVuetify, paginated } from './helpers';
 
 const { mockPush } = vi.hoisted(() => ({ mockPush: vi.fn() }));
 
@@ -18,7 +18,7 @@ vi.mock('vue-router', () => ({
 vi.mock('../api/ideas', () => ({
   ideasApi: {
     getAll: vi.fn(),
-    claim: vi.fn(),
+    createJiraTask: vi.fn(),
   },
 }));
 
@@ -44,10 +44,19 @@ vi.mock('../api/auth', () => ({
   },
 }));
 
+// onMounted fetches runtime options (via the options store) to gate the button.
+vi.mock('../api/options', () => ({
+  optionsApi: {
+    get: vi.fn(),
+  },
+}));
+
 import { ideasApi } from '../api/ideas';
 import { departmentsApi } from '../api/departments';
+import { optionsApi } from '../api/options';
 const mockedIdeas = vi.mocked(ideasApi);
 const mockedDepartments = vi.mocked(departmentsApi);
+const mockedOptions = vi.mocked(optionsApi);
 
 // An idea submitted by somebody else: a basic USER must still see it.
 function makeIdea(overrides: Partial<Idea> = {}): Idea {
@@ -72,32 +81,43 @@ function makeIdea(overrides: Partial<Idea> = {}): Idea {
 const fullPage = () =>
   Array.from({ length: MAX_PAGE_LIMIT }, (_, i) => makeIdea({ id: `idea-${i}`, title: `Idea ${i}` }));
 
+// The v-snackbar's content is teleported outside the wrapper's own DOM subtree, so
+// assertions on it must go through document.body. Vuetify's overlay teleport target
+// is never cleaned up between tests (nothing here unmounts a wrapper by default),
+// so a PREVIOUS test's snackbar text/links would otherwise leak into a later
+// document.body query — track and unmount every mounted wrapper after each test.
+let mountedWrappers: VueWrapper[] = [];
+
 function mountPage() {
-  return mount(ApprovedIdeasPage, {
+  const wrapper = mount(ApprovedIdeasPage, {
     global: { plugins: [createTestVuetify(), createTestI18n('en')] },
   });
+  mountedWrappers.push(wrapper);
+  return wrapper;
 }
 
-// The confirm dialog is teleported out of the wrapper's DOM, but its buttons
-// stay in the component tree (same approach as UsersPage.test.ts).
-function dialogButton(wrapper: VueWrapper, text: string) {
-  return wrapper
-    .findAllComponents({ name: 'VBtn' })
-    .find((b) => b.text().trim() === text);
+afterEach(() => {
+  mountedWrappers.forEach((w) => w.unmount());
+  mountedWrappers = [];
+});
+
+function signIn(role: Role) {
+  const auth = useAuthStore();
+  auth.user = { id: 'actor1', name: 'Actor', email: 'actor@x.com', role };
 }
 
 describe('ApprovedIdeasPage', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
-    mockedIdeas.getAll.mockResolvedValue(paginated([]));
-    mockedIdeas.claim.mockResolvedValue(makeIdea({ status: IdeaStatus.IN_PROGRESS }));
+    mockedIdeas.getAll.mockResolvedValue(paginated([makeIdea()]));
     mockedDepartments.getAll.mockResolvedValue([
       { id: 'd1', name: 'General', order: 0, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
       { id: 'd2', name: 'Marketing', order: 1, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
     ]);
-    const auth = useAuthStore();
-    auth.user = { id: 'u1', name: 'Me', email: 'me@x.com', role: Role.USER };
+    mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, jiraEnabled: true, ssoShowLogout: false });
+    vi.spyOn(window, 'open').mockImplementation(() => null);
+    signIn(Role.USER);
   });
 
   it('loads approved ideas org-wide for a basic USER (no submitterId) at the max page limit', async () => {
@@ -263,72 +283,176 @@ describe('ApprovedIdeasPage', () => {
     consoleSpy.mockRestore();
   });
 
-  describe('claim confirmation', () => {
-    async function openDialog() {
-      mockedIdeas.getAll.mockResolvedValue(paginated([makeIdea({ id: 'idea-7', title: 'Claimable idea' })]));
+  describe('Create Jira task button gating', () => {
+    it('shows the button for a POWER_USER when Jira is enabled and the idea is not yet dispatched', async () => {
+      signIn(Role.POWER_USER);
       const wrapper = mountPage();
       await flushPromises();
 
-      const claimStart = findByText(wrapper, 'button', 'Claim & Start');
-      expect(claimStart).toBeTruthy();
-      await claimStart!.trigger('click');
-      await flushPromises();
-      return wrapper;
-    }
-
-    it('opens a confirm dialog naming the idea instead of claiming immediately', async () => {
-      const wrapper = await openDialog();
-
-      expect(wrapper.findComponent({ name: 'VDialog' }).props('modelValue')).toBe(true);
-      expect(document.body.textContent).toContain('Claim Idea');
-      expect(document.body.textContent).toContain('Claimable idea');
-      expect(mockedIdeas.claim).not.toHaveBeenCalled();
+      expect(wrapper.text()).toContain('Create Jira task');
     });
 
-    it('claims the idea when the dialog is confirmed', async () => {
-      const wrapper = await openDialog();
-
-      await dialogButton(wrapper, 'Claim')!.trigger('click');
+    it('shows the button for an ADMIN', async () => {
+      signIn(Role.ADMIN);
+      const wrapper = mountPage();
       await flushPromises();
 
-      expect(mockedIdeas.claim).toHaveBeenCalledTimes(1);
-      expect(mockedIdeas.claim).toHaveBeenCalledWith('idea-7');
-      expect(wrapper.findComponent({ name: 'VDialog' }).props('modelValue')).toBe(false);
+      expect(wrapper.text()).toContain('Create Jira task');
     });
 
-    it('does not claim the idea when the dialog is cancelled', async () => {
-      const wrapper = await openDialog();
-
-      await dialogButton(wrapper, 'Cancel')!.trigger('click');
+    it('hides the button for a regular USER', async () => {
+      signIn(Role.USER);
+      const wrapper = mountPage();
       await flushPromises();
 
-      expect(mockedIdeas.claim).not.toHaveBeenCalled();
-      expect(wrapper.findComponent({ name: 'VDialog' }).props('modelValue')).toBe(false);
+      expect(wrapper.text()).not.toContain('Create Jira task');
     });
 
-    // Regression: the losing side of a claim race used to be left with the dialog
-    // open over a stale card, so every re-confirm produced another 400. A failed
-    // claim must close the dialog AND refetch, on top of surfacing the error.
-    it('closes the dialog and refetches the list when the claim is rejected', async () => {
-      const wrapper = await openDialog();
-      mockedIdeas.claim.mockRejectedValueOnce({
-        response: { data: { error: 'Idea is not available for claiming' } },
-      });
-      // openDialog already consumed the mount fetch; count only what follows.
-      mockedIdeas.getAll.mockClear();
-
-      await dialogButton(wrapper, 'Claim')!.trigger('click');
+    it('hides the button when Jira is not enabled', async () => {
+      mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, jiraEnabled: false, ssoShowLogout: false });
+      signIn(Role.POWER_USER);
+      const wrapper = mountPage();
       await flushPromises();
 
-      expect(mockedIdeas.claim).toHaveBeenCalledTimes(1);
-      // The stale card is refreshed away instead of being re-confirmable.
-      expect(mockedIdeas.getAll).toHaveBeenCalledTimes(1);
-      expect(wrapper.findComponent({ name: 'VDialog' }).props('modelValue')).toBe(false);
-      // The error is still surfaced to the user.
+      expect(wrapper.text()).not.toContain('Create Jira task');
+    });
+
+    it("replaces the button with IdeaCard's linked Jira chip once dispatched (jiraSyncActive)", async () => {
+      mockedIdeas.getAll.mockResolvedValue(paginated([makeIdea({ jiraSyncActive: true, jiraIssueKey: 'OPS-1' })]));
+      signIn(Role.POWER_USER);
+      const wrapper = mountPage();
+      await flushPromises();
+
+      expect(wrapper.text()).not.toContain('Create Jira task');
+      expect(wrapper.text()).toContain('OPS-1');
+    });
+
+    it('shows the chip to a regular USER too (it is not power-user gated)', async () => {
+      mockedIdeas.getAll.mockResolvedValue(paginated([makeIdea({ jiraSyncActive: true, jiraIssueKey: 'OPS-1' })]));
+      signIn(Role.USER);
+      const wrapper = mountPage();
+      await flushPromises();
+
+      expect(wrapper.text()).toContain('OPS-1');
+    });
+
+    it('renders the chip as a new-tab noopener LINK when the server provided a browse URL', async () => {
+      mockedIdeas.getAll.mockResolvedValue(
+        paginated([
+          makeIdea({
+            jiraSyncActive: true,
+            jiraIssueKey: 'OPS-1',
+            jiraBrowseUrl: 'https://acme.atlassian.net/browse/OPS-1',
+          }),
+        ])
+      );
+      signIn(Role.USER);
+      const wrapper = mountPage();
+      await flushPromises();
+
+      // The durable popup-blocker fallback (deep-review fix A6): the chip itself
+      // links to the issue.
+      const link = wrapper
+        .findAll('a')
+        .find((a) => a.attributes('href') === 'https://acme.atlassian.net/browse/OPS-1');
+      expect(link).toBeTruthy();
+      expect(link!.attributes('target')).toBe('_blank');
+      expect(link!.attributes('rel')).toBe('noopener');
+      expect(link!.text()).toContain('OPS-1');
+    });
+
+    it('renders a plain (non-link) chip when no browse URL is present', async () => {
+      mockedIdeas.getAll.mockResolvedValue(paginated([makeIdea({ jiraSyncActive: true, jiraIssueKey: 'OPS-1' })]));
+      signIn(Role.USER);
+      const wrapper = mountPage();
+      await flushPromises();
+
+      expect(wrapper.text()).toContain('OPS-1');
+      expect(
+        wrapper.findAll('a').find((a) => (a.text() || '').includes('OPS-1'))
+      ).toBeUndefined();
+    });
+  });
+
+  describe('createJiraTask dispatch flow', () => {
+    beforeEach(() => {
+      signIn(Role.POWER_USER);
+    });
+
+    it('opens the browse URL in a new tab and shows a success snackbar with the link as a fallback', async () => {
+      mockedIdeas.createJiraTask.mockResolvedValue(
+        makeIdea({ jiraSyncActive: true, jiraIssueKey: 'OPS-1', jiraBrowseUrl: 'https://acme.atlassian.net/browse/OPS-1' })
+      );
+      const wrapper = mountPage();
+      await flushPromises();
+
+      const btn = wrapper.findAll('.v-btn').find((b) => b.text().trim() === 'Create Jira task');
+      await btn!.trigger('click');
+      await flushPromises();
+
+      expect(mockedIdeas.createJiraTask).toHaveBeenCalledWith('idea-1');
+      expect(window.open).toHaveBeenCalledWith('https://acme.atlassian.net/browse/OPS-1', '_blank', 'noopener');
+      // The snackbar is teleported to document.body (like a dialog) — safe to
+      // assert there because every wrapper is unmounted after each test (afterEach
+      // above), so no earlier test's teleported content can linger.
+      expect(document.body.textContent).toContain('OPS-1');
+      const link = Array.from(document.querySelectorAll('a')).find(
+        (a) => a.textContent?.trim() === 'https://acme.atlassian.net/browse/OPS-1'
+      );
+      expect(link).toBeTruthy();
+      expect(link!.getAttribute('href')).toBe('https://acme.atlassian.net/browse/OPS-1');
+    });
+
+    it('handles a missing jiraBrowseUrl gracefully: no popup, no dead link, still shows success and reloads', async () => {
+      mockedIdeas.createJiraTask.mockResolvedValue(makeIdea({ jiraSyncActive: true, jiraIssueKey: 'OPS-2' }));
+      const wrapper = mountPage();
+      await flushPromises();
+
+      const btn = wrapper.findAll('.v-btn').find((b) => b.text().trim() === 'Create Jira task');
+      await btn!.trigger('click');
+      await flushPromises();
+
+      expect(window.open).not.toHaveBeenCalled();
       const snackbar = wrapper.findComponent({ name: 'VSnackbar' });
       expect(snackbar.props('modelValue')).toBe(true);
+      expect(snackbar.props('color')).toBe('success');
+      expect(document.body.textContent).toContain('OPS-2');
+      expect(document.querySelectorAll('a')).toHaveLength(0);
+      // The list is reloaded after a successful dispatch.
+      expect(mockedIdeas.getAll).toHaveBeenCalledTimes(2);
+    });
+
+    it('surfaces a 409 already-dispatched failure as the LOCALIZED conflict message (never the raw server string)', async () => {
+      mockedIdeas.createJiraTask.mockRejectedValueOnce({
+        response: { status: 409, data: { error: 'raw English server text — must not appear' } },
+      });
+      const wrapper = mountPage();
+      await flushPromises();
+
+      const btn = wrapper.findAll('.v-btn').find((b) => b.text().trim() === 'Create Jira task');
+      await btn!.trigger('click');
+      await flushPromises();
+
+      expect(window.open).not.toHaveBeenCalled();
+      const snackbar = wrapper.findComponent({ name: 'VSnackbar' });
       expect(snackbar.props('color')).toBe('error');
-      expect(document.body.textContent).toContain('Idea is not available for claiming');
+      expect(document.body.textContent).toContain('A Jira task for this idea is already being created.');
+      expect(document.body.textContent).not.toContain('must not appear');
+    });
+
+    it('maps a 502 reason through the settings testReason catalog', async () => {
+      mockedIdeas.createJiraTask.mockRejectedValueOnce({
+        response: { status: 502, data: { error: 'Failed to create the Jira issue', reason: 'rate_limited' } },
+      });
+      const wrapper = mountPage();
+      await flushPromises();
+
+      const btn = wrapper.findAll('.v-btn').find((b) => b.text().trim() === 'Create Jira task');
+      await btn!.trigger('click');
+      await flushPromises();
+
+      expect(document.body.textContent).toContain('Jira rate limit reached — wait a moment and try again.');
+      expect(document.body.textContent).not.toContain('Failed to create the Jira issue');
     });
   });
 });

@@ -14,6 +14,7 @@ export const PORTS = {
   backend: 3001,
   frontend: 5173,
   mockIdp: 8099,
+  mockJira: 8098,
   mongo: 27017,
 } as const;
 
@@ -21,6 +22,7 @@ export const FRONTEND_URL = `http://localhost:${PORTS.frontend}`;
 export const BACKEND_URL = `http://localhost:${PORTS.backend}`;
 export const API_BASE = `${BACKEND_URL}/api`;
 export const MOCK_IDP_URL = `http://localhost:${PORTS.mockIdp}`;
+export const MOCK_JIRA_URL = `http://localhost:${PORTS.mockJira}`;
 
 export const E2E_DB_NAME = 'ideahub_e2e';
 
@@ -58,6 +60,22 @@ export const SSO_IDENTITY = {
   org: 'QA',
   mappedRole: 'POWER_USER',
 } as const;
+
+/**
+ * The Basic-auth credential (Jira account email + API token) every e2e spec that
+ * configures Jira settings (admin UI or the API) must use. support/mock-jira.mjs is
+ * started with the SAME pair via MOCK_JIRA_ENV below and rejects any other
+ * credential with a 401, which is what turns "the real UI flow succeeds" into an
+ * implicit end-to-end proof that the backend sent the exact Basic header the admin
+ * configured.
+ */
+export const MOCK_JIRA_IDENTITY = {
+  email: 'jira-bot@ideahub.example',
+  apiToken: 'e2e-mock-jira-api-token',
+} as const;
+
+/** The project key mock-jira.mjs's fixed project catalog always includes. */
+export const MOCK_JIRA_PROJECT_KEY = 'OPS';
 
 /** Backend env for the server + globalSetup, with SSO pointed at the mock IdP. */
 export const BACKEND_ENV: Record<string, string> = {
@@ -101,6 +119,17 @@ export const BACKEND_ENV: Record<string, string> = {
   // and fail instantly on this dead local port. Pinned for the same reason as
   // the SSO knobs above: a developer's root .env must not leak a real URL in.
   WEBEX_API_BASE_URL: 'http://127.0.0.1:9',
+  // The Jira test/proxy override (security review F7 — WEBEX_API_BASE_URL
+  // precedent): wins over the DB-stored base URL for BOTH outbound calls and the
+  // browse URL, and is the only way a plain-http target (our mock) is ever
+  // accepted. The DB-stored baseUrl each spec saves through the UI/API must still
+  // be a valid https, non-IP, non-localhost placeholder — this override is what
+  // actually carries every request to support/mock-jira.mjs.
+  JIRA_API_BASE_URL: MOCK_JIRA_URL,
+  // Also the e2e enabler for the poll timer under NODE_ENV=test (see index.ts) —
+  // without it the poller never registers at all. 1s keeps status-transition
+  // assertions fast without hot-looping.
+  JIRA_POLL_INTERVAL_MS: '1000',
 };
 
 /** Env consumed by e2e/support/mock-idp.mjs (single source of truth). */
@@ -110,6 +139,13 @@ export const MOCK_IDP_ENV: Record<string, string> = {
   SSO_USER_NAME: SSO_IDENTITY.name,
   SSO_USER_ROLES: SSO_IDENTITY.roles.join(','),
   SSO_USER_ORG: SSO_IDENTITY.org,
+};
+
+/** Env consumed by e2e/support/mock-jira.mjs (single source of truth). */
+export const MOCK_JIRA_ENV: Record<string, string> = {
+  MOCK_JIRA_PORT: String(PORTS.mockJira),
+  MOCK_JIRA_EMAIL: MOCK_JIRA_IDENTITY.email,
+  MOCK_JIRA_API_TOKEN: MOCK_JIRA_IDENTITY.apiToken,
 };
 
 /** Per-role auth storage states written by auth.setup.ts. Kept under e2e/ and gitignored. */

@@ -326,6 +326,49 @@ describe('ReportsPage', () => {
     });
   });
 
+  describe('Jira column', () => {
+    it('shows the Jira header column after Department', async () => {
+      const wrapper = mountPage();
+      await flushPromises();
+
+      const headers = tableHeaders(wrapper);
+      const deptIndex = headers.indexOf('Department');
+      const jiraIndex = headers.indexOf('Jira');
+      expect(deptIndex).toBeGreaterThanOrEqual(0);
+      expect(jiraIndex).toBe(deptIndex + 1);
+    });
+
+    it("shows '-' for an idea that was never dispatched to Jira", async () => {
+      mockedReports.getFiltered.mockResolvedValue(paginated([makeIdea()]));
+      const wrapper = mountPage();
+      await flushPromises();
+
+      const row = wrapper.find('tbody tr');
+      expect(row.text()).toContain('-');
+    });
+
+    it('shows just the key right after dispatch, before the first poll (no status yet)', async () => {
+      mockedReports.getFiltered.mockResolvedValue(
+        paginated([makeIdea({ status: IdeaStatus.APPROVED, jiraIssueKey: 'OPS-1', jiraStatus: null })])
+      );
+      const wrapper = mountPage();
+      await flushPromises();
+
+      expect(wrapper.find('tbody tr').text()).toContain('OPS-1');
+      expect(wrapper.find('tbody tr').text()).not.toContain('(');
+    });
+
+    it('shows the key with its raw status once known', async () => {
+      mockedReports.getFiltered.mockResolvedValue(
+        paginated([makeIdea({ jiraIssueKey: 'OPS-1', jiraStatus: 'In Review' })])
+      );
+      const wrapper = mountPage();
+      await flushPromises();
+
+      expect(wrapper.find('tbody tr').text()).toContain('OPS-1 (In Review)');
+    });
+  });
+
   it('exports CSV without a submitterId for a basic USER', async () => {
     const wrapper = mountPage();
     await flushPromises();

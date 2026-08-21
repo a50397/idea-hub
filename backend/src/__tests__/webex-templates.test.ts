@@ -32,6 +32,8 @@ const lifeBase = {
   title: 'Testovací nápad',
   actorName: 'Ján Novák',
   stepText: 'Dokončil som prvú časť riešenia.',
+  // Only the JIRA_* bodies reference {jiraKey}; the other events ignore it.
+  jiraKey: 'OPS-42',
   link: 'http://localhost:5173/ideas/abc123',
 };
 
@@ -43,7 +45,13 @@ function buildLife(
   return { event, language, ...lifeBase, ...overrides };
 }
 
-const EVENTS: IdeaLifecycleEvent[] = ['APPROVED', 'REJECTED', 'CLAIMED', 'COMPLETED', 'STEP_ADDED'];
+// The five IN-APP events (a human actor performs them) and the three Jira MILESTONES
+// the poller mirrors (no human actor — the body names the issue instead). EVENTS is
+// the union; the exhaustive Records in utils/webex-templates.ts force it to stay in
+// sync.
+const IN_APP_EVENTS: IdeaLifecycleEvent[] = ['APPROVED', 'REJECTED', 'CLAIMED', 'COMPLETED', 'STEP_ADDED'];
+const JIRA_EVENTS: IdeaLifecycleEvent[] = ['JIRA_STARTED', 'JIRA_COMPLETED', 'JIRA_CANCELLED'];
+const EVENTS: IdeaLifecycleEvent[] = [...IN_APP_EVENTS, ...JIRA_EVENTS];
 
 describe('newIdeaWebexMessage', () => {
   it('returns ONLY a markdown field (Webex has no subject)', () => {
@@ -175,10 +183,37 @@ describe('ideaLifecycleWebexMessage', () => {
     expect(Object.keys(msg)).toEqual(['markdown']);
   });
 
-  it.each(EVENTS)('English %s carries the title, actor and a markdown link', (event) => {
+  it.each(IN_APP_EVENTS)('English %s carries the title, actor and a markdown link', (event) => {
     const md = ideaLifecycleWebexMessage(buildLife(event, 'en')).markdown;
     expect(md).toContain('Testovací nápad');
     expect(md).toContain('Ján Novák');
+    expect(md).toContain('[View the idea](http://localhost:5173/ideas/abc123)');
+  });
+
+  // The Jira milestones name the ISSUE and never an actor: the caller passes the
+  // constant "Jira" as actorName, but the wording must not use it at all (F5 — the
+  // remote assignee's name must never reach a notification body).
+  it.each(JIRA_EVENTS)('English %s carries the title and issue key but NO actor name', (event) => {
+    const md = ideaLifecycleWebexMessage(
+      buildLife(event, 'en', { actorName: 'Remote Assignee' })
+    ).markdown;
+    expect(md).toContain('Testovací nápad');
+    // The key renders markdown-ESCAPED ("OPS\\-42"): the hyphen is a markdown
+    // metacharacter, and every remote inline value goes through escapeMarkdown.
+    expect(md).toContain('OPS\\-42');
+    expect(md).not.toContain('Remote Assignee');
+    expect(md).toContain('[View the idea](http://localhost:5173/ideas/abc123)');
+  });
+
+  // The issue key is a REMOTE value, so it is treated as untrusted inline text here
+  // exactly like a title: markdown-escaped and URL-defanged, never able to inject a
+  // link into the trusted bot message.
+  it('escapes and defangs a hostile issue key (remote value, inline)', () => {
+    const md = ideaLifecycleWebexMessage(
+      buildLife('JIRA_STARTED', 'en', { jiraKey: '[x](http://evil.example)' })
+    ).markdown;
+    expect(md).not.toContain('](http://evil.example)');
+    expect(md).toContain('\\[x\\]');
     expect(md).toContain('[View the idea](http://localhost:5173/ideas/abc123)');
   });
 
@@ -190,6 +225,9 @@ describe('ideaLifecycleWebexMessage', () => {
       'has started working',
       'added a progress update',
       'View the idea',
+      'Work has started',
+      'was cancelled',
+      'Jira issue',
     ]) {
       expect(md).not.toContain(fragment);
     }

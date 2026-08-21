@@ -6,14 +6,17 @@ import {
   PORTS,
   BACKEND_ENV,
   MOCK_IDP_ENV,
+  MOCK_JIRA_ENV,
 } from './e2e/support/config';
 
 /**
  * End-to-end suite for the IdeaHub monorepo.
  *
- * Servers (started by Playwright): a mock OIDC IdP, the Express backend (tsx)
- * with SSO pointed at that mock IdP, and the Vite dev server. `globalSetup`
- * wipes + pushes + seeds an isolated e2e database before any test runs.
+ * Servers (started by Playwright): a mock OIDC IdP, a mock Jira Cloud, the
+ * Express backend (tsx) with SSO pointed at the mock IdP and Jira pointed at the
+ * mock Jira (JIRA_API_BASE_URL — see support/config.ts), and the Vite dev server.
+ * `globalSetup` wipes + pushes + seeds an isolated e2e database before any test
+ * runs.
  */
 export default defineConfig({
   testDir: './e2e',
@@ -56,6 +59,15 @@ export default defineConfig({
       port: PORTS.mockIdp,
       reuseExistingServer: !isCI,
       env: MOCK_IDP_ENV,
+      stdout: 'pipe',
+      stderr: 'pipe',
+      timeout: 60_000,
+    },
+    {
+      command: 'node e2e/support/mock-jira.mjs',
+      port: PORTS.mockJira,
+      reuseExistingServer: !isCI,
+      env: MOCK_JIRA_ENV,
       stdout: 'pipe',
       stderr: 'pipe',
       timeout: 60_000,

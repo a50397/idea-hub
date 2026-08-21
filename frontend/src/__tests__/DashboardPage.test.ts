@@ -5,7 +5,7 @@ import { setActivePinia, createPinia } from 'pinia';
 import DashboardPage from '../pages/DashboardPage.vue';
 import { useAuthStore } from '../stores/auth';
 import { Role } from '../types';
-import type { DashboardSummary, MonthlyTrend, DepartmentReport, TopContributor } from '../types';
+import type { DashboardSummary, MonthlyTrend, DepartmentReport, TopContributor, JiraStatusReport } from '../types';
 import { createTestI18n, createTestVuetify } from './helpers';
 
 // happy-dom (like jsdom) has no canvas, so chart.js cannot actually render;
@@ -25,6 +25,7 @@ vi.mock('../api/reports', () => ({
     getMonthlyTrend: vi.fn(),
     getTopContributors: vi.fn(),
     getByDepartment: vi.fn(),
+    getJiraStatuses: vi.fn(),
   },
 }));
 
@@ -48,6 +49,11 @@ const byDepartment: DepartmentReport[] = [
 
 const topContributors: TopContributor[] = [
   { userId: 'u1', userName: 'Alice', userEmail: 'alice@x.com', completedIdeas: 7 },
+];
+
+const jiraStatuses: JiraStatusReport[] = [
+  { status: 'In Review', count: 5 },
+  { status: 'To Do', count: 2 },
 ];
 
 function mountPage() {
@@ -83,6 +89,7 @@ describe('DashboardPage', () => {
     mockedReports.getMonthlyTrend.mockResolvedValue(monthlyTrend);
     mockedReports.getByDepartment.mockResolvedValue(byDepartment);
     mockedReports.getTopContributors.mockResolvedValue(topContributors);
+    mockedReports.getJiraStatuses.mockResolvedValue(jiraStatuses);
     const auth = useAuthStore();
     auth.user = { id: 'u0', name: 'Employee Ellie', email: 'ellie@x.com', role: Role.USER };
   });
@@ -149,6 +156,43 @@ describe('DashboardPage', () => {
     expect(card).toBeTruthy();
     expect(card!.findComponent({ name: 'Bar' }).exists()).toBe(false);
     expect(card!.text()).toContain(t('dashboard.noDepartmentData'));
+  });
+
+  it('shows the Jira statuses card with each status and count when getJiraStatuses returns items', async () => {
+    const { wrapper, i18n } = mountPage();
+    await flushPromises();
+    const t = translator(i18n);
+
+    const card = cardByTitle(wrapper, t('dashboard.jiraStatuses'));
+    expect(card).toBeTruthy();
+    expect(card!.text()).toContain('In Review');
+    expect(card!.text()).toContain('5');
+    expect(card!.text()).toContain('To Do');
+    expect(card!.text()).toContain('2');
+  });
+
+  it('hides the Jira statuses card entirely when getJiraStatuses returns []', async () => {
+    mockedReports.getJiraStatuses.mockResolvedValueOnce([]);
+    const { wrapper, i18n } = mountPage();
+    await flushPromises();
+    const t = translator(i18n);
+
+    expect(cardByTitle(wrapper, t('dashboard.jiraStatuses'))).toBeUndefined();
+  });
+
+  it('keeps every other widget alive when getJiraStatuses REJECTS (isolated fetch, deep-review fix D4)', async () => {
+    mockedReports.getJiraStatuses.mockRejectedValueOnce(new Error('boom'));
+    const { wrapper, i18n } = mountPage();
+    await flushPromises();
+    const t = translator(i18n);
+
+    // The Jira card is simply absent…
+    expect(cardByTitle(wrapper, t('dashboard.jiraStatuses'))).toBeUndefined();
+    // …while the stat tiles, the trend chart and the department chart all render —
+    // previously a single shared Promise.all blanked the whole dashboard.
+    expect(wrapper.text()).toContain(t('dashboard.submitted'));
+    expect(cardByTitle(wrapper, t('dashboard.monthlyTrend'))).toBeTruthy();
+    expect(cardByTitle(wrapper, t('dashboard.ideasByDepartment'))).toBeTruthy();
   });
 
   it('shows the monthly trend bar chart when getMonthlyTrend returns items', async () => {

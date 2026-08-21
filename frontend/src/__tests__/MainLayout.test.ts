@@ -50,6 +50,7 @@ function makeRouter(): Router {
       { path: '/departments', name: 'Departments', component: Dummy },
       { path: '/mail-settings', name: 'MailSettings', component: Dummy },
       { path: '/webex-settings', name: 'WebexSettings', component: Dummy },
+      { path: '/jira-settings', name: 'JiraSettings', component: Dummy },
     ],
   });
 }
@@ -86,7 +87,7 @@ describe('MainLayout', () => {
     mockedAuth.logout.mockResolvedValue({ message: 'Logged out successfully' });
     // MainLayout fetches /api/options on mount for the SSO logout-visibility flag;
     // default: flag false → logout stays hidden for SSO users.
-    mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, ssoShowLogout: false });
+    mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, jiraEnabled: false, ssoShowLogout: false });
   });
 
   it('always shows the core nav items and the current user info', async () => {
@@ -115,15 +116,16 @@ describe('MainLayout', () => {
   ] as const;
 
   describe.each(roleCases)('role-based nav for $role', ({ role, reviewQueue, users, departments, adminSettings }) => {
-    it(`${reviewQueue ? 'shows' : 'hides'} Review Queue, ${users ? 'shows' : 'hides'} Users, ${departments ? 'shows' : 'hides'} Departments, ${adminSettings ? 'shows' : 'hides'} Email + Webex Settings`, async () => {
+    it(`${reviewQueue ? 'shows' : 'hides'} Review Queue, ${users ? 'shows' : 'hides'} Users, ${departments ? 'shows' : 'hides'} Departments, ${adminSettings ? 'shows' : 'hides'} Email + Webex + Jira Settings`, async () => {
       const { wrapper } = await mountLayout(role);
       const titles = navTitles(wrapper);
       expect(titles.includes('Review Queue')).toBe(reviewQueue);
       expect(titles.includes('Users')).toBe(users);
       expect(titles.includes('Departments')).toBe(departments);
-      // The two admin-only notification-channel settings pages appear together.
+      // The three admin-only notification/execution-channel settings pages appear together.
       expect(titles.includes('Email Settings')).toBe(adminSettings);
       expect(titles.includes('Webex Settings')).toBe(adminSettings);
+      expect(titles.includes('Jira Settings')).toBe(adminSettings);
     });
   });
 
@@ -181,10 +183,90 @@ describe('MainLayout', () => {
     );
 
     it('SSO user with ssoShowLogout: logout button returns, Change Password stays hidden', async () => {
-      mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, ssoShowLogout: true });
+      mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, jiraEnabled: false, ssoShowLogout: true });
       const { wrapper } = await mountLayout(Role.USER, 'en', 'SSO');
       expect(Boolean(findByText(wrapper, '.v-btn', 'Logout'))).toBe(true);
       expect(navTitles(wrapper).includes('Change Password')).toBe(false);
+    });
+  });
+
+  // The admin-only banner for a failing Jira background sync. The server sends
+  // `jiraSyncFailing` to ADMIN sessions only, so the non-admin cases mirror what
+  // the API actually returns for those roles: no such key at all.
+  describe('Jira sync failure banner', () => {
+    const BANNER_TEXT = 'Jira synchronization is failing';
+
+    function optionsResponse(jiraSyncFailing?: boolean) {
+      return {
+        mailEnabled: false,
+        webexEnabled: false,
+        jiraEnabled: true,
+        ssoShowLogout: false,
+        ...(jiraSyncFailing === undefined ? {} : { jiraSyncFailing }),
+      };
+    }
+
+    function banner(wrapper: any) {
+      return wrapper.findComponent({ name: 'VAlert' });
+    }
+
+    it('shows a warning banner linking to the Jira settings for an ADMIN when the sync is failing', async () => {
+      mockedOptions.get.mockResolvedValue(optionsResponse(true));
+      const { wrapper } = await mountLayout(Role.ADMIN);
+
+      expect(banner(wrapper).exists()).toBe(true);
+      expect(wrapper.text()).toContain(BANNER_TEXT);
+      // The link lives INSIDE the banner (the nav drawer has its own, unrelated
+      // link to the same route).
+      const link = banner(wrapper).find('a[href="/jira-settings"]');
+      expect(link.exists()).toBe(true);
+      expect(link.text()).toBe('Open Jira settings');
+    });
+
+    it('shows nothing for an ADMIN while the sync is healthy', async () => {
+      mockedOptions.get.mockResolvedValue(optionsResponse(false));
+      const { wrapper } = await mountLayout(Role.ADMIN);
+
+      expect(banner(wrapper).exists()).toBe(false);
+      expect(wrapper.text()).not.toContain(BANNER_TEXT);
+    });
+
+    it.each([Role.USER, Role.POWER_USER])(
+      'never renders for a %s (the flag is not even sent to them)',
+      async (role) => {
+        mockedOptions.get.mockResolvedValue(optionsResponse());
+        const { wrapper } = await mountLayout(role);
+
+        expect(banner(wrapper).exists()).toBe(false);
+      }
+    );
+
+    // Belt and braces: even a response that wrongly carried the flag must not put
+    // an actionable admin warning in front of a non-admin.
+    it('stays hidden for a non-admin even if the flag arrives anyway', async () => {
+      mockedOptions.get.mockResolvedValue(optionsResponse(true));
+      const { wrapper } = await mountLayout(Role.USER);
+
+      expect(banner(wrapper).exists()).toBe(false);
+    });
+
+    it('stays dismissed for the rest of the session once closed', async () => {
+      mockedOptions.get.mockResolvedValue(optionsResponse(true));
+      const { wrapper } = await mountLayout(Role.ADMIN);
+      expect(banner(wrapper).exists()).toBe(true);
+
+      banner(wrapper).vm.$emit('click:close');
+      await flushPromises();
+
+      expect(banner(wrapper).exists()).toBe(false);
+      expect(wrapper.text()).not.toContain(BANNER_TEXT);
+    });
+
+    it('is localized', async () => {
+      mockedOptions.get.mockResolvedValue(optionsResponse(true));
+      const { wrapper } = await mountLayout(Role.ADMIN, 'sk');
+
+      expect(wrapper.text()).toContain('Synchronizácia s Jirou zlyháva');
     });
   });
 });

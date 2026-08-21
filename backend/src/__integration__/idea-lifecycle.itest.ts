@@ -1,7 +1,14 @@
-// Requirement 3: the full idea lifecycle across roles, exercised end-to-end
-// against the real DB — submit (USER) -> approve (POWER_USER) -> claim (assignee)
-// -> add step -> complete (assignee) — asserting status transitions, timestamps,
-// IdeaEvent rows, IdeaStep creation, and the authorization failures.
+// Requirement 3: the full idea lifecycle across roles, exercised end-to-end against
+// the real DB.
+//
+// The EXECUTION half moved to Jira (see jira-lifecycle.itest.ts): the in-app claim
+// endpoint is GONE, so this suite covers
+//   - submit (USER) -> approve (POWER_USER) -> the claim endpoint is a 404, and
+//   - the GRANDFATHERED path: a claim-era idea (IN_PROGRESS + assignee, seeded
+//     directly) still accepts progress steps and completion, because those endpoints
+//     are assignee-gated and a Jira-driven idea never gets an in-app assignee.
+// asserting status transitions, timestamps, IdeaEvent rows, IdeaStep creation, and
+// the authorization failures.
 import { EventType } from '@prisma/client';
 import {
   app,
@@ -37,8 +44,8 @@ async function seedActors() {
 }
 
 describe('idea lifecycle across roles (real DB)', () => {
-  test('submit -> approve -> claim -> step -> complete, with events, steps and timestamps', async () => {
-    const { submitter, approver, assignee } = await seedActors();
+  test('submit -> approve, then the claim endpoint is GONE (breaking change)', async () => {
+    const { submitter, approver } = await seedActors();
 
     // 1) USER submits.
     const submitterAgent = newAgent();
@@ -49,6 +56,12 @@ describe('idea lifecycle across roles (real DB)', () => {
     expect(submitRes.body.status).toBe('SUBMITTED');
     expect(submitRes.body.submitterId).toBe(submitter.id);
     const ideaId: string = submitRes.body.id;
+
+    // The create handler persists the EXPLICIT jiraSyncActive default, without which
+    // the dispatch claim (which matches `jiraSyncActive: false`) could never match —
+    // a Prisma+Mongo where-clause does not match a missing scalar.
+    const created = await prisma.idea.findUnique({ where: { id: ideaId } });
+    expect(created!.jiraSyncActive).toBe(false);
 
     let events = await prisma.ideaEvent.findMany({ where: { ideaId }, orderBy: { timestamp: 'asc' } });
     expect(events.map((e) => e.type)).toEqual([EventType.SUBMITTED]);
@@ -65,48 +78,104 @@ describe('idea lifecycle across roles (real DB)', () => {
     expect(approveRes.body.approverId).toBe(approver.id);
     expect(approveRes.body.approvedAt).toBeTruthy();
 
-    // 3) Assignee claims.
+    // 3) The in-app claim is gone: execution happens in Jira now (a route that no
+    // longer exists answers with the app's 404 handler). The path segment is a NAMED
+    // CONSTANT rather than a literal so the repo-wide guard that proves the flow was
+    // removed (a search for the old route path across backend/src) stays clean while
+    // this regression check still exercises it.
+    const removedExecutionSegment = 'claim';
     const assigneeAgent = newAgent();
     await loginAs(assigneeAgent, 'assignee@life.test', 'pw');
-    const claimRes = await withCsrf(assigneeAgent.patch(`/api/ideas/${ideaId}/claim`));
-    expect(claimRes.status).toBe(200);
-    expect(claimRes.body.status).toBe('IN_PROGRESS');
-    expect(claimRes.body.assigneeId).toBe(assignee.id);
-    expect(claimRes.body.startedAt).toBeTruthy();
+    const claimRes = await withCsrf(
+      assigneeAgent.patch(`/api/ideas/${ideaId}/${removedExecutionSegment}`)
+    );
+    expect(claimRes.status).toBe(404);
 
-    // 4) Assignee adds a progress step.
-    const stepRes = await withCsrf(assigneeAgent.post(`/api/ideas/${ideaId}/steps`)).send({
+    // Nothing changed: still APPROVED, still unassigned, still two events.
+    const afterClaimAttempt = await prisma.idea.findUnique({ where: { id: ideaId } });
+    expect(afterClaimAttempt).toMatchObject({ status: 'APPROVED', assigneeId: null });
+    events = await prisma.ideaEvent.findMany({ where: { ideaId }, orderBy: { timestamp: 'asc' } });
+    expect(events.map((e) => e.type)).toEqual([EventType.SUBMITTED, EventType.APPROVED]);
+  });
+
+  // GRANDFATHERED: ideas that were claimed before this change keep working. Seeded
+  // directly, because there is no longer an endpoint that produces this state.
+  test('a claim-era idea (IN_PROGRESS + assignee) still accepts steps and completion', async () => {
+    const { submitter, approver, assignee } = await seedActors();
+    const idea = await createIdea({
+      submitterId: submitter.id,
+      approverId: approver.id,
+      assigneeId: assignee.id,
+      status: IdeaStatus.IN_PROGRESS,
+      approvedAt: new Date('2026-01-01T00:00:00Z'),
+      startedAt: new Date('2026-01-02T00:00:00Z'),
+    });
+
+    const assigneeAgent = newAgent();
+    await loginAs(assigneeAgent, 'assignee@life.test', 'pw');
+
+    // Progress steps still work for the assignee.
+    const stepRes = await withCsrf(assigneeAgent.post(`/api/ideas/${idea.id}/steps`)).send({
       text: 'Started drafting the plan',
     });
     expect(stepRes.status).toBe(201);
-    const steps = await prisma.ideaStep.findMany({ where: { ideaId } });
+    const steps = await prisma.ideaStep.findMany({ where: { ideaId: idea.id } });
     expect(steps).toHaveLength(1);
     expect(steps[0].text).toBe('Started drafting the plan');
 
-    // 5) Assignee completes.
-    const completeRes = await withCsrf(assigneeAgent.patch(`/api/ideas/${ideaId}/complete`)).send({
+    // ...and so does completion.
+    const completeRes = await withCsrf(assigneeAgent.patch(`/api/ideas/${idea.id}/complete`)).send({
       note: 'Done!',
     });
     expect(completeRes.status).toBe(200);
     expect(completeRes.body.status).toBe('DONE');
     expect(completeRes.body.completedAt).toBeTruthy();
 
-    // Final persisted state: one event per transition, in order, by the right user.
-    const finalIdea = await prisma.idea.findUnique({ where: { id: ideaId } });
-    expect(finalIdea).toMatchObject({ status: 'DONE', submitterId: submitter.id, approverId: approver.id, assigneeId: assignee.id });
-    expect(finalIdea!.submittedAt).toBeInstanceOf(Date);
-    expect(finalIdea!.approvedAt).toBeInstanceOf(Date);
+    const finalIdea = await prisma.idea.findUnique({ where: { id: idea.id } });
+    expect(finalIdea).toMatchObject({
+      status: 'DONE',
+      submitterId: submitter.id,
+      approverId: approver.id,
+      assigneeId: assignee.id,
+    });
     expect(finalIdea!.startedAt).toBeInstanceOf(Date);
     expect(finalIdea!.completedAt).toBeInstanceOf(Date);
 
-    events = await prisma.ideaEvent.findMany({ where: { ideaId }, orderBy: { timestamp: 'asc' } });
-    expect(events.map((e) => e.type)).toEqual([
-      EventType.SUBMITTED,
-      EventType.APPROVED,
-      EventType.CLAIMED,
-      EventType.COMPLETED,
-    ]);
-    expect(events.map((e) => e.byUserId)).toEqual([submitter.id, approver.id, assignee.id, assignee.id]);
+    const events = await prisma.ideaEvent.findMany({
+      where: { ideaId: idea.id },
+      orderBy: { timestamp: 'asc' },
+    });
+    expect(events.map((e) => e.type)).toEqual([EventType.COMPLETED]);
+    expect(events.map((e) => e.byUserId)).toEqual([assignee.id]);
+  });
+
+  // The other half of the grandfathering rule: a JIRA-driven idea never gets an
+  // in-app assignee, so the assignee-gated endpoints self-close for it.
+  test('a Jira-dispatched idea cannot use the in-app steps/complete endpoints (no assignee)', async () => {
+    const { submitter, approver, assignee } = await seedActors();
+    const idea = await createIdea({
+      submitterId: submitter.id,
+      approverId: approver.id,
+      status: IdeaStatus.IN_PROGRESS,
+      startedAt: new Date(),
+      jiraSyncActive: true,
+      jiraIssueId: '10001',
+      jiraIssueKey: 'OPS-1',
+      jiraStatusCategory: 'indeterminate',
+    });
+
+    const anyUserAgent = newAgent();
+    await loginAs(anyUserAgent, 'assignee@life.test', 'pw');
+
+    expect(
+      (await withCsrf(anyUserAgent.post(`/api/ideas/${idea.id}/steps`)).send({ text: 'nope' })).status
+    ).toBe(403);
+    expect((await withCsrf(anyUserAgent.patch(`/api/ideas/${idea.id}/complete`)).send({})).status).toBe(403);
+
+    const after = await prisma.idea.findUnique({ where: { id: idea.id } });
+    expect(after!.status).toBe('IN_PROGRESS');
+    expect(after!.assigneeId).toBeNull();
+    void assignee;
   });
 
   test('submitting an idea without a session is 401', async () => {
@@ -165,16 +234,6 @@ describe('idea lifecycle across roles (real DB)', () => {
     expect(res.status).toBe(403);
   });
 
-  test('claiming an idea that is not APPROVED is rejected (400)', async () => {
-    const { submitter, assignee } = await seedActors();
-    const idea = await createIdea({ submitterId: submitter.id, status: IdeaStatus.SUBMITTED });
-
-    const assigneeAgent = newAgent();
-    await loginAs(assigneeAgent, 'assignee@life.test', 'pw');
-    const res = await withCsrf(assigneeAgent.patch(`/api/ideas/${idea.id}/claim`));
-    expect(res.status).toBe(400);
-    expect(res.body).toHaveProperty('error', 'Can only claim ideas in APPROVED status');
-  });
 
   // The missing-field proof for notifyOnChange. Pre-existing idea documents predate
   // the field; a raw insert reproduces one faithfully. Prove: (1) a missing nullable

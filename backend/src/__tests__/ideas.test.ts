@@ -13,6 +13,9 @@ const mockPrismaFunctions: Record<string, any> = {
     findUnique: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
+    // The Jira dispatch claim/release are CONDITIONAL writes (updateMany), not
+    // update — that is what makes the claim atomic.
+    updateMany: jest.fn(),
     delete: jest.fn(),
     count: jest.fn(),
   },
@@ -59,6 +62,9 @@ jest.mock('@prisma/client', () => {
       CLAIMED: 'CLAIMED',
       COMPLETED: 'COMPLETED',
       UPDATED: 'UPDATED',
+      JIRA_CREATED: 'JIRA_CREATED',
+      JIRA_STATUS_CHANGED: 'JIRA_STATUS_CHANGED',
+      JIRA_CANCELLED: 'JIRA_CANCELLED',
     },
   };
 });
@@ -93,6 +99,21 @@ jest.mock('../utils/webex', () => ({
   WEBEX_SEND_CONCURRENCY: jest.requireActual('../utils/webex').WEBEX_SEND_CONCURRENCY,
 }));
 
+// config/jira is DB-backed like the other channels: the dispatch endpoint and the
+// browse-URL serializer read the effective settings. Mock the reader so each case
+// controls the effective config without any DB.
+jest.mock('../config/jira', () => ({
+  getEffectiveJiraConfig: jest.fn(),
+}));
+
+// utils/jira: ONLY the network call (createJiraIssue) is mocked. buildJiraBrowseUrl
+// stays REAL, so the F7 browse-URL protocol rule is exercised through the route
+// rather than asserted against a stub.
+jest.mock('../utils/jira', () => {
+  const actual = jest.requireActual('../utils/jira');
+  return { ...actual, createJiraIssue: jest.fn() };
+});
+
 // Import routes AFTER mocks
 import bcrypt from 'bcrypt';
 import authRoutes from '../routes/auth';
@@ -100,12 +121,36 @@ import ideasRoutes from '../routes/ideas';
 import { sendMail } from '../utils/mailer';
 import { getEffectiveMailConfig } from '../config/mail';
 import { sendWebexMessage, getEffectiveWebexConfig } from '../utils/webex';
+import { getEffectiveJiraConfig } from '../config/jira';
+import { createJiraIssue } from '../utils/jira';
 import { IdeaStatus, Effort } from '@prisma/client';
 
 const mockedSendMail = jest.mocked(sendMail);
 const mockedGetConfig = jest.mocked(getEffectiveMailConfig);
 const mockedSendWebex = jest.mocked(sendWebexMessage);
 const mockedGetWebexConfig = jest.mocked(getEffectiveWebexConfig);
+const mockedGetJiraConfig = jest.mocked(getEffectiveJiraConfig);
+const mockedCreateJiraIssue = jest.mocked(createJiraIssue);
+
+// A fully configured effective Jira config (the shape config/jira.ts derives). The
+// base URL comes from the DATABASE unless a case sets baseUrlFromEnv.
+function jiraCfg(overrides: Record<string, unknown> = {}) {
+  return {
+    enabled: true,
+    effectiveEnabled: true,
+    baseUrl: 'https://acme.atlassian.net',
+    baseUrlFromEnv: false,
+    email: 'tech@corp.example',
+    token: 'jira-token',
+    defaultProjectKey: 'OPS',
+    issueTypeName: 'Task',
+    pollIntervalMinutes: 5,
+    cancelResolutions: ["won't do", 'cancelled', 'duplicate'],
+    hasToken: true,
+    tokenDecryptable: true,
+    ...overrides,
+  } as any;
+}
 
 // SendWebexOptions is a discriminated union ({ toPersonEmail } | { roomId }); these
 // tests assert on whichever target field a given call used, so read a captured first
@@ -169,6 +214,10 @@ describe('Ideas API', () => {
     // (which clears call history but not implementations).
     mockedGetWebexConfig.mockResolvedValue({ effectiveEnabled: false, language: 'sk' } as any);
     mockedSendWebex.mockResolvedValue(true);
+    // Hermetic Jira default: configured and enabled, so a dispatch test only has to
+    // state what it changes. Read-only endpoints only consult it when an idea
+    // actually carries an issue key.
+    mockedGetJiraConfig.mockResolvedValue(jiraCfg());
   });
 
   describe('GET /api/ideas', () => {
@@ -1197,6 +1246,46 @@ describe('Ideas API', () => {
     });
   });
 
+  // The dispatch limiter (jiraTaskLimiter) caps OUTBOUND Jira issue creation — the
+  // one endpoint that writes external third-party state — with the same 30/15-minute
+  // per-IP budget and the same production-only activation as the creation limiter
+  // above (skip() is true under test AND development). Same NODE_ENV toggle
+  // technique. The probes deliberately fail fast at 404 (no idea mocked): the
+  // limiter sits FIRST in the middleware chain, so ANY non-429 downstream status
+  // proves the request passed it — which keeps the 30 probes hermetic with no
+  // dispatch mocking at all.
+  describe('Rate limiting (Jira task dispatch)', () => {
+    test('returns 429 on the 31st rapid dispatch from one IP while the first 30 pass the limiter', async () => {
+      const originalEnv = process.env.NODE_ENV;
+      try {
+        // 'production' is neither 'test' nor 'development', so skip() returns false
+        // and the limiter is actually active for this block.
+        process.env.NODE_ENV = 'production';
+
+        const rateLimitedApp = createTestApp();
+        const { agent } = await loginAsUser(rateLimitedApp, 'POWER_USER');
+
+        mockPrismaFunctions.idea.findUnique.mockResolvedValue(null);
+
+        // The cap is 30: each probe clears the limiter, then 404s at the idea lookup.
+        for (let i = 0; i < 30; i++) {
+          const res = await agent.post('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/jira-task');
+          expect(res.status).toBe(404);
+        }
+
+        // The 31st from the same IP is throttled with the house 429 shape.
+        const limited = await agent.post('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/jira-task');
+        expect(limited.status).toBe(429);
+        expect(limited.body).toHaveProperty(
+          'error',
+          'Too many Jira task requests. Please try again later.'
+        );
+      } finally {
+        process.env.NODE_ENV = originalEnv;
+      }
+    });
+  });
+
   describe('PATCH /api/ideas/:id', () => {
     test('should update own idea in SUBMITTED status', async () => {
       const { agent, user } = await loginAsUser(app);
@@ -1464,50 +1553,349 @@ describe('Ideas API', () => {
     });
   });
 
-  describe('PATCH /api/ideas/:id/claim', () => {
-    test('should claim approved idea', async () => {
-      const { agent, user } = await loginAsUser(app);
+  // The Jira dispatch endpoint that REPLACED the removed in-app claim endpoint. That
+  // flow is gone: an APPROVED idea is now handed to Jira, stays APPROVED until work
+  // actually starts there, and never gets an in-app assignee.
+  describe('POST /api/ideas/:id/jira-task', () => {
+    const IDEA_ID = 'aaaaaaaaaaaaaaaaaaaaa001';
+    const PATH = `/api/ideas/${IDEA_ID}/jira-task`;
 
-      const existingIdea = {
-        id: 'aaaaaaaaaaaaaaaaaaaaa001',
+    // The idea as the handler loads it (submitter + department incl. the admin-only
+    // project override).
+    function approvedIdea(overrides: Record<string, unknown> = {}) {
+      return {
+        id: IDEA_ID,
+        title: 'Improve the coffee situation',
+        description: 'We should switch to a better supplier.',
+        benefits: 'Happier engineers.',
+        effort: 'LESS_THAN_ONE_DAY',
         status: 'APPROVED',
+        submitterId: 'submitter1',
+        submitter: { id: 'submitter1', name: 'Sub Mitter', email: 'submitter@example.com' },
+        department: { id: DEPT_ID, name: 'Marketing', jiraProjectKey: null },
+        ...overrides,
       };
+    }
 
-      const claimedIdea = {
-        ...existingIdea,
-        status: 'IN_PROGRESS',
-        assigneeId: user.id,
-        startedAt: new Date(),
-        submitter: { id: 'user123', name: 'Submitter', email: 'sub@example.com' },
-        approver: { id: 'power1', name: 'Power User', email: 'power@example.com' },
-        assignee: { id: user.id, name: user.name, email: user.email },
-      };
-
-      mockPrismaFunctions.idea.findUnique.mockResolvedValue(existingIdea);
-      mockPrismaFunctions.idea.update.mockResolvedValue(claimedIdea);
+    // Arrange the happy path: idea found, claim wins, Jira accepts, tx returns.
+    function arrangeSuccess(ideaOverrides: Record<string, unknown> = {}) {
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue(approvedIdea(ideaOverrides));
+      mockPrismaFunctions.idea.updateMany.mockResolvedValue({ count: 1 });
+      mockedCreateJiraIssue.mockResolvedValue({
+        ok: true,
+        issueId: '10001',
+        issueKey: 'OPS-1',
+        browseUrl: 'https://acme.atlassian.net/browse/OPS-1',
+      } as any);
+      // The response shape the tx update produces: its `include` selects only
+      // id+name for the department, so the admin-only jiraProjectKey is NOT part of
+      // it (asserted on the include itself below).
+      mockPrismaFunctions.idea.update.mockResolvedValue({
+        ...approvedIdea(ideaOverrides),
+        department: { id: DEPT_ID, name: 'Marketing' },
+        jiraIssueId: '10001',
+        jiraIssueKey: 'OPS-1',
+        jiraStatusCategory: 'new',
+        jiraSyncActive: true,
+      });
       mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
+    }
 
-      const response = await agent.patch('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/claim');
+    test.each(['POWER_USER', 'ADMIN'])('dispatches as %s: creates the issue and returns the browse URL', async (role) => {
+      const { agent, user } = await loginAsUser(app, role);
+      arrangeSuccess();
+
+      const response = await agent.post(PATH).send({});
 
       expect(response.status).toBe(200);
-      expect(response.body.status).toBe('IN_PROGRESS');
-      expect(response.body.assigneeId).toBe(user.id);
+      // The idea STAYS APPROVED — the canonical status follows the Jira category,
+      // and a fresh issue is in the `new` (To Do) category.
+      expect(response.body.status).toBe('APPROVED');
+      expect(response.body.jiraIssueKey).toBe('OPS-1');
+      expect(response.body.jiraBrowseUrl).toBe('https://acme.atlassian.net/browse/OPS-1');
+
+      // The issue was created in the installation-wide default project (no override).
+      expect(mockedCreateJiraIssue).toHaveBeenCalledTimes(1);
+      const [, input] = mockedCreateJiraIssue.mock.calls[0];
+      expect(input.projectKey).toBe('OPS');
+      expect(input.summary).toBe('Improve the coffee situation');
+      // The description carries the context a Jira reader needs, including the link
+      // back to the idea.
+      expect(input.description).toContain('Happier engineers.');
+      expect(input.description).toContain('Marketing');
+      expect(input.description).toContain('Sub Mitter');
+      expect(input.description).toContain(`/ideas/${IDEA_ID}`);
+
+      // The mirror fields are written and the idea is enrolled in the poller.
+      const updateArg = mockPrismaFunctions.idea.update.mock.calls[0][0];
+      expect(updateArg.where).toEqual({ id: IDEA_ID });
+      expect(updateArg.data).toMatchObject({
+        jiraIssueId: '10001',
+        jiraIssueKey: 'OPS-1',
+        jiraStatus: null,
+        jiraStatusCategory: 'new',
+        jiraAssignee: null,
+        jiraResolution: null,
+        jiraSyncActive: true,
+        jiraMissingCount: null,
+      });
+      // status/assigneeId are deliberately NOT touched.
+      expect(updateArg.data).not.toHaveProperty('status');
+      expect(updateArg.data).not.toHaveProperty('assigneeId');
+
+      // ...and the timeline records the dispatch, attributed to the ACTING USER
+      // (unlike the poller-written Jira events, which carry a null actor).
+      expect(mockPrismaFunctions.ideaEvent.create).toHaveBeenCalledWith({
+        data: {
+          ideaId: IDEA_ID,
+          type: 'JIRA_CREATED',
+          byUserId: user.id,
+          note: 'Jira task OPS-1 created',
+        },
+      });
     });
 
-    test('should not claim non-approved idea', async () => {
-      const { agent } = await loginAsUser(app);
+    test('a regular USER cannot dispatch (403) and no issue is created', async () => {
+      const { agent } = await loginAsUser(app, 'USER');
 
-      const existingIdea = {
-        id: 'aaaaaaaaaaaaaaaaaaaaa001',
-        status: 'SUBMITTED',
-      };
+      const response = await agent.post(PATH).send({});
 
-      mockPrismaFunctions.idea.findUnique.mockResolvedValue(existingIdea);
+      expect(response.status).toBe(403);
+      expect(mockedCreateJiraIssue).not.toHaveBeenCalled();
+      expect(mockPrismaFunctions.idea.updateMany).not.toHaveBeenCalled();
+    });
 
-      const response = await agent.patch('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/claim');
+    test('returns 404 for an unknown idea', async () => {
+      const { agent } = await loginAsUser(app, 'POWER_USER');
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue(null);
+
+      const response = await agent.post('/api/ideas/ccccccccccccccccccccc404/jira-task').send({});
+
+      expect(response.status).toBe(404);
+      expect(mockedCreateJiraIssue).not.toHaveBeenCalled();
+    });
+
+    test.each(['SUBMITTED', 'IN_PROGRESS', 'DONE', 'REJECTED'])(
+      'refuses a %s idea with 400 and never claims or calls Jira',
+      async (status) => {
+        const { agent } = await loginAsUser(app, 'POWER_USER');
+        mockPrismaFunctions.idea.findUnique.mockResolvedValue(approvedIdea({ status }));
+
+        const response = await agent.post(PATH).send({});
+
+        expect(response.status).toBe(400);
+        expect(mockPrismaFunctions.idea.updateMany).not.toHaveBeenCalled();
+        expect(mockedCreateJiraIssue).not.toHaveBeenCalled();
+      }
+    );
+
+    test('refuses with 400 when Jira is not effectively configured', async () => {
+      const { agent } = await loginAsUser(app, 'POWER_USER');
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue(approvedIdea());
+      mockedGetJiraConfig.mockResolvedValue(jiraCfg({ effectiveEnabled: false }));
+
+      const response = await agent.post(PATH).send({});
 
       expect(response.status).toBe(400);
-      expect(response.body).toHaveProperty('error');
+      expect(mockPrismaFunctions.idea.updateMany).not.toHaveBeenCalled();
+      expect(mockedCreateJiraIssue).not.toHaveBeenCalled();
+    });
+
+    test('refuses with 400 when neither the department nor the settings name a project', async () => {
+      const { agent } = await loginAsUser(app, 'POWER_USER');
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue(approvedIdea());
+      mockedGetJiraConfig.mockResolvedValue(jiraCfg({ defaultProjectKey: '' }));
+
+      const response = await agent.post(PATH).send({});
+
+      expect(response.status).toBe(400);
+      expect(mockedCreateJiraIssue).not.toHaveBeenCalled();
+    });
+
+    test("the department's project key OVERRIDES the installation-wide default", async () => {
+      const { agent } = await loginAsUser(app, 'POWER_USER');
+      arrangeSuccess({ department: { id: DEPT_ID, name: 'Marketing', jiraProjectKey: 'MKT' } });
+
+      const response = await agent.post(PATH).send({});
+
+      expect(response.status).toBe(200);
+      expect(mockedCreateJiraIssue.mock.calls[0][1].projectKey).toBe('MKT');
+      // The override is admin-only CONFIGURATION: the handler loads it to pick the
+      // project, but the response include selects only id+name for the department, so
+      // it can never travel back to the client.
+      const updateArg = mockPrismaFunctions.idea.update.mock.calls[0][0];
+      expect(updateArg.include.department).toEqual({ select: { id: true, name: true } });
+      expect(JSON.stringify(response.body)).not.toContain('jiraProjectKey');
+    });
+
+    // F6: the atomic claim is the serialization point. A concurrent dispatch (or an
+    // already-dispatched idea) matches ZERO rows, so the second caller is refused
+    // BEFORE any outbound call — no duplicate Jira issue can exist.
+    test('returns 409 without calling Jira when the atomic claim matches no rows', async () => {
+      const { agent } = await loginAsUser(app, 'POWER_USER');
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue(approvedIdea());
+      mockPrismaFunctions.idea.updateMany.mockResolvedValue({ count: 0 });
+
+      const response = await agent.post(PATH).send({});
+
+      expect(response.status).toBe(409);
+      expect(mockedCreateJiraIssue).not.toHaveBeenCalled();
+      expect(mockPrismaFunctions.idea.update).not.toHaveBeenCalled();
+    });
+
+    test('claims atomically on status + not-already-claimed, writing an explicit null issue id', async () => {
+      const { agent } = await loginAsUser(app, 'POWER_USER');
+      arrangeSuccess();
+
+      await agent.post(PATH).send({});
+
+      expect(mockPrismaFunctions.idea.updateMany).toHaveBeenCalledWith({
+        where: { id: IDEA_ID, status: 'APPROVED', jiraSyncActive: false },
+        data: { jiraSyncActive: true, jiraIssueId: null },
+      });
+    });
+
+    test('releases the claim and answers 502 with a fixed reason when Jira rejects the create', async () => {
+      const { agent } = await loginAsUser(app, 'POWER_USER');
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue(approvedIdea());
+      mockPrismaFunctions.idea.updateMany.mockResolvedValue({ count: 1 });
+      mockedCreateJiraIssue.mockResolvedValue({ ok: false, reason: 'invalid_credentials' } as any);
+
+      const response = await agent.post(PATH).send({});
+
+      expect(response.status).toBe(502);
+      expect(response.body).toEqual({ error: 'Failed to create the Jira issue', reason: 'invalid_credentials' });
+      // NOTHING was mirrored onto the idea and no event was written...
+      expect(mockPrismaFunctions.idea.update).not.toHaveBeenCalled();
+      expect(mockPrismaFunctions.ideaEvent.create).not.toHaveBeenCalled();
+      // ...and the claim was released so the idea can be dispatched again.
+      expect(mockPrismaFunctions.idea.updateMany).toHaveBeenLastCalledWith({
+        where: { id: IDEA_ID, jiraSyncActive: true, jiraIssueId: null },
+        data: { jiraSyncActive: false },
+      });
+    });
+
+    test('the 502 body carries ONLY the closed reason code (no upstream text)', async () => {
+      const { agent } = await loginAsUser(app, 'POWER_USER');
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue(approvedIdea());
+      mockPrismaFunctions.idea.updateMany.mockResolvedValue({ count: 1 });
+      mockedCreateJiraIssue.mockResolvedValue({ ok: false, reason: 'project_not_found' } as any);
+
+      const response = await agent.post(PATH).send({});
+
+      expect(Object.keys(response.body).sort()).toEqual(['error', 'reason']);
+      expect(response.body.reason).toBe('project_not_found');
+    });
+
+    test('a malformed idea id returns 400 before any lookup', async () => {
+      const { agent } = await loginAsUser(app, 'POWER_USER');
+
+      const response = await agent.post('/api/ideas/not-an-object-id/jira-task').send({});
+
+      expect(response.status).toBe(400);
+      expect(mockPrismaFunctions.idea.findUnique).not.toHaveBeenCalled();
+    });
+
+    // F7 browse-URL protocol rule, exercised end-to-end through the REAL
+    // buildJiraBrowseUrl on the read path (GET /:id): an https DB base yields a link,
+    // an http DB base yields NO link at all, and an http ENV-OVERRIDE base (the e2e
+    // mock Jira) does yield one. A `javascript:`-style base could otherwise become
+    // stored XSS in the SPA, which is why an unusable base omits the field entirely
+    // rather than emitting something partial.
+    describe('jiraBrowseUrl protocol rule (F7)', () => {
+      function dispatchedIdea() {
+        return {
+          id: IDEA_ID,
+          title: 'Dispatched idea',
+          status: 'APPROVED',
+          submitterId: 'submitter1',
+          jiraIssueKey: 'OPS-7',
+          jiraIssueId: '10007',
+          events: [],
+          steps: [],
+        };
+      }
+
+      test('https base from the DATABASE -> link present', async () => {
+        const { agent } = await loginAsUser(app);
+        mockedGetJiraConfig.mockResolvedValue(
+          jiraCfg({ baseUrl: 'https://acme.atlassian.net', baseUrlFromEnv: false })
+        );
+        mockPrismaFunctions.idea.findUnique.mockResolvedValue(dispatchedIdea());
+
+        const response = await agent.get(`/api/ideas/${IDEA_ID}`);
+
+        expect(response.status).toBe(200);
+        expect(response.body.jiraBrowseUrl).toBe('https://acme.atlassian.net/browse/OPS-7');
+      });
+
+      test('http base from the DATABASE -> field OMITTED entirely', async () => {
+        const { agent } = await loginAsUser(app);
+        mockedGetJiraConfig.mockResolvedValue(
+          jiraCfg({ baseUrl: 'http://acme.atlassian.net', baseUrlFromEnv: false })
+        );
+        mockPrismaFunctions.idea.findUnique.mockResolvedValue(dispatchedIdea());
+
+        const response = await agent.get(`/api/ideas/${IDEA_ID}`);
+
+        expect(response.status).toBe(200);
+        expect(response.body).not.toHaveProperty('jiraBrowseUrl');
+      });
+
+      test('http base from the ENV OVERRIDE -> link present (e2e mock Jira)', async () => {
+        const { agent } = await loginAsUser(app);
+        mockedGetJiraConfig.mockResolvedValue(
+          jiraCfg({ baseUrl: 'http://localhost:8098', baseUrlFromEnv: true })
+        );
+        mockPrismaFunctions.idea.findUnique.mockResolvedValue(dispatchedIdea());
+
+        const response = await agent.get(`/api/ideas/${IDEA_ID}`);
+
+        expect(response.status).toBe(200);
+        expect(response.body.jiraBrowseUrl).toBe('http://localhost:8098/browse/OPS-7');
+      });
+
+      test('a non-http(s) base -> field OMITTED (no javascript: link can ever be emitted)', async () => {
+        const { agent } = await loginAsUser(app);
+        mockedGetJiraConfig.mockResolvedValue(
+          jiraCfg({ baseUrl: 'javascript:alert(1)', baseUrlFromEnv: true })
+        );
+        mockPrismaFunctions.idea.findUnique.mockResolvedValue(dispatchedIdea());
+
+        const response = await agent.get(`/api/ideas/${IDEA_ID}`);
+
+        expect(response.status).toBe(200);
+        expect(response.body).not.toHaveProperty('jiraBrowseUrl');
+      });
+
+      test('an idea with NO issue key never reads the Jira settings at all', async () => {
+        const { agent } = await loginAsUser(app);
+        mockPrismaFunctions.idea.findUnique.mockResolvedValue({
+          ...dispatchedIdea(),
+          jiraIssueKey: null,
+        });
+
+        const response = await agent.get(`/api/ideas/${IDEA_ID}`);
+
+        expect(response.status).toBe(200);
+        expect(response.body).not.toHaveProperty('jiraBrowseUrl');
+        expect(mockedGetJiraConfig).not.toHaveBeenCalled();
+      });
+
+      test('the list endpoint attaches the link per item', async () => {
+        const { agent } = await loginAsUser(app);
+        mockPrismaFunctions.idea.findMany.mockResolvedValue([
+          { id: 'aaaaaaaaaaaaaaaaaaaaa001', title: 'A', jiraIssueKey: 'OPS-7' },
+          { id: 'aaaaaaaaaaaaaaaaaaaaa002', title: 'B', jiraIssueKey: null },
+        ]);
+        mockPrismaFunctions.idea.count.mockResolvedValue(2);
+
+        const response = await agent.get('/api/ideas');
+
+        expect(response.status).toBe(200);
+        expect(response.body.data[0].jiraBrowseUrl).toBe('https://acme.atlassian.net/browse/OPS-7');
+        expect(response.body.data[1]).not.toHaveProperty('jiraBrowseUrl');
+      });
     });
   });
 
@@ -1755,10 +2143,12 @@ describe('Ideas API', () => {
       mockedGetConfig.mockResolvedValue({ language: 'en', subjectTemplate: '', effectiveEnabled: true } as any);
     });
 
-    // The four transaction-based transitions (approve/reject/claim/complete), each
-    // resolving idea.update with the post-transition idea (carrying submitter +
+    // The transaction-based transitions (approve/reject/complete), each resolving
+    // idea.update with the post-transition idea (carrying submitter +
     // notifyOnChange). addStep is covered separately (it has no transaction and
-    // notifies from the findUnique result).
+    // notifies from the findUnique result). The former CLAIMED row is gone with the
+    // claim endpoint; the Jira milestones are notified by the poller, not by a
+    // request handler, and are covered in jira-sync.test.ts.
     interface Tx {
       event: string;
       role: string;
@@ -1790,17 +2180,6 @@ describe('Ideas API', () => {
           submitter, approver: SELF,
         }),
         subjectEn: '[IdeaHub] Your idea was rejected: Notifiable idea',
-      },
-      {
-        event: 'CLAIMED',
-        role: 'USER',
-        path: `/api/ideas/${IDEA_ID}/claim`,
-        existing: { id: IDEA_ID, title: TITLE, status: 'APPROVED', submitterId: SUBMITTER.id },
-        updated: (notifyOnChange, submitter) => ({
-          id: IDEA_ID, title: TITLE, status: 'IN_PROGRESS', submitterId: submitter.id, notifyOnChange,
-          submitter, assignee: SELF,
-        }),
-        subjectEn: '[IdeaHub] Work has started on your idea: Notifiable idea',
       },
       {
         event: 'COMPLETED',

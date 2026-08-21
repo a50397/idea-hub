@@ -91,6 +91,12 @@ const router = createRouter({
           component: () => import('../pages/WebexSettingsPage.vue'),
           meta: { requiresAdmin: true },
         },
+        {
+          path: 'jira-settings',
+          name: 'JiraSettings',
+          component: () => import('../pages/JiraSettingsPage.vue'),
+          meta: { requiresAdmin: true },
+        },
       ],
     },
   ],

@@ -27,7 +27,21 @@ export enum EventType {
   COMPLETED = 'COMPLETED',
   UPDATED = 'UPDATED',
   CHANGE_REQUESTED = 'CHANGE_REQUESTED',
+  // A POWER_USER/ADMIN dispatched the idea to Jira (POST /api/ideas/:id/jira-task).
+  // Always carries a user actor (byUserId non-null).
+  JIRA_CREATED = 'JIRA_CREATED',
+  // The poller (backend) mirrored a Jira status change onto the idea. NO user actor
+  // — byUserId/byUser are always null (see IdeaEvent below).
+  JIRA_STATUS_CHANGED = 'JIRA_STATUS_CHANGED',
+  // The Jira issue reached an unsuccessful final state (cancel-list resolution) or
+  // is gone (deleted/no longer accessible) — the idea returns to APPROVED. No user
+  // actor — byUserId/byUser are always null.
+  JIRA_CANCELLED = 'JIRA_CANCELLED',
 }
+
+// status.statusCategory.key from Jira, mirrored onto Idea.jiraStatusCategory. Drives
+// the canonical IdeaStatus on the backend and the chip color on the frontend.
+export type JiraStatusCategory = 'new' | 'indeterminate' | 'done';
 
 export interface User {
   id: string;
@@ -65,8 +79,20 @@ export interface AppOptions {
   // Whether the Webex notification channel is effectively enabled (enabled AND a
   // usable bot token). The second channel behind the per-idea notify toggle.
   webexEnabled: boolean;
+  // Whether the Jira execution channel is effectively enabled (enabled AND a usable
+  // base URL/account email/API token). Gates the "Create Jira task" button — a
+  // third, independent flag (NOT part of notifyOnChange's mail-or-webex toggle).
+  jiraEnabled: boolean;
   // Whether to re-expose the in-app logout button for SSO users (SSO_SHOW_LOGOUT).
   ssoShowLogout: boolean;
+  // Whether the Jira BACKGROUND POLLER is currently failing — drives the admin
+  // warning banner in MainLayout.
+  //
+  // OPTIONAL because the server sends it ONLY to an ADMIN session: for every other
+  // role the key is absent, not false (routes/options.ts documents that role-gated
+  // exception). Consumers must therefore treat "absent" as "not failing" — the
+  // options store's `?? false` — and never as "unknown".
+  jiraSyncFailing?: boolean;
 }
 
 export interface Department {
@@ -82,6 +108,10 @@ export interface Department {
   // Like notificationEmails, present ONLY in ADMIN responses (the backend omits it
   // for non-admin sessions), hence optional.
   webexRoomIds?: string[];
+  // Optional per-department Jira project-key override (installation-wide default
+  // lives on JiraSettings). Like the two fields above, present ONLY in ADMIN
+  // responses; null/absent means "no override — use the installation default".
+  jiraProjectKey?: string | null;
   _count?: {
     ideas: number;
   };
@@ -109,6 +139,70 @@ export interface WebexSettings {
   enabled: boolean;
   language: 'en' | 'sk';
   hasToken: boolean;
+}
+
+// Fixed failure categories the Jira client (backend) collapses every outbound
+// failure to — NEVER free-form upstream text (security review F9). Shared by the
+// settings test button, the projects picker and the jira-task dispatch 502.
+export type JiraFailureReason =
+  | 'invalid_credentials'
+  | 'project_not_found'
+  | 'invalid_request'
+  | 'rate_limited'
+  | 'timeout'
+  | 'host_not_found'
+  | 'connection_refused'
+  | 'tls_error'
+  | 'connection_failed'
+  | 'config_error'
+  | 'unknown';
+
+// The last outcome of the Jira background poller, as reported by
+// GET /api/jira-settings. READ-ONLY status: the poller writes it, a settings save
+// never touches it.
+//
+// `at` is when this state was ENTERED, not the time of the last attempt — the
+// backend records on transition only — so a failing record reads as "failing SINCE
+// at". `reason` is one of the closed JiraFailureReason codes (absent while healthy)
+// and is rendered through the existing jiraSettings.testReason.* catalog.
+export interface JiraSyncStatus {
+  ok: boolean;
+  reason?: JiraFailureReason;
+  at: string;
+}
+
+// Admin-managed Jira integration configuration. This is the MASKED shape returned
+// by the API: the API token is NEVER included — only `hasToken` indicates whether
+// one is stored. The token is write-only (sent on save, never read).
+export interface JiraSettings {
+  enabled: boolean;
+  baseUrl: string;
+  email: string;
+  defaultProjectKey: string;
+  issueTypeName: string;
+  pollIntervalMinutes: number;
+  cancelResolutions: string;
+  hasToken: boolean;
+  // The poller's health record; null when it has never recorded an outcome (a
+  // freshly configured installation). Optional so every consumer stays null-safe —
+  // the settings page reads it as `settings.lastSync?.ok === false`, which is
+  // equally correct for a response that predates the field.
+  lastSync?: JiraSyncStatus | null;
+}
+
+// A Jira project the configured tech user can see, as returned by
+// GET /api/jira-settings/projects. Powers the default-project picker (settings
+// page) and the per-department override picker (departments page).
+export interface JiraProject {
+  key: string;
+  name: string;
+}
+
+// One row of GET /api/reports/jira-statuses: a raw Jira status name and how many
+// dispatched ideas currently carry it. Pre-sorted desc by count on the backend.
+export interface JiraStatusReport {
+  status: string;
+  count: number;
 }
 
 export interface LogoutResponse {
@@ -147,6 +241,28 @@ export interface Idea {
   updatedAt: string;
   events?: IdeaEvent[];
   steps?: IdeaStep[];
+  // Jira execution mirror (backend prisma/schema.prisma Idea model). All
+  // optional/nullable: absent/null on an idea that has never been dispatched to
+  // Jira, and null-safe on any document that predates the feature (the
+  // missing-vs-null rule — every read path treats a missing field as null).
+  jiraIssueId?: string | null;
+  jiraIssueKey?: string | null;
+  // Raw Jira status NAME (e.g. "In Review"); jiraStatusCategory is the
+  // new/indeterminate/done bucket that drives `status` above.
+  jiraStatus?: string | null;
+  jiraStatusCategory?: JiraStatusCategory | null;
+  jiraAssignee?: string | null;
+  jiraResolution?: string | null;
+  // Dispatch-claim + poll-enrolment flag: true while the idea is enrolled in the
+  // Jira poller (from the moment "Create Jira task" succeeds until a final state).
+  jiraSyncActive?: boolean | null;
+  jiraLastSyncAt?: string | null;
+  jiraMissingCount?: number | null;
+  // Server-built browse link (`{baseUrl}/browse/{key}`). OMITTED entirely — never
+  // null — when it cannot be built safely (security review F7); present on list
+  // items, the detail GET and the jira-task dispatch response whenever it can be.
+  // NEVER build this URL client-side — always use the server-provided value.
+  jiraBrowseUrl?: string;
 }
 
 export interface IdeaStep {
@@ -160,8 +276,12 @@ export interface IdeaEvent {
   id: string;
   ideaId: string;
   type: EventType;
-  byUserId: string;
-  byUser: User;
+  // NULL for poller-written events (JIRA_STATUS_CHANGED / JIRA_CANCELLED — Jira
+  // itself is the actor, with no logged-in user behind the change); every other
+  // event type (including JIRA_CREATED) always carries a user. Renderers MUST
+  // null-guard (see events.actorJira / eventTypeKeyMap for the timeline label).
+  byUserId: string | null;
+  byUser: User | null;
   timestamp: string;
   note?: string;
 }
@@ -280,4 +400,31 @@ export const statusColors: Record<IdeaStatus, string> = {
   [IdeaStatus.IN_PROGRESS]: 'warning',
   [IdeaStatus.DONE]: 'primary',
   [IdeaStatus.REJECTED]: 'error',
+};
+
+// Maps every EventType to its `events.<key>` i18n label key (IdeaDetailPage
+// timeline). Deliberately exhaustive over ALL 11 event kinds — including the ones
+// no route creates anymore (CLAIMED/STARTED/CHANGE_REQUESTED) — because historical
+// documents can still carry them and the timeline must never show an untranslated
+// raw enum value for old data.
+export const eventTypeKeyMap: Record<EventType, string> = {
+  [EventType.SUBMITTED]: 'submitted',
+  [EventType.APPROVED]: 'approved',
+  [EventType.REJECTED]: 'rejected',
+  [EventType.CLAIMED]: 'claimed',
+  [EventType.STARTED]: 'started',
+  [EventType.COMPLETED]: 'completed',
+  [EventType.UPDATED]: 'updated',
+  [EventType.CHANGE_REQUESTED]: 'changeRequested',
+  [EventType.JIRA_CREATED]: 'jiraCreated',
+  [EventType.JIRA_STATUS_CHANGED]: 'jiraStatusChanged',
+  [EventType.JIRA_CANCELLED]: 'jiraCancelled',
+};
+
+// Chip color per Jira status category — shared by IdeaCard, IdeaDetailPage's Jira
+// sidebar block and anywhere else a raw Jira status is shown.
+export const jiraCategoryColors: Record<JiraStatusCategory, string> = {
+  new: 'info',
+  indeterminate: 'warning',
+  done: 'success',
 };

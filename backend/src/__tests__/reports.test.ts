@@ -697,5 +697,203 @@ describe('Reports API', () => {
       expect(response.status).toBe(200);
       expect(response.text).toContain('7'); // Duration in days
     });
+
+    // The four mirrored Jira columns. These are the only cells in the export whose
+    // content comes from a THIRD-PARTY system, so each one must go through
+    // sanitizeCsvField — which both quotes the value and defuses CSV formula
+    // injection (security review F12).
+    describe('Jira columns', () => {
+      function ideaWithJira(overrides: Record<string, unknown> = {}) {
+        return {
+          id: 'idea1',
+          title: 'Test Idea',
+          status: 'APPROVED',
+          effort: 'ONE_TO_THREE_DAYS',
+          tags: [],
+          submitter: { name: 'Alice' },
+          approver: null,
+          assignee: null,
+          department: { name: 'Marketing' },
+          submittedAt: new Date('2024-01-01'),
+          approvedAt: null,
+          startedAt: null,
+          completedAt: null,
+          jiraIssueKey: 'OPS-1',
+          jiraStatus: 'In Review',
+          jiraAssignee: 'Remote Person',
+          jiraResolution: 'Fixed',
+          ...overrides,
+        };
+      }
+
+      function csvRow(text: string): string {
+        return text.split('\n')[1];
+      }
+
+      test('adds the four Jira headers after Department', async () => {
+        const { agent } = await loginAsUser(app);
+        mockPrismaFunctions.idea.findMany.mockResolvedValue([ideaWithJira()]);
+        mockPrismaFunctions.idea.count.mockResolvedValue(1);
+
+        const response = await agent.get('/api/reports/filtered?format=csv');
+
+        const [header] = response.text.split('\n');
+        expect(header).toContain('Department,Jira Key,Jira Status,Jira Assignee,Jira Resolution');
+      });
+
+      test('quotes every Jira cell (all four go through sanitizeCsvField)', async () => {
+        const { agent } = await loginAsUser(app);
+        mockPrismaFunctions.idea.findMany.mockResolvedValue([ideaWithJira()]);
+        mockPrismaFunctions.idea.count.mockResolvedValue(1);
+
+        const response = await agent.get('/api/reports/filtered?format=csv');
+
+        expect(csvRow(response.text)).toContain('"OPS-1","In Review","Remote Person","Fixed"');
+      });
+
+      test('renders an empty cell for a never-dispatched / unassigned / unresolved idea', async () => {
+        const { agent } = await loginAsUser(app);
+        mockPrismaFunctions.idea.findMany.mockResolvedValue([
+          ideaWithJira({ jiraIssueKey: null, jiraStatus: null, jiraAssignee: null, jiraResolution: null }),
+        ]);
+        mockPrismaFunctions.idea.count.mockResolvedValue(1);
+
+        const response = await agent.get('/api/reports/filtered?format=csv');
+
+        expect(csvRow(response.text).endsWith('"Marketing",,,,')).toBe(true);
+      });
+
+      // F12: a Jira workflow status (or assignee/resolution/key) named "=cmd|..."
+      // would otherwise EXECUTE when the export is opened in a spreadsheet.
+      test.each([
+        ['a status', 'jiraStatus'],
+        ['an assignee', 'jiraAssignee'],
+        ['a resolution', 'jiraResolution'],
+        ['an issue key', 'jiraIssueKey'],
+      ])('defuses a formula-injection payload in %s', async (_label, field) => {
+        const { agent } = await loginAsUser(app);
+        const payload = "=cmd|' /C calc'!A0";
+        mockPrismaFunctions.idea.findMany.mockResolvedValue([ideaWithJira({ [field]: payload })]);
+        mockPrismaFunctions.idea.count.mockResolvedValue(1);
+
+        const response = await agent.get('/api/reports/filtered?format=csv');
+
+        // The leading "=" is neutralized with a single quote INSIDE the quoted cell,
+        // so no spreadsheet reads the value as a formula.
+        expect(csvRow(response.text)).toContain(`"'${payload}"`);
+        expect(csvRow(response.text)).not.toContain(`,${payload}`);
+      });
+
+      test.each([['@SUM(1+1)'], ['+1+1'], ['-1+1']])(
+        'defuses the other formula-leading characters (%s)',
+        async (payload) => {
+          const { agent } = await loginAsUser(app);
+          mockPrismaFunctions.idea.findMany.mockResolvedValue([ideaWithJira({ jiraStatus: payload })]);
+          mockPrismaFunctions.idea.count.mockResolvedValue(1);
+
+          const response = await agent.get('/api/reports/filtered?format=csv');
+
+          expect(csvRow(response.text)).toContain(`"'${payload}"`);
+        }
+      );
+
+      test('escapes embedded quotes in a Jira value (no cell breakout)', async () => {
+        const { agent } = await loginAsUser(app);
+        mockPrismaFunctions.idea.findMany.mockResolvedValue([
+          ideaWithJira({ jiraStatus: 'He said "done"' }),
+        ]);
+        mockPrismaFunctions.idea.count.mockResolvedValue(1);
+
+        const response = await agent.get('/api/reports/filtered?format=csv');
+
+        expect(csvRow(response.text)).toContain('"He said ""done"""');
+      });
+    });
+  });
+
+  // The dashboard breakdown over the RAW Jira status names.
+  describe('GET /api/reports/jira-statuses', () => {
+    test('returns the buckets biggest-first, ties broken by name', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockPrismaFunctions.idea.groupBy.mockResolvedValue([
+        { jiraStatus: 'In Review', _count: { id: 2 } },
+        { jiraStatus: 'To Do', _count: { id: 5 } },
+        { jiraStatus: 'Blocked', _count: { id: 2 } },
+      ]);
+
+      const response = await agent.get('/api/reports/jira-statuses');
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual([
+        { status: 'To Do', count: 5 },
+        { status: 'Blocked', count: 2 },
+        { status: 'In Review', count: 2 },
+      ]);
+    });
+
+    // `isSet` (not a bare `not: null`) is required: an idea document that predates
+    // the Jira fields has no such field at all, and a Prisma+Mongo where-clause does
+    // NOT match a missing scalar.
+    test('filters on DISPATCHED ideas using isSet, never a bare not-null', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockPrismaFunctions.idea.groupBy.mockResolvedValue([]);
+
+      await agent.get('/api/reports/jira-statuses');
+
+      expect(mockPrismaFunctions.idea.groupBy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          by: ['jiraStatus'],
+          where: expect.objectContaining({
+            jiraIssueKey: { isSet: true },
+            jiraStatus: { isSet: true, not: null },
+          }),
+        })
+      );
+    });
+
+    // Ideas are readable org-wide by every role (the /summary precedent), so the
+    // breakdown is never scoped to the caller.
+    test.each(['USER', 'POWER_USER', 'ADMIN'])(
+      'returns the org-wide breakdown for a %s (no submitterId scoping)',
+      async (role) => {
+        const { agent } = await loginAsUser(app, role);
+        mockPrismaFunctions.idea.groupBy.mockResolvedValue([]);
+
+        await agent.get('/api/reports/jira-statuses');
+
+        expect(mockPrismaFunctions.idea.groupBy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.not.objectContaining({ submitterId: expect.anything() }),
+          })
+        );
+      }
+    );
+
+    test('drops a null bucket defensively', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockPrismaFunctions.idea.groupBy.mockResolvedValue([
+        { jiraStatus: null, _count: { id: 3 } },
+        { jiraStatus: 'Done', _count: { id: 1 } },
+      ]);
+
+      const response = await agent.get('/api/reports/jira-statuses');
+
+      expect(response.body).toEqual([{ status: 'Done', count: 1 }]);
+    });
+
+    test('requires authentication', async () => {
+      const response = await request(app).get('/api/reports/jira-statuses');
+      expect(response.status).toBe(401);
+    });
+
+    test('returns 500 when the query fails', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockPrismaFunctions.idea.groupBy.mockRejectedValue(new Error('db down'));
+
+      const response = await agent.get('/api/reports/jira-statuses');
+
+      expect(response.status).toBe(500);
+    });
   });
 });
+

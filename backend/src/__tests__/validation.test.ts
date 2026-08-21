@@ -12,6 +12,7 @@ import {
   updateDepartmentSchema,
   reorderDepartmentsSchema,
   updateWebexSettingsSchema,
+  updateJiraSettingsSchema,
 } from '../utils/validation';
 
 // A valid ObjectId used wherever a schema now requires/accepts a department id.
@@ -869,6 +870,171 @@ describe('Validation Schemas', () => {
     test('should reject non-integer page', () => {
       const result = ideasQuerySchema.safeParse({ page: '1.5' });
       expect(result.success).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // updateJiraSettingsSchema — the Jira admin settings.
+  //
+  // `baseUrl` is the single most security-sensitive field in the feature: the
+  // stored account email + API token are sent to WHATEVER ORIGIN it names (as HTTP
+  // Basic), and the same value is the base of the browse URL the SPA renders as a
+  // link. The rules below are security review F1 — https only, no userinfo, no
+  // query/fragment, no IP literal, no localhost, normalized to a bare origin.
+  // -------------------------------------------------------------------------
+  describe('updateJiraSettingsSchema', () => {
+    function body(overrides: Record<string, unknown> = {}) {
+      return {
+        enabled: false,
+        baseUrl: 'https://acme.atlassian.net',
+        email: 'tech@corp.example',
+        defaultProjectKey: 'OPS',
+        issueTypeName: 'Task',
+        pollIntervalMinutes: 5,
+        cancelResolutions: "Won't Do,Cancelled,Duplicate",
+        ...overrides,
+      };
+    }
+
+    test('accepts a complete, valid configuration', () => {
+      expect(updateJiraSettingsSchema.safeParse(body()).success).toBe(true);
+    });
+
+    test('accepts an empty base URL, email and project key (not configured yet)', () => {
+      const result = updateJiraSettingsSchema.safeParse(
+        body({ baseUrl: '', email: '', defaultProjectKey: '' })
+      );
+      expect(result.success).toBe(true);
+    });
+
+    test.each([
+      ['http', 'http://acme.atlassian.net'],
+      ['ftp', 'ftp://acme.atlassian.net'],
+      ['javascript:', 'javascript:alert(1)'],
+      ['data:', 'data:text/html,<script>1</script>'],
+      ['file:', 'file:///etc/passwd'],
+      ['userinfo', 'https://user:pass@acme.atlassian.net'],
+      ['a username only', 'https://user@acme.atlassian.net'],
+      ['a query string', 'https://acme.atlassian.net/?x=1'],
+      ['a fragment', 'https://acme.atlassian.net/#frag'],
+      ['an IPv4 literal', 'https://10.1.2.3'],
+      ['a decimal IPv4', 'https://2130706433'],
+      ['a hex IPv4', 'https://0x7f000001'],
+      ['a shorthand IPv4', 'https://127.1'],
+      ['an IPv6 literal', 'https://[::1]'],
+      ['localhost', 'https://localhost'],
+      ['localhost with a port', 'https://localhost:8098'],
+      ['a .localhost subdomain', 'https://jira.localhost'],
+      ['a root-label (trailing-dot) localhost', 'https://localhost.'],
+      ['a root-label .localhost subdomain', 'https://jira.localhost.'],
+      ['an uppercase root-label localhost', 'https://LOCALHOST.'],
+      ['a relative path', '/rest/api/3'],
+      ['plain text', 'not a url'],
+      ['over 200 characters', `https://${'a'.repeat(200)}.example.com`],
+    ])('rejects a base URL with %s', (_label, baseUrl) => {
+      expect(updateJiraSettingsSchema.safeParse(body({ baseUrl })).success).toBe(false);
+    });
+
+    test.each([
+      ['a trailing slash', 'https://acme.atlassian.net/', 'https://acme.atlassian.net'],
+      ['a path', 'https://acme.atlassian.net/jira/rest', 'https://acme.atlassian.net'],
+      ['surrounding whitespace', '  https://acme.atlassian.net  ', 'https://acme.atlassian.net'],
+      ['an explicit port', 'https://jira.corp.example:8443/x', 'https://jira.corp.example:8443'],
+    ])('normalizes a base URL with %s to its bare origin', (_label, input, expected) => {
+      const result = updateJiraSettingsSchema.safeParse(body({ baseUrl: input }));
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.baseUrl).toBe(expected);
+    });
+
+    test('the token is optional (KEEP), trimmed when set, and empty means WIPE', () => {
+      const keep = updateJiraSettingsSchema.safeParse(body());
+      expect(keep.success).toBe(true);
+      if (keep.success) expect(keep.data.apiToken).toBeUndefined();
+
+      const set = updateJiraSettingsSchema.safeParse(body({ apiToken: '  secret  ' }));
+      expect(set.success).toBe(true);
+      if (set.success) expect(set.data.apiToken).toBe('secret');
+
+      const wipe = updateJiraSettingsSchema.safeParse(body({ apiToken: '' }));
+      expect(wipe.success).toBe(true);
+      if (wipe.success) expect(wipe.data.apiToken).toBe('');
+    });
+
+    test('rejects a whitespace-only token (unusable credential that would still read as configured)', () => {
+      expect(updateJiraSettingsSchema.safeParse(body({ apiToken: '   ' })).success).toBe(false);
+    });
+
+    test('rejects a token longer than 512 characters', () => {
+      expect(updateJiraSettingsSchema.safeParse(body({ apiToken: 'x'.repeat(513) })).success).toBe(false);
+    });
+
+    test('uppercases the default project key', () => {
+      const result = updateJiraSettingsSchema.safeParse(body({ defaultProjectKey: 'ops1' }));
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.defaultProjectKey).toBe('OPS1');
+    });
+
+    test.each([
+      ['a leading digit', '1OPS'],
+      ['a hyphen', 'OPS-1'],
+      ['a space', 'OPS TEAM'],
+      ['a slash', 'OPS/ADMIN'],
+      ['33 characters', 'A'.repeat(33)],
+    ])('rejects a default project key with %s', (_label, defaultProjectKey) => {
+      expect(updateJiraSettingsSchema.safeParse(body({ defaultProjectKey })).success).toBe(false);
+    });
+
+    test.each([
+      ['an invalid email', { email: 'nope' }],
+      ['an over-long email', { email: `${'a'.repeat(130)}@x.example` }],
+      ['an empty issue type', { issueTypeName: '   ' }],
+      ['an over-long issue type', { issueTypeName: 'x'.repeat(101) }],
+      ['a zero poll interval', { pollIntervalMinutes: 0 }],
+      ['a 1441-minute poll interval', { pollIntervalMinutes: 1441 }],
+      ['a fractional poll interval', { pollIntervalMinutes: 2.5 }],
+      ['a string poll interval', { pollIntervalMinutes: '5' }],
+      ['an over-long cancel list', { cancelResolutions: 'x'.repeat(501) }],
+      ['a missing enabled flag', { enabled: undefined }],
+      ['a non-boolean enabled flag', { enabled: 'yes' }],
+    ])('rejects %s', (_label, overrides) => {
+      expect(updateJiraSettingsSchema.safeParse(body(overrides)).success).toBe(false);
+    });
+
+    test('accepts an empty cancel list (nothing counts as a cancellation)', () => {
+      expect(updateJiraSettingsSchema.safeParse(body({ cancelResolutions: '' })).success).toBe(true);
+    });
+  });
+
+  // The per-department Jira project override shares the project-key rule with the
+  // settings schema above, so the two can never drift apart.
+  describe('updateDepartmentSchema — jiraProjectKey', () => {
+    test('is optional (an absent key leaves the column untouched)', () => {
+      const result = updateDepartmentSchema.safeParse({ name: 'Ops' });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.jiraProjectKey).toBeUndefined();
+    });
+
+    test('uppercases and trims a valid key', () => {
+      const result = updateDepartmentSchema.safeParse({ jiraProjectKey: '  dev1  ' });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.jiraProjectKey).toBe('DEV1');
+    });
+
+    test('accepts an empty string (the explicit CLEAR signal the route maps to null)', () => {
+      const result = updateDepartmentSchema.safeParse({ jiraProjectKey: '' });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.jiraProjectKey).toBe('');
+    });
+
+    test.each([
+      ['a leading digit', '1OPS'],
+      ['a hyphen', 'OPS-1'],
+      ['a space', 'OPS TEAM'],
+      ['a traversal attempt', '../ADMIN'],
+      ['33 characters', 'A'.repeat(33)],
+      ['a non-string', 42],
+    ])('rejects %s', (_label, jiraProjectKey) => {
+      expect(updateDepartmentSchema.safeParse({ jiraProjectKey }).success).toBe(false);
     });
   });
 });

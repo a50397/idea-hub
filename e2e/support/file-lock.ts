@@ -1,9 +1,11 @@
 import { mkdirSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 
-// The ONE lock name the three settings-singleton specs (mail-settings, notifications,
-// webex-settings) must share: they all mutate the same global mail-settings document,
-// so their critical sections must serialize against each other under a single lock.
+// The ONE lock name the five settings-mutating specs (mail-settings, notifications,
+// webex-settings, jira-settings, idea-lifecycle) must share: each mutates a global
+// settings singleton (MailSettings or JiraSettings) or the derived /api/options
+// flags those singletons feed, so their critical sections must serialize against
+// each other under a single lock.
 export const SETTINGS_LOCK = 'mail-settings';
 
 /**
@@ -23,13 +25,17 @@ export const SETTINGS_LOCK = 'mail-settings';
  */
 export async function withFileLock<T>(name: string, fn: () => Promise<T>): Promise<T> {
   const lockPath = path.resolve(process.cwd(), 'e2e', `.${name}.lock`);
-  const staleMs = 90_000; // reclaim a lock left behind by a crashed worker
+  // The longest sanctioned holder is idea-lifecycle.spec.ts's test.setTimeout(120_000)
+  // (two full dispatch-and-poll cycles inside the lock); 30s of headroom above that
+  // keeps a loaded CI runner from reclaiming a lock that spec is still legitimately
+  // holding.
+  const staleMs = 150_000;
   // Comfortably ABOVE staleMs: if the holder crashes, a waiter must survive long
-  // enough to reach the stale-reclaim path below and self-heal. The previous 50s
-  // (< staleMs) guaranteed a waiter threw "timed out acquiring lock" BEFORE a stale
-  // lock could ever be reclaimed. Playwright's own per-test timeout remains the outer
-  // bound on a genuinely stuck wait.
-  const acquireDeadline = Date.now() + 120_000;
+  // enough to reach the stale-reclaim path below and self-heal. A deadline at or
+  // below staleMs would guarantee a waiter threw "timed out acquiring lock" BEFORE a
+  // stale lock could ever be reclaimed. Playwright's own per-test timeout remains the
+  // outer bound on a genuinely stuck wait.
+  const acquireDeadline = Date.now() + 180_000;
 
   for (;;) {
     try {

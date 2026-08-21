@@ -187,15 +187,28 @@ export function newIdeaWebexMessage(input: NewIdeaWebexInput): BuiltWebexMessage
   return { markdown };
 }
 
-export type IdeaLifecycleEvent = 'APPROVED' | 'REJECTED' | 'CLAIMED' | 'COMPLETED' | 'STEP_ADDED';
+// Mirrors mail-templates.ts's IdeaLifecycleEvent one-for-one (same events, same
+// meaning): five in-app transitions plus the three Jira MILESTONES the poller
+// mirrors, which have no human actor and name the issue key instead.
+export type IdeaLifecycleEvent =
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'CLAIMED'
+  | 'COMPLETED'
+  | 'STEP_ADDED'
+  | 'JIRA_STARTED'
+  | 'JIRA_COMPLETED'
+  | 'JIRA_CANCELLED';
 
 export interface IdeaLifecycleWebexInput {
   event: IdeaLifecycleEvent;
   title: string;
-  /** Name of the user who performed the change. */
+  /** Name of the user who performed the change ("Jira" for the JIRA_* events). */
   actorName: string;
   /** The progress-step text; used only by the STEP_ADDED event. */
   stepText?: string;
+  /** The Jira issue key; used only by the JIRA_* events ('' elsewhere). */
+  jiraKey?: string;
   link: string;
   /** Active notification language (from the Webex settings). */
   language: WebexLang;
@@ -225,6 +238,24 @@ const LIFECYCLE_WORDING: Record<WebexLang, Record<IdeaLifecycleEvent, Wording>> 
         '{stepText}\n\n' +
         '[View the idea]({link})',
     },
+    // Jira milestones: no human actor — the wording names the ISSUE, never the
+    // remote assignee.
+    JIRA_STARTED: {
+      body:
+        'Work has started on your idea "{title}" (Jira issue {jiraKey}).\n\n' +
+        '[View the idea]({link})',
+    },
+    JIRA_COMPLETED: {
+      body:
+        'Your idea "{title}" has been completed (Jira issue {jiraKey}).\n\n' +
+        '[View the idea]({link})',
+    },
+    JIRA_CANCELLED: {
+      body:
+        'Work on your idea "{title}" was cancelled (Jira issue {jiraKey}). ' +
+        'The idea is approved again and can be picked up anew.\n\n' +
+        '[View the idea]({link})',
+    },
   },
   sk: {
     APPROVED: {
@@ -243,6 +274,24 @@ const LIFECYCLE_WORDING: Record<WebexLang, Record<IdeaLifecycleEvent, Wording>> 
       body:
         '{actorName} pridal/a aktualizáciu pokroku k Vášmu nápadu "{title}":\n\n' +
         '{stepText}\n\n' +
+        '[Zobraziť nápad]({link})',
+    },
+    // Míľniky z Jiry: bez ľudského aktéra — text uvádza ÚLOHU, nikdy meno
+    // priradeného používateľa zo vzdialeného systému.
+    JIRA_STARTED: {
+      body:
+        'Na Vašom nápade "{title}" sa začalo pracovať (úloha v Jire {jiraKey}).\n\n' +
+        '[Zobraziť nápad]({link})',
+    },
+    JIRA_COMPLETED: {
+      body:
+        'Váš nápad "{title}" bol dokončený (úloha v Jire {jiraKey}).\n\n' +
+        '[Zobraziť nápad]({link})',
+    },
+    JIRA_CANCELLED: {
+      body:
+        'Práca na Vašom nápade "{title}" bola zrušená (úloha v Jire {jiraKey}). ' +
+        'Nápad je opäť schválený a môže sa začať nanovo.\n\n' +
         '[Zobraziť nápad]({link})',
     },
   },
@@ -265,6 +314,11 @@ export function ideaLifecycleWebexMessage(input: IdeaLifecycleWebexInput): Built
     actorName: inline(input.actorName),
     // User-supplied free text (STEP_ADDED body only): defang URLs, escape, line-quote.
     stepText: quoteBlock(escapeMarkdown(defangUrls(input.stepText ?? ''))),
+    // The Jira issue key is a REMOTE value (JIRA_* bodies only). It was already
+    // normalized at the ingest boundary (utils/jira.ts), but it is treated exactly
+    // like any other untrusted inline value here — flattened, defanged and
+    // markdown-escaped — so it can never inject structure into the bot message.
+    jiraKey: inline(input.jiraKey ?? ''),
     // System-built link: trusted, not escaped.
     link: input.link,
   });

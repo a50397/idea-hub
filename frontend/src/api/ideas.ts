@@ -53,8 +53,12 @@ export const ideasApi = {
     return response.data;
   },
 
-  claim: async (id: string): Promise<Idea> => {
-    const response = await client.patch(`/ideas/${id}/claim`);
+  // Dispatch an APPROVED idea to Jira (POWER_USER/ADMIN only). This REPLACES the
+  // removed claim() flow — see the callers for the create-issue + new-tab-open UX.
+  // The returned idea carries `jiraBrowseUrl` whenever it could be built safely
+  // (see types.ts Idea.jiraBrowseUrl); it is simply absent otherwise.
+  createJiraTask: async (id: string): Promise<Idea> => {
+    const response = await client.post(`/ideas/${id}/jira-task`);
     return response.data;
   },
 
