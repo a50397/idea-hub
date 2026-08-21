@@ -57,6 +57,51 @@ Click **Save settings**, then use the **Send test email** block (it prefills you
 own address) to fire a message, and watch it land in the UI at
 http://localhost:8025 (subject, from, to, and the rendered body).
 
+## 3. Lifecycle notification mails
+
+Besides the department "new idea" mail, the **submitter** of an idea can opt in to
+be emailed every time **their** idea moves through the lifecycle — approved or
+rejected by a reviewer, and, since execution moved to Jira, the Jira-driven
+milestones: work **started**, **completed**, or **cancelled** (these come from the
+constant actor "Jira" and name the issue key). A power user closing an idea with
+the **mark-done override** also mails the submitter — that message carries the
+mandatory reason as a quoted block. To watch one land end-to-end:
+
+1. Point the backend at mailpit and enable outbound mail (section 2 above).
+2. As a regular user, **submit an idea** with the **"Notify me about changes"**
+   toggle **on** — it appears on the create form only while mail is enabled.
+   Already have an idea? Open its **details page** and flip the same toggle on
+   there; the submitter can change the opt-in at any status.
+3. As a **different** power user/admin, **approve** (or reject) the idea — that
+   mail is immediate. For the Jira milestones: enable the integration (admin →
+   **Jira settings**) against a test project, click **Create Jira task** on the
+   approved idea (the dialog arrives preselected with the department's project),
+   then move the issue in Jira — the started/completed/cancelled mails go out when
+   the poller next syncs. Or skip Jira entirely and use **Mark as done** on the
+   detail page for the immediate completion mail with the reason.
+4. Watch the mail arrive in http://localhost:8025 — one message per action,
+   addressed to the submitter (subject e.g. *Your idea was approved*), with a link
+   back to the idea.
+
+**"I did the action but no mail came" — the three usual reasons:**
+
+- **Self-notifications are suppressed.** The actor is never mailed about their own
+  change, so if the submitter approves or marks done their *own* idea, nothing is
+  sent. Use a second account for the human actions. (The Jira-driven milestones
+  have no human actor, so they always mail the opted-in submitter.)
+- **The opt-in is per-idea and defaults off.** Every idea starts with the toggle
+  off (legacy ideas included), so an idea submitted without it — or before mail was
+  enabled — sends nothing until you turn it on for *that* idea.
+- **Jira milestones wait for the poller.** Started/completed/cancelled mails are
+  sent by the sync tick, not by the click in Jira — expect them within the
+  configured poll interval (Jira settings → poll interval), not instantly.
+
+**Legacy note:** the old in-app claim flow is gone (claiming was replaced by the
+Jira dispatch), so there is no "claimed" mail anymore. Ideas claimed *before* the
+Jira switch are grandfathered: their assignee can still add progress steps and
+complete them, and those two mails (progress update, completed) still exist for
+exactly those ideas.
+
 ## What to verify
 
 - **Disabled is a true no-op**: with mail disabled, sends only log `[MAIL disabled] …`

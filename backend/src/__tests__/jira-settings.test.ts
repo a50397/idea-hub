@@ -180,8 +180,22 @@ describe('Jira settings API', () => {
       ['get', '/api/jira-settings', undefined],
       ['put', '/api/jira-settings', validBody()],
       ['post', '/api/jira-settings/test', {}],
-      ['get', '/api/jira-settings/projects', undefined],
     ];
+
+    // GET /projects is deliberately NOT in the matrix above: it is the one route
+    // here a POWER_USER may call (the dispatch dialog's project picker) — see the
+    // dedicated cases below and in its own describe.
+    test('returns 401 when unauthenticated on GET /api/jira-settings/projects', async () => {
+      const response = await request(app).get('/api/jira-settings/projects');
+      expect(response.status).toBe(401);
+      expect(response.body).toHaveProperty('error');
+    });
+
+    test('returns 403 for a USER on GET /api/jira-settings/projects', async () => {
+      const { agent } = await loginAsUser(app, 'USER');
+      const response = await agent.get('/api/jira-settings/projects');
+      expect(response.status).toBe(403);
+    });
 
     for (const [method, path, body] of endpoints) {
       test(`returns 401 when unauthenticated on ${method.toUpperCase()} ${path}`, async () => {
@@ -965,6 +979,16 @@ describe('Jira settings API', () => {
   });
 
   describe('GET /api/jira-settings/projects', () => {
+    test('a POWER_USER can list projects (source of the dispatch dialog picker)', async () => {
+      const { agent } = await loginAsUser(app, 'POWER_USER');
+      mockedListProjects.mockResolvedValue({ ok: true, projects: [{ key: 'OPS', name: 'Operations' }] });
+
+      const response = await agent.get('/api/jira-settings/projects');
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ projects: [{ key: 'OPS', name: 'Operations' }] });
+    });
+
     test('returns the listing on success', async () => {
       const { agent } = await loginAsUser(app);
       mockedListProjects.mockResolvedValue({ ok: true, projects: [{ key: 'OPS', name: 'Operations' }] });

@@ -20,23 +20,27 @@
       >
         {{ idea.jiraIssueKey }}
         <v-icon v-if="idea.jiraBrowseUrl" end size="x-small">mdi-open-in-new</v-icon>
-        <!-- The sync explanation lives on the status chip once one exists; before
-             the first poll the key chip is all there is, so it explains the gap. -->
-        <v-tooltip v-if="!idea.jiraStatus" activator="parent" location="top">{{ $t('ideas.jiraSyncHint') }}</v-tooltip>
+        <!-- The key chip explains whatever the status chip cannot: before the first
+             poll it is the only chip (the status is coming); on an UNMONITORED idea
+             the raw status is hidden entirely (a frozen "In Progress" on an idea
+             nobody watches reads as live data), so the key chip explains that too. -->
+        <v-tooltip
+          v-if="!idea.jiraSyncActive || !idea.jiraStatus"
+          activator="parent"
+          location="top"
+        >{{ $t(idea.jiraSyncActive ? 'ideas.jiraSyncHint' : 'ideas.jiraFinalHint') }}</v-tooltip>
       </v-chip>
+      <!-- Raw Jira status ONLY while the poller still monitors the issue — once the
+           sync stops the canonical chip takes back over. -->
       <v-chip
-        v-if="idea.jiraStatus"
+        v-if="idea.jiraSyncActive && idea.jiraStatus"
         :color="jiraStatusColor"
         size="small"
         variant="tonal"
         class="jira-status-chip flex-shrink-0"
       >
         <span class="text-truncate">{{ idea.jiraStatus }}</span>
-        <!-- Two distinct explanations: a watched issue updates within the poll
-             interval; a final state (completed or cancelled in Jira) never will. -->
-        <v-tooltip activator="parent" location="top">{{
-          $t(idea.jiraSyncActive ? 'ideas.jiraSyncHint' : 'ideas.jiraFinalHint')
-        }}</v-tooltip>
+        <v-tooltip activator="parent" location="top">{{ $t('ideas.jiraSyncHint') }}</v-tooltip>
       </v-chip>
       <v-chip v-else :color="statusColors[idea.status]" size="small" class="flex-shrink-0">
         {{ $t(`status.${statusKeyMap[idea.status]}`) }}

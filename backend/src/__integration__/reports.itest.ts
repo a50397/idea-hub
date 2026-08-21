@@ -238,6 +238,19 @@ describe('jira status breakdown (real DB)', () => {
       jiraStatus: 'To Do',
       jiraStatusCategory: 'new',
     });
+    // An UNMONITORED idea (completed through Jira; sync off, raw status kept as
+    // history): its frozen "Done" must NOT surface in the live breakdown — the
+    // expectations below stay exactly as without it.
+    await createIdea({
+      submitterId: other.id,
+      status: IdeaStatus.DONE,
+      jiraSyncActive: false,
+      jiraIssueId: '20004',
+      jiraIssueKey: 'OPS-14',
+      jiraStatus: 'Done',
+      jiraStatusCategory: 'done',
+      jiraResolution: 'Fixed',
+    });
   });
 
   test('GET /jira-statuses as ADMIN counts every dispatched idea, biggest bucket first', async () => {

@@ -21,6 +21,7 @@
 // (security review F2) — see the handler.
 
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { Role } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { requireRole } from '../middleware/auth';
@@ -129,7 +130,27 @@ router.get('/', requireRole(Role.ADMIN), async (req, res) => {
 // response; the full error stays in the server log. Exactly mirrors
 // GET /api/webex-settings/rooms (including being a read-only admin probe outside the
 // CSRF check, which only guards state-changing methods).
-router.get('/projects', requireRole(Role.ADMIN), async (req, res) => {
+// Dedicated limiter for the projects probe, cloning routes/ideas.ts's
+// jiraTaskLimiter exactly (window, max, headers, and the SAME test||development
+// skip parity). Now that POWER_USERs reach this route from every dispatch-dialog
+// open, each hit is an OUTBOUND paginated call to Jira as the SHARED tech account
+// — an unthrottled burst could earn 429s that also stall the poller (it honors
+// Jira's backoff), so a per-IP cap bounds the amplification (deep-review fix).
+const jiraProjectsLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development',
+  message: { error: 'Too many Jira project requests. Please try again later.' },
+});
+
+// POWER_USER too (the ONE non-admin route in this file): the dispatch dialog lets
+// the dispatching user pick a target project, and this read-only probe is its
+// source. Project keys/names visible to the tech account are ordinary internal
+// data for that audience (the F14 rationale); the SETTINGS themselves stay
+// admin-only.
+router.get('/projects', jiraProjectsLimiter as any, requireRole(Role.POWER_USER, Role.ADMIN), async (req, res) => {
   try {
     const result = await listJiraProjects();
     if (result.ok) {

@@ -40,8 +40,8 @@ doubles as a checklist if registration is done through the admin console:
   "scope": "openid profile email diam diam:user",
   "diam_claim_types": ["diam:roles"],
   "diam_token_exp": 28800,
-  "diam_authn": ["W", "L"],
-  "diam_authn_default": "W",
+  "diam_authn": ["L"],
+  "diam_authn_default": "L",
   "contacts": ["Peter Stolc <work email TBD>"]
 }
 ```
@@ -59,10 +59,12 @@ Notes on the choices:
   what is needed.
 - **`diam_claim_types`** — we need only `diam:roles`; no permissions, modules,
   or application identifiers.
-- **`diam_authn`** — **[our proposal]**: AD domain login (`W`) as default with
-  password fallback (`L`); no certificate (`C`) or ÚPVS (`E`) login. If the
-  automatic domain login variant (the `LoginWAuto` equivalent) is available
-  for OIDC clients, please enable it as the default.
+- **`diam_authn`** — **RESOLVED 2026-07-30**: domain login (`W`) is NOT
+  supported for OIDC clients on this deployment (the flow died on the IAM
+  error page "Neznámy typ autentifikácie" while `W` was configured) — so `L`
+  only: username + password at the IAM login screen. No certificate (`C`) or
+  ÚPVS (`E`). If `W` is ever enabled IAM-side, switching is a registration
+  change with zero impact on the app.
 - **`diam_token_exp`** — **[our proposal]** 28 800 s (8 h), matching the org
   convention in the guide.
 - We do **not** need: `refresh_token` or `client_credentials` grants,

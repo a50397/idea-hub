@@ -19,6 +19,14 @@ vi.mock('../api/ideas', () => ({
   ideasApi: {
     getAll: vi.fn(),
     createJiraTask: vi.fn(),
+    getJiraTarget: vi.fn(),
+  },
+}));
+
+// The dispatch dialog fetches the tech account's visible projects on every open.
+vi.mock('../api/jiraSettings', () => ({
+  jiraSettingsApi: {
+    getProjects: vi.fn(),
   },
 }));
 
@@ -54,9 +62,11 @@ vi.mock('../api/options', () => ({
 import { ideasApi } from '../api/ideas';
 import { departmentsApi } from '../api/departments';
 import { optionsApi } from '../api/options';
+import { jiraSettingsApi } from '../api/jiraSettings';
 const mockedIdeas = vi.mocked(ideasApi);
 const mockedDepartments = vi.mocked(departmentsApi);
 const mockedOptions = vi.mocked(optionsApi);
+const mockedJiraSettings = vi.mocked(jiraSettingsApi);
 
 // An idea submitted by somebody else: a basic USER must still see it.
 function makeIdea(overrides: Partial<Idea> = {}): Idea {
@@ -377,7 +387,23 @@ describe('ApprovedIdeasPage', () => {
   describe('createJiraTask dispatch flow', () => {
     beforeEach(() => {
       signIn(Role.POWER_USER);
+      mockedJiraSettings.getProjects.mockResolvedValue({ projects: [] });
+      // The dialog preselects the RESOLVED target (dept override ?? default).
+      mockedIdeas.getJiraTarget.mockResolvedValue({ projectKey: 'OPS' });
     });
+
+    /** Click the card button, let the preselection land, confirm in the dialog. */
+    async function openAndConfirmDispatch(wrapper: ReturnType<typeof mountPage>) {
+      const btn = wrapper.findAll('.v-btn').find((b) => b.text().trim() === 'Create Jira task');
+      await btn!.trigger('click');
+      await flushPromises(); // the /jira-target preselection resolves
+      const dialog = wrapper.findAllComponents({ name: 'VDialog' })[0];
+      const confirm = dialog
+        .findAllComponents({ name: 'VBtn' })
+        .find((b) => b.text().trim() === 'Create Jira task');
+      await confirm!.trigger('click');
+      await flushPromises();
+    }
 
     it('opens the browse URL in a new tab and shows a success snackbar with the link as a fallback', async () => {
       mockedIdeas.createJiraTask.mockResolvedValue(
@@ -386,11 +412,10 @@ describe('ApprovedIdeasPage', () => {
       const wrapper = mountPage();
       await flushPromises();
 
-      const btn = wrapper.findAll('.v-btn').find((b) => b.text().trim() === 'Create Jira task');
-      await btn!.trigger('click');
-      await flushPromises();
+      await openAndConfirmDispatch(wrapper);
 
-      expect(mockedIdeas.createJiraTask).toHaveBeenCalledWith('idea-1');
+      // Confirmed with the PRESELECTED resolved project: the key always travels.
+      expect(mockedIdeas.createJiraTask).toHaveBeenCalledWith('idea-1', 'OPS');
       expect(window.open).toHaveBeenCalledWith('https://acme.atlassian.net/browse/OPS-1', '_blank', 'noopener');
       // The snackbar is teleported to document.body (like a dialog) — safe to
       // assert there because every wrapper is unmounted after each test (afterEach
@@ -408,9 +433,7 @@ describe('ApprovedIdeasPage', () => {
       const wrapper = mountPage();
       await flushPromises();
 
-      const btn = wrapper.findAll('.v-btn').find((b) => b.text().trim() === 'Create Jira task');
-      await btn!.trigger('click');
-      await flushPromises();
+      await openAndConfirmDispatch(wrapper);
 
       expect(window.open).not.toHaveBeenCalled();
       const snackbar = wrapper.findComponent({ name: 'VSnackbar' });
@@ -429,9 +452,7 @@ describe('ApprovedIdeasPage', () => {
       const wrapper = mountPage();
       await flushPromises();
 
-      const btn = wrapper.findAll('.v-btn').find((b) => b.text().trim() === 'Create Jira task');
-      await btn!.trigger('click');
-      await flushPromises();
+      await openAndConfirmDispatch(wrapper);
 
       expect(window.open).not.toHaveBeenCalled();
       const snackbar = wrapper.findComponent({ name: 'VSnackbar' });
@@ -447,12 +468,82 @@ describe('ApprovedIdeasPage', () => {
       const wrapper = mountPage();
       await flushPromises();
 
+      await openAndConfirmDispatch(wrapper);
+
+      expect(document.body.textContent).toContain('Jira rate limit reached — wait a moment and try again.');
+      expect(document.body.textContent).not.toContain('Failed to create the Jira issue');
+    });
+
+    it('passes an explicitly chosen project key (uppercased) and fetches the projects list on open', async () => {
+      mockedJiraSettings.getProjects.mockResolvedValue({
+        projects: [{ key: 'OPS2', name: 'Operations 2' }],
+      });
+      mockedIdeas.createJiraTask.mockResolvedValue(makeIdea({ jiraSyncActive: true, jiraIssueKey: 'OPS2-1' }));
+      const wrapper = mountPage();
+      await flushPromises();
+
+      const btn = wrapper.findAll('.v-btn').find((b) => b.text().trim() === 'Create Jira task');
+      await btn!.trigger('click');
+      await flushPromises();
+      expect(mockedJiraSettings.getProjects).toHaveBeenCalledTimes(1);
+
+      const dialog = wrapper.findAllComponents({ name: 'VDialog' })[0];
+      // Manual entry (the combobox also accepts raw keys); lowercase input is
+      // normalized to uppercase before it travels.
+      await dialog.findComponent({ name: 'VCombobox' }).setValue('ops2');
+      const confirm = dialog
+        .findAllComponents({ name: 'VBtn' })
+        .find((b) => b.text().trim() === 'Create Jira task');
+      await confirm!.trigger('click');
+      await flushPromises();
+
+      expect(mockedIdeas.createJiraTask).toHaveBeenCalledWith('idea-1', 'OPS2');
+    });
+
+    it('discards a LATE preselection response from a previously opened dialog (cross-idea race)', async () => {
+      mockedIdeas.getAll.mockResolvedValue(
+        paginated([makeIdea({ id: 'idea-1', title: 'First idea' }), makeIdea({ id: 'idea-2', title: 'Second idea' })])
+      );
+      let resolveFirstTarget!: (v: { projectKey: string | null }) => void;
+      mockedIdeas.getJiraTarget
+        // idea-1's resolution HANGS until we release it below…
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveFirstTarget = resolve; }))
+        // …idea-2's own resolution has nothing to preselect.
+        .mockResolvedValueOnce({ projectKey: null });
+      const wrapper = mountPage();
+      await flushPromises();
+
+      const buttons = wrapper.findAll('.v-btn').filter((b) => b.text().trim() === 'Create Jira task');
+      await buttons[0].trigger('click'); // open for idea-1 (target still pending)
+      const dialog = wrapper.findAllComponents({ name: 'VDialog' })[0];
+      const cancel = dialog.findAllComponents({ name: 'VBtn' }).find((b) => b.text().trim() === 'Cancel');
+      await cancel!.trigger('click');
+      await buttons[1].trigger('click'); // quickly reopen for idea-2
+      await flushPromises(); // idea-2's (empty) resolution lands
+
+      resolveFirstTarget({ projectKey: 'MKT' }); // idea-1's LATE response arrives
+      await flushPromises();
+
+      // Without the identity guard this would read 'MKT' — idea-1's department
+      // project inside idea-2's dialog.
+      expect(dialog.findComponent({ name: 'VCombobox' }).props('modelValue')).toBe('');
+    });
+
+    it('keeps the confirm disabled while no project is resolvable and none was entered', async () => {
+      mockedIdeas.getJiraTarget.mockResolvedValue({ projectKey: null });
+      const wrapper = mountPage();
+      await flushPromises();
+
       const btn = wrapper.findAll('.v-btn').find((b) => b.text().trim() === 'Create Jira task');
       await btn!.trigger('click');
       await flushPromises();
 
-      expect(document.body.textContent).toContain('Jira rate limit reached — wait a moment and try again.');
-      expect(document.body.textContent).not.toContain('Failed to create the Jira issue');
+      const dialog = wrapper.findAllComponents({ name: 'VDialog' })[0];
+      const confirm = dialog
+        .findAllComponents({ name: 'VBtn' })
+        .find((b) => b.text().trim() === 'Create Jira task');
+      expect(confirm!.props('disabled')).toBe(true);
+      expect(mockedIdeas.createJiraTask).not.toHaveBeenCalled();
     });
   });
 });

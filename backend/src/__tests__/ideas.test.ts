@@ -1556,6 +1556,218 @@ describe('Ideas API', () => {
   // The Jira dispatch endpoint that REPLACED the removed in-app claim endpoint. That
   // flow is gone: an APPROVED idea is now handed to Jira, stays APPROVED until work
   // actually starts there, and never gets an in-app assignee.
+  describe('GET /api/ideas/:id/jira-target', () => {
+    const IDEA_ID = 'aaaaaaaaaaaaaaaaaaaaa001';
+    const PATH = `/api/ideas/${IDEA_ID}/jira-target`;
+
+    test('resolves the department override first', async () => {
+      const { agent } = await loginAsUser(app, 'POWER_USER');
+      mockedGetJiraConfig.mockResolvedValue(jiraCfg());
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue({
+        id: IDEA_ID,
+        department: { jiraProjectKey: 'MKT' },
+      });
+
+      const response = await agent.get(PATH);
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ projectKey: 'MKT' });
+    });
+
+    test('falls back to the installation default when the department has no override', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockedGetJiraConfig.mockResolvedValue(jiraCfg());
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue({
+        id: IDEA_ID,
+        department: { jiraProjectKey: null },
+      });
+
+      const response = await agent.get(PATH);
+
+      expect(response.body).toEqual({ projectKey: 'OPS' });
+    });
+
+    test('returns null when neither an override nor a default exists', async () => {
+      const { agent } = await loginAsUser(app, 'POWER_USER');
+      mockedGetJiraConfig.mockResolvedValue(jiraCfg({ defaultProjectKey: '' }));
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue({ id: IDEA_ID, department: null });
+
+      const response = await agent.get(PATH);
+
+      expect(response.body).toEqual({ projectKey: null });
+    });
+
+    test('a regular USER gets 403 (dispatch audience only)', async () => {
+      const { agent } = await loginAsUser(app, 'USER');
+
+      const response = await agent.get(PATH);
+
+      expect(response.status).toBe(403);
+    });
+
+    test('404 for an unknown idea', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue(null);
+
+      const response = await agent.get(PATH);
+
+      expect(response.status).toBe(404);
+    });
+  });
+
+  describe('PATCH /api/ideas/:id/mark-done', () => {
+    const IDEA_ID = 'aaaaaaaaaaaaaaaaaaaaa001';
+    const PATH = `/api/ideas/${IDEA_ID}/mark-done`;
+
+    function baseIdea(overrides: Record<string, unknown> = {}) {
+      return {
+        id: IDEA_ID,
+        title: 'Improve the coffee situation',
+        status: 'APPROVED',
+        submitterId: 'aaaaaaaaaaaaaaaaaaaaa002',
+        completedAt: null,
+        ...overrides,
+      };
+    }
+
+    function arrangeMarkDone(ideaOverrides: Record<string, unknown> = {}) {
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue(baseIdea(ideaOverrides));
+      mockPrismaFunctions.idea.update.mockResolvedValue({
+        ...baseIdea(ideaOverrides),
+        status: 'DONE',
+        submitter: { id: 'aaaaaaaaaaaaaaaaaaaaa002', name: 'Sub Mitter', email: 's@x.com' },
+      });
+      mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
+    }
+
+    test.each(['POWER_USER', 'ADMIN'])(
+      'marks done as %s from an APPROVED idea; the note is recorded as a COMPLETED event',
+      async (role) => {
+        const { agent, user } = await loginAsUser(app, role);
+        arrangeMarkDone({ status: 'APPROVED' });
+
+        const response = await agent.patch(PATH).send({ note: 'Done informally, outside the flow' });
+
+        expect(response.status).toBe(200);
+        expect(response.body.status).toBe('DONE');
+        const updateArg = mockPrismaFunctions.idea.update.mock.calls[0][0];
+        expect(updateArg.where).toEqual({ id: IDEA_ID });
+        expect(updateArg.data).toMatchObject({
+          status: 'DONE',
+          completedAt: expect.any(Date),
+          jiraSyncActive: false,
+          jiraMissingCount: null,
+        });
+        expect(mockPrismaFunctions.ideaEvent.create).toHaveBeenCalledWith({
+          data: {
+            ideaId: IDEA_ID,
+            type: 'COMPLETED',
+            byUserId: user.id,
+            note: 'Done informally, outside the flow',
+          },
+        });
+      }
+    );
+
+    test('stops an active Jira sync but keeps the issue key and last raw status as history', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      // The response serializer attaches the browse URL for the kept key, which
+      // reads the effective Jira config — the mock must resolve a real shape.
+      mockedGetJiraConfig.mockResolvedValue(jiraCfg());
+      arrangeMarkDone({
+        status: 'IN_PROGRESS',
+        jiraIssueId: '10001',
+        jiraIssueKey: 'OPS-1',
+        jiraStatus: 'In Progress',
+        jiraSyncActive: true,
+      });
+
+      const response = await agent.patch(PATH).send({ note: 'Executed outside Jira' });
+
+      expect(response.status).toBe(200);
+      // The kept key still serializes with its working link.
+      expect(response.body.jiraBrowseUrl).toBe('https://acme.atlassian.net/browse/OPS-1');
+      const updateArg = mockPrismaFunctions.idea.update.mock.calls[0][0];
+      expect(updateArg.data).toMatchObject({ jiraSyncActive: false });
+      // The mirror fields are history, not cleared — unlike the cancel path.
+      expect(updateArg.data).not.toHaveProperty('jiraStatus');
+      expect(updateArg.data).not.toHaveProperty('jiraIssueKey');
+      expect(updateArg.data).not.toHaveProperty('jiraIssueId');
+    });
+
+    test('keeps an existing completedAt instead of overwriting it', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      const completedAt = new Date('2026-01-01T00:00:00Z');
+      arrangeMarkDone({ status: 'IN_PROGRESS', completedAt });
+
+      await agent.patch(PATH).send({ note: 'a long enough valid reason' });
+
+      expect(mockPrismaFunctions.idea.update.mock.calls[0][0].data.completedAt).toBe(completedAt);
+    });
+
+    test('400 when the idea is already DONE (nothing to override)', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      arrangeMarkDone({ status: 'DONE' });
+
+      const response = await agent.patch(PATH).send({ note: 'a long enough valid reason' });
+
+      expect(response.status).toBe(400);
+      expect(mockPrismaFunctions.idea.update).not.toHaveBeenCalled();
+    });
+
+    test('400 when the idea is REJECTED — rejected ideas stay rejected (deep-review fix)', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      arrangeMarkDone({ status: 'REJECTED' });
+
+      const response = await agent.patch(PATH).send({ note: 'a long enough valid reason' });
+
+      expect(response.status).toBe(400);
+      expect(mockPrismaFunctions.idea.update).not.toHaveBeenCalled();
+      expect(mockPrismaFunctions.ideaEvent.create).not.toHaveBeenCalled();
+    });
+
+    test('400 when the idea is still SUBMITTED — review comes first (approve is one click away)', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      arrangeMarkDone({ status: 'SUBMITTED' });
+
+      const response = await agent.patch(PATH).send({ note: 'a long enough valid reason' });
+
+      expect(response.status).toBe(400);
+      expect(mockPrismaFunctions.idea.update).not.toHaveBeenCalled();
+      expect(mockPrismaFunctions.ideaEvent.create).not.toHaveBeenCalled();
+    });
+
+    test('400 when the note is missing, blank, or under 15 chars — a real reason is MANDATORY', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      arrangeMarkDone();
+
+      expect((await agent.patch(PATH).send({})).status).toBe(400);
+      expect((await agent.patch(PATH).send({ note: '   ' })).status).toBe(400);
+      expect((await agent.patch(PATH).send({ note: 'too short' })).status).toBe(400);
+      // Whitespace padding cannot smuggle a short reason past the trim.
+      expect((await agent.patch(PATH).send({ note: '  short   pad    ' })).status).toBe(400);
+      expect(mockPrismaFunctions.idea.update).not.toHaveBeenCalled();
+    });
+
+    test('a regular USER gets 403', async () => {
+      const { agent } = await loginAsUser(app, 'USER');
+
+      const response = await agent.patch(PATH).send({ note: 'x' });
+
+      expect(response.status).toBe(403);
+      expect(mockPrismaFunctions.idea.update).not.toHaveBeenCalled();
+    });
+
+    test('404 for an unknown idea', async () => {
+      const { agent } = await loginAsUser(app, 'ADMIN');
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue(null);
+
+      const response = await agent.patch(PATH).send({ note: 'a long enough valid reason' });
+
+      expect(response.status).toBe(404);
+    });
+  });
+
   describe('POST /api/ideas/:id/jira-task', () => {
     const IDEA_ID = 'aaaaaaaaaaaaaaaaaaaaa001';
     const PATH = `/api/ideas/${IDEA_ID}/jira-task`;
@@ -1653,6 +1865,40 @@ describe('Ideas API', () => {
           note: 'Jira task OPS-1 created',
         },
       });
+    });
+
+    test('an explicit projectKey in the body WINS over the department override and the default (uppercased)', async () => {
+      const { agent } = await loginAsUser(app, 'POWER_USER');
+      arrangeSuccess({ department: { id: DEPT_ID, name: 'Marketing', jiraProjectKey: 'MKT' } });
+
+      const response = await agent.post(PATH).send({ projectKey: 'ops2' });
+
+      expect(response.status).toBe(200);
+      const [, input] = mockedCreateJiraIssue.mock.calls[0];
+      expect(input.projectKey).toBe('OPS2');
+    });
+
+    test('an EMPTY projectKey ("" — cleared field) falls back to the normal mapping', async () => {
+      const { agent } = await loginAsUser(app, 'POWER_USER');
+      arrangeSuccess();
+
+      const response = await agent.post(PATH).send({ projectKey: '' });
+
+      expect(response.status).toBe(200);
+      const [, input] = mockedCreateJiraIssue.mock.calls[0];
+      expect(input.projectKey).toBe('OPS'); // the installation-wide default
+    });
+
+    test('a MALFORMED projectKey is refused (400) before the claim or any Jira call', async () => {
+      const { agent } = await loginAsUser(app, 'POWER_USER');
+      arrangeSuccess();
+
+      const response = await agent.post(PATH).send({ projectKey: '1-bad key' });
+
+      expect(response.status).toBe(400);
+      expect(mockedCreateJiraIssue).not.toHaveBeenCalled();
+      // The atomic dispatch claim was never taken.
+      expect(mockPrismaFunctions.idea.updateMany).not.toHaveBeenCalled();
     });
 
     test('a regular USER cannot dispatch (403) and no issue is created', async () => {
@@ -2153,9 +2399,13 @@ describe('Ideas API', () => {
       event: string;
       role: string;
       path: string;
+      /** Request body; endpoints with a mandatory payload (mark-done) set it. */
+      body?: Record<string, unknown>;
       existing: Record<string, unknown>;
       updated: (notifyOnChange: boolean, submitter: typeof SUBMITTER) => Record<string, unknown>;
       subjectEn: string;
+      /** Extra per-row body fragments the opted-in mail must contain. */
+      textContains?: string[];
     }
 
     const transitions: Tx[] = [
@@ -2192,6 +2442,20 @@ describe('Ideas API', () => {
         }),
         subjectEn: '[IdeaHub] Your idea was completed: Notifiable idea',
       },
+      {
+        event: 'COMPLETED (mark-done override)',
+        role: 'ADMIN',
+        path: `/api/ideas/${IDEA_ID}/mark-done`,
+        body: { note: 'Closed outside the normal flow' },
+        existing: { id: IDEA_ID, title: TITLE, status: 'APPROVED', submitterId: SUBMITTER.id },
+        updated: (notifyOnChange, submitter) => ({
+          id: IDEA_ID, title: TITLE, status: 'DONE', submitterId: submitter.id, notifyOnChange,
+          submitter,
+        }),
+        subjectEn: '[IdeaHub] Your idea was completed: Notifiable idea',
+        // The mandatory override reason is quoted into the notification body.
+        textContains: ['Reason:', '> Closed outside the normal flow'],
+      },
     ];
 
     describe.each(transitions)('$event', (t) => {
@@ -2203,7 +2467,7 @@ describe('Ideas API', () => {
         mockPrismaFunctions.idea.update.mockResolvedValue(t.updated(true, SUBMITTER));
         mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
 
-        const response = await agent.patch(t.path).send({});
+        const response = await agent.patch(t.path).send(t.body ?? {});
         await flushAsync();
 
         expect(response.status).toBe(200);
@@ -2213,6 +2477,9 @@ describe('Ideas API', () => {
         expect(arg.subject).toBe(t.subjectEn);
         expect(arg.text).toContain(TITLE);
         expect(arg.text).toContain(`/ideas/${IDEA_ID}`);
+        for (const fragment of t.textContains ?? []) {
+          expect(arg.text).toContain(fragment);
+        }
         // The config read once is handed straight to sendMail (single settings read).
         expect(mockedGetConfig).toHaveBeenCalledTimes(1);
         expect(mockedSendMail.mock.calls[0][1]).toBe(cfg);
@@ -2224,7 +2491,7 @@ describe('Ideas API', () => {
         mockPrismaFunctions.idea.update.mockResolvedValue(t.updated(false, SUBMITTER));
         mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
 
-        const response = await agent.patch(t.path).send({});
+        const response = await agent.patch(t.path).send(t.body ?? {});
         await flushAsync();
 
         expect(response.status).toBe(200);
@@ -2240,7 +2507,7 @@ describe('Ideas API', () => {
         mockPrismaFunctions.idea.update.mockResolvedValue(t.updated(true, SUBMITTER));
         mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
 
-        const response = await agent.patch(t.path).send({});
+        const response = await agent.patch(t.path).send(t.body ?? {});
         await flushAsync();
 
         expect(response.status).toBe(200);
@@ -2254,7 +2521,7 @@ describe('Ideas API', () => {
         mockPrismaFunctions.idea.update.mockResolvedValue(t.updated(true, SELF));
         mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
 
-        const response = await agent.patch(t.path).send({});
+        const response = await agent.patch(t.path).send(t.body ?? {});
         await flushAsync();
 
         expect(response.status).toBe(200);
@@ -2350,7 +2617,7 @@ describe('Ideas API', () => {
         mockPrismaFunctions.idea.update.mockResolvedValue(t.updated(true, noEmailSubmitter));
         mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
 
-        const response = await agent.patch(t.path).send({});
+        const response = await agent.patch(t.path).send(t.body ?? {});
         await flushAsync();
 
         expect(response.status).toBe(200);
@@ -2366,7 +2633,7 @@ describe('Ideas API', () => {
         mockPrismaFunctions.idea.update.mockResolvedValue(t.updated(true, SUBMITTER));
         mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
 
-        const response = await agent.patch(t.path).send({});
+        const response = await agent.patch(t.path).send(t.body ?? {});
         await flushAsync();
 
         expect(response.status).toBe(200);
@@ -2386,7 +2653,7 @@ describe('Ideas API', () => {
         mockPrismaFunctions.idea.update.mockResolvedValue(t.updated(true, SUBMITTER));
         mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
 
-        const response = await agent.patch(t.path).send({});
+        const response = await agent.patch(t.path).send(t.body ?? {});
         await flushAsync();
 
         // The rejection is caught inside the fire-and-forget IIFE; the already-sent

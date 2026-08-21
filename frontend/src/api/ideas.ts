@@ -55,15 +55,31 @@ export const ideasApi = {
 
   // Dispatch an APPROVED idea to Jira (POWER_USER/ADMIN only). This REPLACES the
   // removed claim() flow — see the callers for the create-issue + new-tab-open UX.
-  // The returned idea carries `jiraBrowseUrl` whenever it could be built safely
-  // (see types.ts Idea.jiraBrowseUrl); it is simply absent otherwise.
-  createJiraTask: async (id: string): Promise<Idea> => {
-    const response = await client.post(`/ideas/${id}/jira-task`);
+  // `projectKey` is the dispatch dialog's optional explicit choice; absent, the
+  // backend resolves the department override / installation default. The returned
+  // idea carries `jiraBrowseUrl` whenever it could be built safely (see types.ts
+  // Idea.jiraBrowseUrl); it is simply absent otherwise.
+  createJiraTask: async (id: string, projectKey?: string): Promise<Idea> => {
+    const response = await client.post(`/ideas/${id}/jira-task`, projectKey ? { projectKey } : {});
+    return response.data;
+  },
+
+  // The project the dispatch would target when nothing is chosen (department
+  // override ?? installation default) — the dispatch dialog's preselection.
+  getJiraTarget: async (id: string): Promise<{ projectKey: string | null }> => {
+    const response = await client.get(`/ideas/${id}/jira-target`);
     return response.data;
   },
 
   complete: async (id: string, data?: ReviewIdeaInput): Promise<Idea> => {
     const response = await client.patch(`/ideas/${id}/complete`, data || {});
+    return response.data;
+  },
+
+  // Force-done override (POWER_USER/ADMIN): closes the idea from any state; the
+  // reason is mandatory server-side and lands in the timeline.
+  markDone: async (id: string, note: string): Promise<Idea> => {
+    const response = await client.patch(`/ideas/${id}/mark-done`, { note });
     return response.data;
   },
 

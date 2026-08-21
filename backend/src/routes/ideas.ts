@@ -3,7 +3,7 @@ import { IdeaStatus, EventType, Role, Prisma, Effort } from '@prisma/client';
 import { rateLimit } from 'express-rate-limit';
 import prisma from '../lib/prisma';
 import { requireAuth, requireRole } from '../middleware/auth';
-import { createIdeaSchema, reviewIdeaSchema, updateIdeaSchema, ideasQuerySchema, createStepSchema, objectIdParamSchema, notifyToggleSchema } from '../utils/validation';
+import { createIdeaSchema, reviewIdeaSchema, markDoneSchema, dispatchJiraTaskSchema, updateIdeaSchema, ideasQuerySchema, createStepSchema, objectIdParamSchema, notifyToggleSchema } from '../utils/validation';
 import { sendMail } from '../utils/mailer';
 import { newIdeaEmail } from '../utils/mail-templates';
 import { getEffectiveMailConfig } from '../config/mail';
@@ -755,8 +755,22 @@ router.post('/:id/jira-task', jiraTaskLimiter as any, requireRole(Role.POWER_USE
       return res.status(400).json({ error: 'Jira integration is not configured' });
     }
 
-    // Per-department override wins over the installation-wide default.
-    const projectKey = existingIdea.department?.jiraProjectKey ?? cfg.defaultProjectKey;
+    // Explicit user choice (dispatch dialog) > per-department override >
+    // installation-wide default. The schema uppercased + format-checked the request
+    // value; '' (a cleared field) means "no choice". Whether the tech account may
+    // CREATE in the chosen project is Jira's call — a refusal comes back as the
+    // localized project_not_found/invalid_request reason, and the claim below is
+    // released like any other failed dispatch.
+    // safeParse, NOT parse: this route's catch deliberately reports 500 (see its
+    // comment) — a malformed body must be an explicit 400 of its own.
+    const bodyParsed = dispatchJiraTaskSchema.safeParse(req.body ?? {});
+    if (!bodyParsed.success) {
+      return res.status(400).json({ error: 'Invalid project key' });
+    }
+    const projectKey =
+      (bodyParsed.data.projectKey || undefined) ??
+      existingIdea.department?.jiraProjectKey ??
+      cfg.defaultProjectKey;
     if (!projectKey) {
       return res.status(400).json({ error: 'No Jira project is configured for this department' });
     }
@@ -884,7 +898,7 @@ router.post('/:id/jira-task', jiraTaskLimiter as any, requireRole(Role.POWER_USE
     res.json(created.browseUrl === null ? updatedIdea : { ...updatedIdea, jiraBrowseUrl: created.browseUrl });
   } catch (error) {
     // Unlike the older handlers in this file, nothing here throws on bad INPUT (the
-    // id is safeParsed and there is no request body), so any exception is genuinely
+    // id and body are both safeParsed above), so any exception is genuinely
     // internal and must not be reported as a 400.
     console.error('Error creating jira task:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -957,6 +971,132 @@ router.patch('/:id/complete', requireAuth, async (req, res) => {
 
     // Best-effort, fire-and-forget submitter notification (after the response).
     notifySubmitter(req, updatedIdea, 'COMPLETED');
+  } catch (error) {
+    if (error instanceof Error) {
+      res.status(400).json({ error: error.message });
+    } else {
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+});
+
+// The dispatch dialog's PRESELECTION source (Power User or Admin — the dispatch
+// audience): the project this idea's dispatch would use when the user picks
+// nothing, i.e. the department override ?? the installation default (the same
+// resolution POST /:id/jira-task applies). The department's key itself stays
+// admin-projected (security review F8/F14); this endpoint reveals only the single
+// RESOLVED key the dispatching user is about to write into anyway.
+router.get('/:id/jira-target', requireRole(Role.POWER_USER, Role.ADMIN), async (req, res) => {
+  try {
+    const idParsed = objectIdParamSchema.safeParse(req.params.id);
+    if (!idParsed.success) {
+      return res.status(400).json({ error: 'Invalid idea ID format' });
+    }
+
+    const idea = await prisma.idea.findUnique({
+      where: { id: idParsed.data },
+      include: { department: { select: { jiraProjectKey: true } } },
+    });
+    if (!idea) {
+      return res.status(404).json({ error: 'Idea not found' });
+    }
+
+    const cfg = await getEffectiveJiraConfig();
+    res.json({ projectKey: idea.department?.jiraProjectKey ?? (cfg.defaultProjectKey || null) });
+  } catch (error) {
+    console.error('Error resolving the Jira target project:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Force-done override (Power User or Admin): mark an APPROVED or IN_PROGRESS idea
+// DONE. Not SUBMITTED (an unreviewed idea goes through review first — approving is
+// one click on the same page), not REJECTED (a rejected idea stays rejected — its
+// reviewer sits in `approverId`, and a done idea would relabel that person
+// "Approved by"; the path back is a fresh review), not DONE itself. The escape
+// hatch for work finished outside the normal flow, or for a Jira project that can
+// no longer be synced. The note is MANDATORY: the timeline entry must say why the
+// lifecycle was bypassed. An active Jira sync is STOPPED (the poller would otherwise
+// overwrite this decision on the next remote transition); the app never writes to
+// Jira, so a still-open remote task simply stops being watched — the FE dialog
+// says so. Issue key + last-seen raw status stay as history, exactly like an idea
+// completed through Jira.
+router.patch('/:id/mark-done', requireRole(Role.POWER_USER, Role.ADMIN), async (req, res) => {
+  try {
+    const idParsed = objectIdParamSchema.safeParse(req.params.id);
+    if (!idParsed.success) {
+      return res.status(400).json({ error: 'Invalid idea ID format' });
+    }
+    const id = idParsed.data;
+    const userId = req.session.userId!;
+    const { note } = markDoneSchema.parse(req.body);
+
+    const existingIdea = await prisma.idea.findUnique({
+      where: { id },
+    });
+
+    if (!existingIdea) {
+      return res.status(404).json({ error: 'Idea not found' });
+    }
+
+    if (existingIdea.status === IdeaStatus.DONE) {
+      return res.status(400).json({ error: 'Idea is already done' });
+    }
+
+    if (existingIdea.status === IdeaStatus.REJECTED) {
+      return res.status(400).json({ error: 'A rejected idea cannot be marked as done' });
+    }
+
+    if (existingIdea.status === IdeaStatus.SUBMITTED) {
+      return res.status(400).json({ error: 'A submitted idea must be reviewed before it can be marked as done' });
+    }
+
+    const updatedIdea = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const updated = await tx.idea.update({
+        where: { id },
+        data: {
+          status: IdeaStatus.DONE,
+          completedAt: existingIdea.completedAt ?? new Date(),
+          // Explicit false (never conditional): stops an active watch, and keeps the
+          // missing-vs-null rule intact for every jira where-clause.
+          jiraSyncActive: false,
+          jiraMissingCount: null,
+        },
+        include: {
+          submitter: {
+            select: { id: true, name: true, email: true },
+          },
+          approver: {
+            select: { id: true, name: true, email: true },
+          },
+          assignee: {
+            select: { id: true, name: true, email: true },
+          },
+          department: {
+            select: { id: true, name: true },
+          },
+        },
+      });
+
+      await tx.ideaEvent.create({
+        data: {
+          ideaId: id,
+          type: EventType.COMPLETED,
+          byUserId: userId,
+          note,
+        },
+      });
+
+      return updated;
+    });
+
+    const [serialized] = await attachJiraBrowseUrls([updatedIdea]);
+    res.json(serialized);
+
+    // Best-effort, fire-and-forget submitter notification (after the response).
+    // The mandatory reason rides along so the message explains WHY the idea was
+    // closed outside the normal flow (rendered as a quoted block, like a step note).
+    notifySubmitter(req, updatedIdea, 'COMPLETED', note);
   } catch (error) {
     if (error instanceof Error) {
       res.status(400).json({ error: error.message });

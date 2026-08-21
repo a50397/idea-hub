@@ -21,6 +21,17 @@ vi.mock('../api/ideas', () => ({
     complete: vi.fn(),
     addStep: vi.fn(),
     createJiraTask: vi.fn(),
+    getJiraTarget: vi.fn(),
+    markDone: vi.fn(),
+    approve: vi.fn(),
+    reject: vi.fn(),
+  },
+}));
+
+// The dispatch dialog fetches the tech account's visible projects on every open.
+vi.mock('../api/jiraSettings', () => ({
+  jiraSettingsApi: {
+    getProjects: vi.fn(),
   },
 }));
 
@@ -45,8 +56,10 @@ vi.mock('../api/auth', () => ({
 
 import { ideasApi } from '../api/ideas';
 import { optionsApi } from '../api/options';
+import { jiraSettingsApi } from '../api/jiraSettings';
 const mockedIdeas = vi.mocked(ideasApi);
 const mockedOptions = vi.mocked(optionsApi);
+const mockedJiraSettings = vi.mocked(jiraSettingsApi);
 
 const SUBMITTER_ID = 'u1';
 const OTHER_ID = 'u2';
@@ -424,6 +437,221 @@ describe('IdeaDetailPage Jira sidebar block', () => {
     expect(wrapper.text()).toContain('Create Jira task');
   });
 
+  it('hides the raw Jira status once the idea is no longer monitored — key link stays, caption explains', async () => {
+    mockedIdeas.getOne.mockResolvedValue(
+      makeIdea({
+        status: IdeaStatus.DONE,
+        jiraIssueKey: 'OPS-7',
+        jiraStatus: "Won't Do",
+        jiraSyncActive: false,
+        jiraBrowseUrl: 'https://acme.atlassian.net/browse/OPS-7',
+      })
+    );
+    mockedOptions.get.mockResolvedValue({ mailEnabled: false, webexEnabled: false, jiraEnabled: true, ssoShowLogout: false });
+    signInAsPowerUser();
+    const wrapper = mountPage();
+    await flushPromises();
+
+    // The frozen raw status would read as live data on an unwatched idea.
+    expect(wrapper.text()).not.toContain("Won't Do");
+    expect(wrapper.findAll('a').find((a) => a.text().trim() === 'OPS-7')).toBeTruthy();
+    expect(wrapper.text()).toContain('The Jira status is no longer synced for this idea.');
+  });
+
+  describe('mark-done override', () => {
+    function optionsOff() {
+      mockedOptions.get.mockResolvedValue({
+        mailEnabled: false,
+        webexEnabled: false,
+        jiraEnabled: false,
+        ssoShowLogout: false,
+      });
+    }
+
+    it.each([IdeaStatus.APPROVED, IdeaStatus.IN_PROGRESS])(
+      'shows the button to a power user on a %s idea',
+      async (status) => {
+        mockedIdeas.getOne.mockResolvedValue(makeIdea({ status }));
+        optionsOff();
+        signInAsPowerUser();
+        const wrapper = mountPage();
+        await flushPromises();
+
+        expect(wrapper.text()).toContain('Mark as done');
+      }
+    );
+
+    it('hides the button from a regular user', async () => {
+      mockedIdeas.getOne.mockResolvedValue(makeIdea({ status: IdeaStatus.APPROVED }));
+      optionsOff();
+      signInAs(OTHER_ID);
+      const wrapper = mountPage();
+      await flushPromises();
+
+      expect(wrapper.text()).not.toContain('Mark as done');
+    });
+
+    it.each([IdeaStatus.DONE, IdeaStatus.REJECTED, IdeaStatus.SUBMITTED])(
+      'hides the button on a %s idea (done: nothing to override; rejected: stays rejected; submitted: review first)',
+      async (status) => {
+        mockedIdeas.getOne.mockResolvedValue(makeIdea({ status }));
+        optionsOff();
+        signInAsPowerUser();
+        const wrapper = mountPage();
+        await flushPromises();
+
+        expect(wrapper.text()).not.toContain('Mark as done');
+      }
+    );
+
+    it('opens the dialog, requires a reason, calls the API and refetches the idea', async () => {
+      mockedIdeas.getOne.mockResolvedValue(makeIdea({ status: IdeaStatus.APPROVED }));
+      optionsOff();
+      mockedIdeas.markDone.mockResolvedValue(makeIdea({ status: IdeaStatus.DONE }));
+      signInAsPowerUser();
+      const wrapper = mountPage();
+      await flushPromises();
+
+      const openBtn = wrapper.findAll('.v-btn').find((b) => b.text().trim() === 'Mark as done');
+      expect(openBtn).toBeTruthy();
+      await openBtn!.trigger('click');
+
+      const dialogs = wrapper.findAllComponents({ name: 'VDialog' });
+      // dialogs: [0]=grandfathered complete, [1]=mark-done
+      expect(dialogs[1].props('modelValue')).toBe(true);
+
+      const confirm = dialogs[1]
+        .findAllComponents({ name: 'VBtn' })
+        .find((b) => b.text().trim() === 'Mark as done');
+      expect(confirm).toBeTruthy();
+      // The reason is mandatory AND must be at least 15 chars: confirm stays
+      // disabled while empty or too short.
+      expect(confirm!.props('disabled')).toBe(true);
+      await dialogs[1].findComponent({ name: 'VTextarea' }).setValue('too short');
+      expect(confirm!.props('disabled')).toBe(true);
+
+      await dialogs[1].findComponent({ name: 'VTextarea' }).setValue('Executed outside the normal flow');
+      expect(confirm!.props('disabled')).toBe(false);
+
+      await confirm!.trigger('click');
+      await flushPromises();
+
+      expect(mockedIdeas.markDone).toHaveBeenCalledTimes(1);
+      expect(mockedIdeas.markDone.mock.calls[0][1]).toBe('Executed outside the normal flow');
+      // Refetched so the timeline shows the new COMPLETED entry.
+      expect(mockedIdeas.getOne).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('review actions (approve/reject) on the detail page', () => {
+    function optionsOff() {
+      mockedOptions.get.mockResolvedValue({
+        mailEnabled: false,
+        webexEnabled: false,
+        jiraEnabled: false,
+        ssoShowLogout: false,
+      });
+    }
+
+    // Dialog order in the template: [0]=complete, [1]=mark-done, [2]=approve, [3]=reject.
+    const APPROVE_DIALOG = 2;
+    const REJECT_DIALOG = 3;
+
+    it('shows Approve and Reject to a power user on a SUBMITTED idea', async () => {
+      mockedIdeas.getOne.mockResolvedValue(makeIdea({ status: IdeaStatus.SUBMITTED }));
+      optionsOff();
+      signInAsPowerUser();
+      const wrapper = mountPage();
+      await flushPromises();
+
+      const labels = wrapper.findAll('.v-btn').map((b) => b.text().trim());
+      expect(labels).toContain('Approve');
+      expect(labels).toContain('Reject');
+    });
+
+    it('hides them from a regular user', async () => {
+      mockedIdeas.getOne.mockResolvedValue(makeIdea({ status: IdeaStatus.SUBMITTED }));
+      optionsOff();
+      signInAs(OTHER_ID);
+      const wrapper = mountPage();
+      await flushPromises();
+
+      const labels = wrapper.findAll('.v-btn').map((b) => b.text().trim());
+      expect(labels).not.toContain('Approve');
+      expect(labels).not.toContain('Reject');
+    });
+
+    it.each([IdeaStatus.APPROVED, IdeaStatus.REJECTED, IdeaStatus.DONE])(
+      'hides them on a %s idea (review is a SUBMITTED-only transition)',
+      async (status) => {
+        mockedIdeas.getOne.mockResolvedValue(makeIdea({ status }));
+        optionsOff();
+        signInAsPowerUser();
+        const wrapper = mountPage();
+        await flushPromises();
+
+        const labels = wrapper.findAll('.v-btn').map((b) => b.text().trim());
+        expect(labels).not.toContain('Approve');
+        expect(labels).not.toContain('Reject');
+      }
+    );
+
+    it('approves from the dialog (optional note) and refetches the idea', async () => {
+      mockedIdeas.getOne.mockResolvedValue(makeIdea({ status: IdeaStatus.SUBMITTED }));
+      optionsOff();
+      mockedIdeas.approve.mockResolvedValue(makeIdea({ status: IdeaStatus.APPROVED }));
+      signInAsPowerUser();
+      const wrapper = mountPage();
+      await flushPromises();
+
+      await wrapper
+        .findAll('.v-btn')
+        .find((b) => b.text().trim() === 'Approve')!
+        .trigger('click');
+
+      const dialogs = wrapper.findAllComponents({ name: 'VDialog' });
+      expect(dialogs[APPROVE_DIALOG].props('modelValue')).toBe(true);
+      await dialogs[APPROVE_DIALOG].findComponent({ name: 'VTextarea' }).setValue('Looks good');
+      await dialogs[APPROVE_DIALOG]
+        .findAllComponents({ name: 'VBtn' })
+        .find((b) => b.text().trim() === 'Approve')!
+        .trigger('click');
+      await flushPromises();
+
+      expect(mockedIdeas.approve).toHaveBeenCalledTimes(1);
+      expect(mockedIdeas.approve.mock.calls[0][1]).toEqual({ note: 'Looks good' });
+      // Refetched so the status chip, buttons and timeline update in place.
+      expect(mockedIdeas.getOne).toHaveBeenCalledTimes(2);
+    });
+
+    it('rejects from the dialog and refetches the idea', async () => {
+      mockedIdeas.getOne.mockResolvedValue(makeIdea({ status: IdeaStatus.SUBMITTED }));
+      optionsOff();
+      mockedIdeas.reject.mockResolvedValue(makeIdea({ status: IdeaStatus.REJECTED }));
+      signInAsPowerUser();
+      const wrapper = mountPage();
+      await flushPromises();
+
+      await wrapper
+        .findAll('.v-btn')
+        .find((b) => b.text().trim() === 'Reject')!
+        .trigger('click');
+
+      const dialogs = wrapper.findAllComponents({ name: 'VDialog' });
+      expect(dialogs[REJECT_DIALOG].props('modelValue')).toBe(true);
+      await dialogs[REJECT_DIALOG].findComponent({ name: 'VTextarea' }).setValue('Not feasible');
+      await dialogs[REJECT_DIALOG]
+        .findAllComponents({ name: 'VBtn' })
+        .find((b) => b.text().trim() === 'Reject')!
+        .trigger('click');
+      await flushPromises();
+
+      expect(mockedIdeas.reject).toHaveBeenCalledTimes(1);
+      expect(mockedIdeas.reject.mock.calls[0][1]).toEqual({ note: 'Not feasible' });
+      expect(mockedIdeas.getOne).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it('shows the resolution only once the idea is DONE', async () => {
     mockedIdeas.getOne.mockResolvedValue(
       makeIdea({
@@ -459,11 +687,21 @@ describe('IdeaDetailPage Jira sidebar block', () => {
     const wrapper = mountPage();
     await flushPromises();
 
+    mockedJiraSettings.getProjects.mockResolvedValue({ projects: [] });
+    mockedIdeas.getJiraTarget.mockResolvedValue({ projectKey: 'OPS' });
     const btn = wrapper.findAll('.v-btn').find((b) => b.text().trim() === 'Create Jira task');
     await btn!.trigger('click');
+    await flushPromises(); // the /jira-target preselection resolves
+    // Confirm in the dispatch dialog (dialog order: complete, mark-done, approve,
+    // reject, dispatch) — the preselected resolved project travels.
+    const dispatchDlg = wrapper.findAllComponents({ name: 'VDialog' })[4];
+    await dispatchDlg
+      .findAllComponents({ name: 'VBtn' })
+      .find((b) => b.text().trim() === 'Create Jira task')!
+      .trigger('click');
     await flushPromises();
 
-    expect(mockedIdeas.createJiraTask).toHaveBeenCalledWith('idea-1');
+    expect(mockedIdeas.createJiraTask).toHaveBeenCalledWith('idea-1', 'OPS');
     expect(window.open).toHaveBeenCalledWith('https://acme.atlassian.net/browse/OPS-1', '_blank', 'noopener');
     expect(wrapper.text()).toContain('OPS-1');
     expect(wrapper.text()).not.toContain('Create Jira task');
@@ -484,8 +722,16 @@ describe('IdeaDetailPage Jira sidebar block', () => {
     const wrapper = mountPage();
     await flushPromises();
 
+    mockedJiraSettings.getProjects.mockResolvedValue({ projects: [] });
+    mockedIdeas.getJiraTarget.mockResolvedValue({ projectKey: 'OPS' });
     const btn = wrapper.findAll('.v-btn').find((b) => b.text().trim() === 'Create Jira task');
     await btn!.trigger('click');
+    await flushPromises(); // preselection
+    const dispatchDlg = wrapper.findAllComponents({ name: 'VDialog' })[4];
+    await dispatchDlg
+      .findAllComponents({ name: 'VBtn' })
+      .find((b) => b.text().trim() === 'Create Jira task')!
+      .trigger('click');
     await flushPromises();
 
     expect(window.open).not.toHaveBeenCalled();
@@ -504,8 +750,16 @@ describe('IdeaDetailPage Jira sidebar block', () => {
     const wrapper = mountPage();
     await flushPromises();
 
+    mockedJiraSettings.getProjects.mockResolvedValue({ projects: [] });
+    mockedIdeas.getJiraTarget.mockResolvedValue({ projectKey: 'OPS' });
     const btn = wrapper.findAll('.v-btn').find((b) => b.text().trim() === 'Create Jira task');
     await btn!.trigger('click');
+    await flushPromises(); // preselection
+    const dispatchDlg = wrapper.findAllComponents({ name: 'VDialog' })[4];
+    await dispatchDlg
+      .findAllComponents({ name: 'VBtn' })
+      .find((b) => b.text().trim() === 'Create Jira task')!
+      .trigger('click');
     await flushPromises();
 
     expect(window.open).not.toHaveBeenCalled();
