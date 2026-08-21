@@ -196,7 +196,10 @@ export interface IdeaLifecycleEmailInput {
   title: string;
   /** Name of the user who performed the change ("Jira" for the JIRA_* events). */
   actorName: string;
-  /** The progress-step text; used only by the STEP_ADDED event. */
+  /**
+   * The progress-step text (STEP_ADDED) or the mandatory completion reason
+   * (COMPLETED, when the mark-done override closed the idea).
+   */
   stepText?: string;
   /** The Jira issue key; used only by the JIRA_* events ('' elsewhere). */
   jiraKey?: string;
@@ -210,7 +213,8 @@ export interface IdeaLifecycleEmailInput {
 // formal Slovak using the house vocabulary (nápad / Zobraziť nápad) and the same
 // gender-neutral verb suffix as the new-idea mail's "Odoslal/a" (schválil/a,
 // zamietol/la, začal/a, dokončil/a, pridal/a). Placeholders: {title}, {actorName},
-// {stepText} (STEP_ADDED only), {link}.
+// {stepText} (STEP_ADDED only), {reasonBlock} (COMPLETED only — a labeled, quoted
+// block when a completion reason exists, EMPTY otherwise), {link}.
 const LIFECYCLE_WORDING: Record<MailLang, Record<IdeaLifecycleEvent, Wording>> = {
   en: {
     APPROVED: {
@@ -235,6 +239,7 @@ const LIFECYCLE_WORDING: Record<MailLang, Record<IdeaLifecycleEvent, Wording>> =
       subject: '[IdeaHub] Your idea was completed: {title}',
       body:
         'Your idea "{title}" has been completed by {actorName}.\n\n' +
+        '{reasonBlock}' +
         'View the idea: {link}',
     },
     STEP_ADDED: {
@@ -289,6 +294,7 @@ const LIFECYCLE_WORDING: Record<MailLang, Record<IdeaLifecycleEvent, Wording>> =
       subject: '[IdeaHub] Váš nápad bol dokončený: {title}',
       body:
         'Váš nápad "{title}" dokončil/a {actorName}.\n\n' +
+        '{reasonBlock}' +
         'Zobraziť nápad: {link}',
     },
     STEP_ADDED: {
@@ -342,6 +348,15 @@ export function ideaLifecycleEmail(input: IdeaLifecycleEmailInput): BuiltEmail {
     // pseudo-section in the step note cannot masquerade as a system line. Harmless for
     // the other events, whose bodies never reference {stepText}.
     stepText: quoteBlock(input.stepText ?? ''),
+    // Optional completion reason (COMPLETED body only): the mark-done override
+    // passes its mandatory note as stepText, the legacy assignee completion passes
+    // nothing. A labeled, quoted block followed by its own blank line — or the
+    // empty string, so a reason-less completion renders byte-identical to the
+    // pre-override wording.
+    reasonBlock:
+      input.event === 'COMPLETED' && input.stepText
+        ? `${lang === 'sk' ? 'Dôvod' : 'Reason'}:\n${quoteBlock(input.stepText)}\n\n`
+        : '',
     // Jira issue key (JIRA_* bodies only). It is a REMOTE string, but it was already
     // normalized at the ingest boundary (utils/jira.ts sanitizeRemoteString strips
     // control characters and collapses newlines) before it was ever stored, so it

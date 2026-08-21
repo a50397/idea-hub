@@ -270,6 +270,10 @@ const LIFECYCLE_BODIES: Record<'en' | 'sk', Record<IdeaLifecycleEvent, string>> 
       'View the idea: http://localhost:5173/ideas/abc123',
     COMPLETED:
       'Your idea "Testovací nápad" has been completed by Ján Novák.\n\n' +
+      // The completion reason (the shared fixture provides stepText) is quoted like
+      // a step note, under its own label.
+      'Reason:\n' +
+      '> Dokončil som prvú časť riešenia.\n\n' +
       'View the idea: http://localhost:5173/ideas/abc123',
     STEP_ADDED:
       'Ján Novák added a progress update to your idea "Testovací nápad":\n\n' +
@@ -300,6 +304,8 @@ const LIFECYCLE_BODIES: Record<'en' | 'sk', Record<IdeaLifecycleEvent, string>> 
       'Zobraziť nápad: http://localhost:5173/ideas/abc123',
     COMPLETED:
       'Váš nápad "Testovací nápad" dokončil/a Ján Novák.\n\n' +
+      'Dôvod:\n' +
+      '> Dokončil som prvú časť riešenia.\n\n' +
       'Zobraziť nápad: http://localhost:5173/ideas/abc123',
     STEP_ADDED:
       'Ján Novák pridal/a aktualizáciu pokroku k Vášmu nápadu "Testovací nápad":\n\n' +
@@ -321,6 +327,7 @@ const LIFECYCLE_BODIES: Record<'en' | 'sk', Record<IdeaLifecycleEvent, string>> 
 // English wording fragments that must NEVER surface in Slovak output.
 const LIFECYCLE_ENGLISH_FRAGMENTS = [
   'Your idea',
+  'Reason:',
   'has been approved',
   'has been rejected',
   'has been completed',
@@ -345,6 +352,20 @@ describe('ideaLifecycleEmail — built-in subject + body per event', () => {
       });
     });
   }
+
+  // The legacy assignee completion passes NO note: its mail must render exactly as
+  // before the mark-done override existed — the reason block collapses to nothing,
+  // not to stray blank lines.
+  it.each(['en', 'sk'] as const)('COMPLETED without a reason keeps the pre-override body (%s)', (language) => {
+    const email = ideaLifecycleEmail(buildLife('COMPLETED', language, { stepText: undefined }));
+    expect(email.text).toBe(
+      language === 'en'
+        ? 'Your idea "Testovací nápad" has been completed by Ján Novák.\n\n' +
+            'View the idea: http://localhost:5173/ideas/abc123'
+        : 'Váš nápad "Testovací nápad" dokončil/a Ján Novák.\n\n' +
+            'Zobraziť nápad: http://localhost:5173/ideas/abc123'
+    );
+  });
 
   // The five IN-APP events keep pairwise-distinct subjects.
   it('emits a DISTINCT subject for every in-app event (no two share a subject)', () => {

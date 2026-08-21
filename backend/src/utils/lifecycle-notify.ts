@@ -52,7 +52,10 @@ export interface MaybeNotifyArgs {
   actorUserId: string | null;
   /** Display name of the actor, for the message body ("Jira" when actorUserId is null). */
   actorName: string;
-  /** Progress-step text; only meaningful for the STEP_ADDED event. */
+  /**
+   * Progress-step text (STEP_ADDED) or the mandatory completion reason (COMPLETED
+   * via the mark-done override); the templates render it as a quoted block.
+   */
   stepText?: string;
   /** Jira issue key; only meaningful for the JIRA_* events. */
   jiraKey?: string;

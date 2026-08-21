@@ -833,8 +833,10 @@ describe('Reports API', () => {
 
     // `isSet` (not a bare `not: null`) is required: an idea document that predates
     // the Jira fields has no such field at all, and a Prisma+Mongo where-clause does
-    // NOT match a missing scalar.
-    test('filters on DISPATCHED ideas using isSet, never a bare not-null', async () => {
+    // NOT match a missing scalar. `jiraSyncActive: true` keeps the breakdown LIVE:
+    // finished/force-closed ideas retain their last-seen raw status as history, and
+    // a frozen value must not masquerade as current remote state.
+    test('filters on ACTIVELY MONITORED dispatched ideas (isSet + jiraSyncActive)', async () => {
       const { agent } = await loginAsUser(app, 'ADMIN');
       mockPrismaFunctions.idea.groupBy.mockResolvedValue([]);
 
@@ -846,6 +848,7 @@ describe('Reports API', () => {
           where: expect.objectContaining({
             jiraIssueKey: { isSet: true },
             jiraStatus: { isSet: true, not: null },
+            jiraSyncActive: true,
           }),
         })
       );

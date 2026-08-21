@@ -197,7 +197,7 @@ describe('IdeaCard', () => {
       expect(chipTexts(wrapper)).toContain('Approved'); // back to the canonical chip
     });
 
-    it('keeps both chips on an idea finished through Jira (sync off, raw status retained)', () => {
+    it('hides the raw status once the idea is no longer monitored — the canonical chip returns, the key link stays', () => {
       const wrapper = mountCard(
         makeIdea({
           status: IdeaStatus.DONE,
@@ -208,9 +208,9 @@ describe('IdeaCard', () => {
         })
       );
       const chips = wrapper.findAllComponents({ name: 'VChip' });
-      expect(chips[0].text()).toBe('OPS-1');
-      expect(chips[1].text()).toBe('Resolved');
-      expect(chips[1].props('color')).toBe('success');
+      expect(chips[0].text()).toBe('OPS-1'); // history + link
+      expect(chips[1].text()).toBe('Done'); // canonical — a frozen raw status would read as live data
+      expect(chipTexts(wrapper)).not.toContain('Resolved');
     });
 
     it('links the KEY chip (only) to the server-built browse URL (new tab, noopener)', () => {
@@ -245,7 +245,7 @@ describe('IdeaCard', () => {
     it.each([
       ['sync on, no raw status yet (tooltip on the key chip)', { jiraSyncActive: true, jiraStatus: null }, 1],
       ['sync on, raw status known (tooltip on the status chip)', { jiraSyncActive: true, jiraStatus: 'In Review' }, 1],
-      ['final state (tooltip on the status chip)', { jiraSyncActive: false, jiraStatus: 'Resolved' }, 1],
+      ['unmonitored, raw status retained (tooltip on the key chip)', { jiraSyncActive: false, jiraStatus: 'Resolved' }, 1],
       ['stale key after a cancel (no chip, no tooltip)', { jiraSyncActive: false, jiraStatus: null }, 0],
     ])('explanation tooltip: %s', (_label, jiraFields, count) => {
       const wrapper = mountCard(makeIdea({ jiraIssueKey: 'OPS-1', ...jiraFields }));

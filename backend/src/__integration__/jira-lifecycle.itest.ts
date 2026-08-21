@@ -464,6 +464,70 @@ describe('jira dispatch + poll lifecycle (real DB, mock Jira)', () => {
     expect(last.byUserId).toBeNull();
     expect(last.note).toContain('deleted or is no longer accessible');
   });
+
+  // Deep-review pin (2026-08-21): the mark-done override races the poller by design
+  // — it flips jiraSyncActive off while the remote issue is still open. Two code
+  // invariants keep that safe (the poller loads only jiraSyncActive:true ideas, and
+  // every poller write is guarded on the same flag); this test pins the OBSERVABLE
+  // outcome those invariants exist for: once the override has spoken, no later
+  // poller tick may resurrect, re-mirror, or re-notify the idea, whatever keeps
+  // happening on the Jira side.
+  test('mark-done during an active sync: later poller ticks cannot resurrect the idea', async () => {
+    const { submitter, power } = await seedActors();
+    const idea = await approvedIdea(submitter.id, power.id);
+    const agent = await powerAgent();
+    await withCsrf(agent.post(`/api/ideas/${idea.id}/jira-task`)).send({});
+
+    // Work starts in Jira; the idea is IN_PROGRESS with the sync active.
+    await mutateIssue(idea.id, { statusName: 'In Progress', categoryKey: 'indeterminate' });
+    await runJiraSyncOnce();
+
+    // The override closes the idea while the remote issue is still open.
+    const res = await withCsrf(agent.patch(`/api/ideas/${idea.id}/mark-done`)).send({
+      note: 'Executed outside Jira — closing it here',
+    });
+    expect(res.status).toBe(200);
+
+    const closed = await prisma.idea.findUnique({ where: { id: idea.id } });
+    expect(closed).toMatchObject({
+      status: 'DONE',
+      jiraSyncActive: false,
+      // The mirror stays as HISTORY — the last state the poller actually saw.
+      jiraIssueKey: 'OPS-1',
+      jiraStatus: 'In Progress',
+    });
+    expect(closed!.completedAt).toBeInstanceOf(Date);
+
+    // The override's event carries the acting user and the mandatory reason
+    // (unlike the poller's user-less events — the actor partition holds).
+    const events = await prisma.ideaEvent.findMany({ where: { ideaId: idea.id }, orderBy: { timestamp: 'asc' } });
+    const overrideEvent = events[events.length - 1];
+    expect(overrideEvent).toMatchObject({ type: EventType.COMPLETED, byUserId: power.id });
+    expect(overrideEvent.note).toBe('Executed outside Jira — closing it here');
+
+    // Jira keeps moving: first a transition that would normally send the idea back
+    // to APPROVED, then one that would normally complete it and stamp completedAt.
+    const requestsBefore = requests.length;
+    await mutateIssue(idea.id, { statusName: 'To Do', categoryKey: 'new' });
+    await runJiraSyncOnce();
+    await mutateIssue(idea.id, { statusName: 'Done', categoryKey: 'done', resolution: 'Fixed' });
+    await runJiraSyncOnce();
+
+    // The idea was not even POLLED (it left the jiraSyncActive:true set)...
+    expect(requests.length).toBe(requestsBefore);
+    // ...and nothing about it moved: status, mirror, timestamps, timeline.
+    const after = await prisma.idea.findUnique({ where: { id: idea.id } });
+    expect(after).toMatchObject({
+      status: 'DONE',
+      jiraSyncActive: false,
+      jiraStatus: 'In Progress',
+      jiraResolution: null,
+    });
+    expect(after!.completedAt!.getTime()).toBe(closed!.completedAt!.getTime());
+    // @updatedAt is the tripwire: ANY write — even a no-op-looking one — would move it.
+    expect(after!.updatedAt.getTime()).toBe(closed!.updatedAt.getTime());
+    expect(await prisma.ideaEvent.count({ where: { ideaId: idea.id } })).toBe(events.length);
+  });
 });
 
 // ---------------------------------------------------------------------------

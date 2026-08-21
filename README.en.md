@@ -379,8 +379,10 @@ npm run test:watch       # Vitest in watch mode
 - `PATCH /api/ideas/:id` - Update idea (submitter only, while SUBMITTED)
 - `PATCH /api/ideas/:id/approve` - Approve idea (Power User/Admin)
 - `PATCH /api/ideas/:id/reject` - Reject idea (Power User/Admin)
-- `POST /api/ideas/:id/jira-task` - Create a Jira issue from an approved idea and enroll it in poller status tracking (Power User/Admin; requires the Jira integration to be enabled/configured and a target project to be resolvable); **replaces the old `PATCH /api/ideas/:id/claim`, which has been removed**
+- `POST /api/ideas/:id/jira-task` - Create a Jira issue from an approved idea and enroll it in poller status tracking (Power User/Admin; requires the Jira integration to be enabled/configured and a target project to be resolvable; the body may carry an optional explicit `projectKey` chosen in the dispatch dialog — without it the department/default mapping applies); **replaces the old `PATCH /api/ideas/:id/claim`, which has been removed**
+- `GET /api/ideas/:id/jira-target` - The project a dispatch of this idea would target (department override ?? installation default) — the dispatch dialog's preselection (Power User/Admin)
 - `PATCH /api/ideas/:id/complete` - Mark idea as completed (assignee only; now applies only to legacy ideas claimed before the move to Jira — grandfathered)
+- `PATCH /api/ideas/:id/mark-done` - Force-mark an approved or in-progress idea as done (Power User/Admin; not for submitted or rejected ideas; a mandatory reason of at least 15 characters is recorded in the timeline; an active Jira sync is stopped — the Jira task itself is not modified and stays open)
 - `PATCH /api/ideas/:id/notify` - Toggle the submitter's lifecycle-email opt-in (submitter only, any status)
 - `POST /api/ideas/:id/steps` - Add progress step to in-progress idea (assignee only; same grandfathering as above)
 - `DELETE /api/ideas/:id` - Delete idea (Admin only)
@@ -391,7 +393,7 @@ npm run test:watch       # Vitest in watch mode
 - `GET /api/reports/by-department` - Idea counts per department (org-wide, for all roles)
 - `GET /api/reports/monthly-trend` - Monthly completion trend (org-wide, for all roles)
 - `GET /api/reports/top-contributors` - Top contributors (Power User/Admin)
-- `GET /api/reports/jira-statuses` - Counts of ideas dispatched to Jira, grouped by raw Jira status (org-wide, for all roles)
+- `GET /api/reports/jira-statuses` - Counts of actively monitored Jira-dispatched ideas, grouped by raw Jira status (org-wide, for all roles; finished/closed ideas no longer count — their last-seen status is history only)
 - `GET /api/reports/filtered` - Filtered ideas with pagination (with CSV export; the CSV additionally carries Jira Key/Status/Assignee/Resolution columns)
 
 ### Departments Endpoints
@@ -420,7 +422,7 @@ npm run test:watch       # Vitest in watch mode
 - `GET /api/jira-settings` - Get Jira configuration (the API token is never returned, only a `hasToken` flag), including the read-only last-sync status `lastSync` (`{ ok, reason?, at }` — since when the poller has been succeeding or failing; `null` when nothing has been recorded yet)
 - `PUT /api/jira-settings` - Save Jira configuration (token stored encrypted); changing `baseUrl` or `email` while a token is already stored requires the token to be either re-entered or explicitly cleared — otherwise `400`; returns the same shape as `GET`, including `lastSync` (a save can neither set nor clear it — only the poller writes it); saving an enabled configuration also resolves the site's cloud id in the background (for scoped API tokens)
 - `POST /api/jira-settings/test` - Verify the saved settings (`GET /rest/api/3/myself`); refreshes the stored site cloud id first — one click also migrates an existing install to the api.atlassian.com gateway
-- `GET /api/jira-settings/projects` - List the Jira projects visible to the tech account (for the default-project / department-override picker); returns an empty list with a reason code when Jira is disabled or unreachable
+- `GET /api/jira-settings/projects` - List the Jira projects visible to the tech account (for the default-project / department-override pickers and the dispatch dialog's project picker — hence Power User/Admin, the one non-admin route in this group); returns an empty list with a reason code when Jira is disabled or unreachable
 
 ### Users Endpoints (Admin Only)
 

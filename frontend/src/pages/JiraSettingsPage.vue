@@ -434,6 +434,10 @@ async function save() {
   if (ok) {
     applySettings(); // refresh hasToken hint + clear the token field and checkbox
     notify(t('jiraSettings.saveSuccess'), 'success');
+    // Saved settings may point at a DIFFERENT Jira account or site (new email /
+    // token / base URL): the picker must not keep offering the old account's
+    // projects (they were loaded on mount only).
+    loadJiraProjects();
   } else {
     notify(jiraStore.error || t('jiraSettings.saveFailed'), 'error');
   }

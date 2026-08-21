@@ -172,6 +172,7 @@ describe('translation coverage for components', () => {
     ApprovedIdeasPage: [
       'approved.title', 'approved.subtitle', 'approved.noIdeas',
       'ideas.loadFailed',
+      'ideas.jiraProjectLabel', 'ideas.jiraProjectHint', 'ideas.jiraProjectPrompt',
     ],
     InProgressIdeasPage: [
       'inProgress.title', 'inProgress.markComplete', 'inProgress.completeTitle',
@@ -186,6 +187,10 @@ describe('translation coverage for components', () => {
       'ideas.submittedBy', 'ideas.approvedByLabel', 'ideas.rejectedByLabel', 'ideas.assignedToLabel',
       'ideas.activityTimeline', 'ideas.ideaNotFound', 'ideas.notifyToggle',
       'ideas.jiraSyncHint', 'ideas.jiraFinalHint', 'ideas.jiraCancelledKey',
+      'ideas.markDone', 'ideas.markDoneTitle', 'ideas.markDoneReason', 'ideas.markDoneJiraWarning',
+      'ideas.markDoneReasonMinLength',
+      'review.approve', 'review.reject', 'review.approveTitle', 'review.rejectTitle',
+      'ideas.jiraProjectLabel', 'ideas.jiraProjectHint', 'ideas.jiraProjectPrompt',
     ],
     ReportsPage: [
       'reports.title', 'reports.filters', 'reports.status', 'reports.startDate',

@@ -146,14 +146,21 @@ test('idea lifecycle: submit → approve → create Jira task → poller mirrors
     await expect(page.getByText('Idea approved successfully!')).toBeVisible();
   }
 
-  /** Click "Create Jira task" on the (already-visible) Approved card and verify the new tab + chip. */
+  /** Click "Create Jira task" on the (already-visible) Approved card, confirm the
+   *  dispatch dialog (the target project arrives preselected with the resolved
+   *  department/default key), and verify the new tab + chip. */
   async function dispatchIdea(
     title: string
   ): Promise<{ id: string; jiraIssueId: string; jiraIssueKey: string; jiraBrowseUrl: string }> {
+    await card(title).getByRole('button', { name: 'Create Jira task' }).click();
+    const dispatchDialog = page.getByRole('dialog');
+    const confirmDispatch = dispatchDialog.getByRole('button', { name: 'Create Jira task' });
+    // Confirm stays disabled until the /jira-target preselection lands.
+    await expect(confirmDispatch).toBeEnabled();
     const [popup, response] = await Promise.all([
       context.waitForEvent('page'),
       page.waitForResponse((res) => res.url().includes('/jira-task') && res.request().method() === 'POST'),
-      card(title).getByRole('button', { name: 'Create Jira task' }).click(),
+      confirmDispatch.click(),
     ]);
     const body = await response.json();
     expect(body.jiraBrowseUrl, `dispatch response missing jiraBrowseUrl: ${JSON.stringify(body)}`).toBeTruthy();
@@ -243,7 +250,10 @@ test('idea lifecycle: submit → approve → create Jira task → poller mirrors
 
         await page.reload();
         await expect(page.locator('.v-chip', { hasText: 'Done' })).toBeVisible();
-        await expect(jiraStatusRow.locator('.v-chip')).toHaveText('Resolved');
+        // The raw Jira status is HIDDEN once the idea is no longer monitored (a
+        // frozen status would read as live data); the resolution row — the final
+        // outcome, not a live mirror — remains.
+        await expect(jiraStatusRow).toHaveCount(0);
         const jiraResolutionRow = page.locator('.v-list-item', { hasText: 'Jira resolution' });
         await expect(jiraResolutionRow).toContainText('Fixed');
 

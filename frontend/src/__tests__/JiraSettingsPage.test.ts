@@ -121,6 +121,23 @@ describe('JiraSettingsPage', () => {
     expect(mockedApi.update.mock.calls[0][0]).toMatchObject({ apiToken: 'brand-new-token' });
   });
 
+  it('refetches the projects list after a successful save (new credentials may see other projects)', async () => {
+    mockedApi.get.mockResolvedValue(
+      masked({ enabled: true, hasToken: true, baseUrl: 'https://acme.atlassian.net', email: 'tech@corp.example' })
+    );
+    const wrapper = mountPage();
+    await flushPromises();
+    expect(mockedApi.getProjects).toHaveBeenCalledTimes(1); // on mount
+
+    await button(wrapper, 'Save settings')!.trigger('click');
+    await flushPromises();
+
+    expect(mockedApi.update).toHaveBeenCalledTimes(1);
+    // The picker must not keep offering the OLD account's projects (the list was
+    // previously loaded on mount only — the user-reported staleness).
+    expect(mockedApi.getProjects).toHaveBeenCalledTimes(2);
+  });
+
   it('WIPES the token (sends an empty string) when the clear-token box is checked, even over leftover typed text', async () => {
     mockedApi.get.mockResolvedValue(
       masked({ enabled: false, hasToken: true, baseUrl: 'https://acme.atlassian.net', email: 'tech@corp.example' })

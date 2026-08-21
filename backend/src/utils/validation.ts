@@ -67,6 +67,14 @@ const jiraProjectKeySchema = z
   })
   .transform((v) => v.toUpperCase());
 
+// POST /api/ideas/:id/jira-task body: an OPTIONAL explicit project chosen by the
+// dispatching power user in the dispatch dialog; absent (or '') falls back to the
+// department-override/default mapping. Shares jiraProjectKeySchema so the rule can
+// never drift from the settings/department pickers.
+export const dispatchJiraTaskSchema = z.object({
+  projectKey: jiraProjectKeySchema.optional(),
+});
+
 // PATCH /api/departments/:id accepts a rename, a notification-emails update, a
 // webex-room-ids update, or any combination — every field is optional, so a
 // single-field request works for each. Each notification email is trimmed then
@@ -362,6 +370,13 @@ export const updateJiraSettingsSchema = z.object({
 
 export const reviewIdeaSchema = z.object({
   note: z.string().max(1000).optional(),
+});
+
+// Force-done override (PATCH /:id/mark-done): unlike the review note, the reason is
+// MANDATORY and must carry real content (min 15 chars, user decision 2026-08-21) —
+// the timeline entry has to explain why the lifecycle was bypassed.
+export const markDoneSchema = z.object({
+  note: z.string().trim().min(15, 'A reason of at least 15 characters is required').max(1000),
 });
 
 export const changePasswordSchema = z.object({

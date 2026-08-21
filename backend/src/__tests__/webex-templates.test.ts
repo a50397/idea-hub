@@ -270,4 +270,20 @@ describe('ideaLifecycleWebexMessage', () => {
     // The genuine system link is untouched.
     expect(md).toContain('[View the idea](http://localhost:5173/ideas/abc123)');
   });
+
+  // The mark-done override's mandatory reason rides the COMPLETED message as a
+  // labeled, quoted block — sanitized exactly like a step note.
+  it('COMPLETED includes the quoted reason when one is provided (mark-done override)', () => {
+    const md = ideaLifecycleWebexMessage(buildLife('COMPLETED', 'en')).markdown;
+    expect(md).toContain('Reason:');
+    // No trailing period in the assertion: escapeMarkdown renders it as "\." (same
+    // convention as the step-note test above).
+    expect(md).toContain('> Dokončil som prvú časť riešenia');
+  });
+
+  it('COMPLETED without a reason renders no reason block (legacy assignee completion)', () => {
+    const md = ideaLifecycleWebexMessage(buildLife('COMPLETED', 'en', { stepText: undefined })).markdown;
+    expect(md).not.toContain('Reason:');
+    expect(md).toContain('has been completed by');
+  });
 });

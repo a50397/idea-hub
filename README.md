@@ -382,8 +382,10 @@ npm run test:watch       # Vitest v režime watch
 - `PATCH /api/ideas/:id` – Úprava nápadu (len autor, kým je v stave SUBMITTED)
 - `PATCH /api/ideas/:id/approve` – Schválenie nápadu (Pokročilý používateľ/Administrátor)
 - `PATCH /api/ideas/:id/reject` – Zamietnutie nápadu (Pokročilý používateľ/Administrátor)
-- `POST /api/ideas/:id/jira-task` – Vytvorenie úlohy v Jire zo schváleného nápadu a jeho zaradenie do sledovania stavu pollerom (Pokročilý používateľ/Administrátor; vyžaduje zapnutú a nakonfigurovanú Jira integráciu a nastavený cieľový projekt); **nahrádza pôvodný `PATCH /api/ideas/:id/claim`, ktorý bol odstránený**
+- `POST /api/ideas/:id/jira-task` – Vytvorenie úlohy v Jire zo schváleného nápadu a jeho zaradenie do sledovania stavu pollerom (Pokročilý používateľ/Administrátor; vyžaduje zapnutú a nakonfigurovanú Jira integráciu a nastavený cieľový projekt; telo môže niesť voliteľný explicitný `projectKey` z výberu v dialógu — bez neho platí mapovanie oddelenie/predvolený projekt); **nahrádza pôvodný `PATCH /api/ideas/:id/claim`, ktorý bol odstránený**
+- `GET /api/ideas/:id/jira-target` – Projekt, do ktorého by smerovalo vytvorenie úlohy pre daný nápad (prepísanie oddelenia ?? predvolený projekt) — predvýber v dialógu vytvorenia (Pokročilý používateľ/Administrátor)
 - `PATCH /api/ideas/:id/complete` – Označenie nápadu za dokončený (len riešiteľ; platí už len pre staršie nápady prevzaté pred prechodom na Jiru — grandfathering)
+- `PATCH /api/ideas/:id/mark-done` – Núdzové označenie schváleného alebo rozpracovaného nápadu za dokončený (Power User/Admin; nie pre odoslané a zamietnuté nápady; povinný dôvod s min. 15 znakmi sa zapíše do časovej osi; aktívna synchronizácia s Jirou sa zastaví — úloha v Jire sa nemení a zostáva otvorená)
 - `PATCH /api/ideas/:id/notify` – Prepnutie odberu notifikácií o životnom cykle pre autora (len autor, v ľubovoľnom stave)
 - `POST /api/ideas/:id/steps` – Pridanie kroku priebehu k rozpracovanému nápadu (len riešiteľ; rovnaké obmedzenie ako vyššie — grandfathering)
 - `DELETE /api/ideas/:id` – Zmazanie nápadu (len administrátor)
@@ -394,7 +396,7 @@ npm run test:watch       # Vitest v režime watch
 - `GET /api/reports/by-department` – Počty nápadov podľa oddelení (za celú organizáciu, pre všetky roly)
 - `GET /api/reports/monthly-trend` – Mesačný trend dokončených nápadov (za celú organizáciu, pre všetky roly)
 - `GET /api/reports/top-contributors` – Najaktívnejší prispievatelia (Pokročilý používateľ/Administrátor)
-- `GET /api/reports/jira-statuses` – Počty nápadov odoslaných do Jiry podľa surového stavu Jira (za celú organizáciu, pre všetky roly)
+- `GET /api/reports/jira-statuses` – Počty aktívne sledovaných nápadov v Jire podľa surového stavu Jira (za celú organizáciu, pre všetky roly; dokončené a uzavreté nápady sa už nepočítajú — ich posledný stav je len história)
 - `GET /api/reports/filtered` – Filtrované nápady so stránkovaním (vrátane exportu do CSV; CSV navyše obsahuje stĺpce Jira Key/Status/Assignee/Resolution)
 
 ### Endpointy oddelení
@@ -423,7 +425,7 @@ npm run test:watch       # Vitest v režime watch
 - `GET /api/jira-settings` – Získanie konfigurácie Jira (API token sa nikdy nevracia, len príznak `hasToken`), vrátane READ-ONLY stavu poslednej synchronizácie `lastSync` (`{ ok, reason?, at }` — odkedy poller synchronizuje úspešne, resp. zlyháva; `null`, ak sa ešte nič nezaznamenalo)
 - `PUT /api/jira-settings` – Uloženie konfigurácie Jira (token sa ukladá šifrovane); zmena `baseUrl` alebo `email` pri už uloženom tokene vyžaduje token buď znova zadať, alebo výslovne vymazať — inak `400`; vracia rovnaký tvar ako `GET` vrátane `lastSync` (uloženie ho nemôže nastaviť ani vymazať — píše ho výhradne poller); uloženie zapnutej konfigurácie navyše na pozadí zistí cloud id lokality (pre scoped API tokeny)
 - `POST /api/jira-settings/test` – Overenie uložených nastavení (`GET /rest/api/3/myself`); pred testom obnoví uložené cloud id lokality — jeden klik tak „migruje" aj existujúcu inštaláciu na bránu api.atlassian.com
-- `GET /api/jira-settings/projects` – Zoznam projektov Jira viditeľných pre technický účet (pre výber predvoleného projektu / prepísania oddelenia); ak je Jira vypnutá alebo nedostupná, vráti prázdny zoznam s kódom dôvodu
+- `GET /api/jira-settings/projects` – Zoznam projektov Jira viditeľných pre technický účet (pre výber predvoleného projektu / prepísania oddelenia a pre výber projektu v dialógu vytvorenia úlohy — preto Pokročilý používateľ/Administrátor, jediná ne-administrátorská cesta v tejto skupine); ak je Jira vypnutá alebo nedostupná, vráti prázdny zoznam s kódom dôvodu
 
 ### Endpointy používateľov (len administrátor)
 

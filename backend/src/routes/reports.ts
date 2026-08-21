@@ -144,6 +144,11 @@ router.get('/jira-statuses', requireAuth, async (_req, res) => {
       where: {
         jiraIssueKey: { isSet: true },
         jiraStatus: { isSet: true, not: null },
+        // Only ACTIVELY MONITORED ideas: a finished or force-closed idea keeps its
+        // last-seen raw status as history, and counting that frozen value here
+        // would present stale remote data as a live breakdown (user decision
+        // 2026-08-21 — matches the card/detail display rule).
+        jiraSyncActive: true,
       },
       _count: { id: true },
     });

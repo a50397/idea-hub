@@ -205,7 +205,10 @@ export interface IdeaLifecycleWebexInput {
   title: string;
   /** Name of the user who performed the change ("Jira" for the JIRA_* events). */
   actorName: string;
-  /** The progress-step text; used only by the STEP_ADDED event. */
+  /**
+   * The progress-step text (STEP_ADDED) or the mandatory completion reason
+   * (COMPLETED, when the mark-done override closed the idea).
+   */
   stepText?: string;
   /** The Jira issue key; used only by the JIRA_* events ('' elsewhere). */
   jiraKey?: string;
@@ -217,7 +220,8 @@ export interface IdeaLifecycleWebexInput {
 // Built-in lifecycle wording per language per event. Mirrors the mail lifecycle
 // wording one-for-one (same sentence per event), as markdown, with a trailing
 // markdown link. Placeholders: {title}, {actorName}, {stepText} (STEP_ADDED only),
-// {link}.
+// {reasonBlock} (COMPLETED only — a labeled, quoted block when a completion reason
+// exists, EMPTY otherwise), {link}.
 const LIFECYCLE_WORDING: Record<WebexLang, Record<IdeaLifecycleEvent, Wording>> = {
   en: {
     APPROVED: {
@@ -230,7 +234,7 @@ const LIFECYCLE_WORDING: Record<WebexLang, Record<IdeaLifecycleEvent, Wording>> 
       body: '{actorName} has started working on your idea "{title}".\n\n[View the idea]({link})',
     },
     COMPLETED: {
-      body: 'Your idea "{title}" has been completed by {actorName}.\n\n[View the idea]({link})',
+      body: 'Your idea "{title}" has been completed by {actorName}.\n\n{reasonBlock}[View the idea]({link})',
     },
     STEP_ADDED: {
       body:
@@ -268,7 +272,7 @@ const LIFECYCLE_WORDING: Record<WebexLang, Record<IdeaLifecycleEvent, Wording>> 
       body: 'Na Vašom nápade "{title}" začal/a pracovať {actorName}.\n\n[Zobraziť nápad]({link})',
     },
     COMPLETED: {
-      body: 'Váš nápad "{title}" dokončil/a {actorName}.\n\n[Zobraziť nápad]({link})',
+      body: 'Váš nápad "{title}" dokončil/a {actorName}.\n\n{reasonBlock}[Zobraziť nápad]({link})',
     },
     STEP_ADDED: {
       body:
@@ -314,6 +318,14 @@ export function ideaLifecycleWebexMessage(input: IdeaLifecycleWebexInput): Built
     actorName: inline(input.actorName),
     // User-supplied free text (STEP_ADDED body only): defang URLs, escape, line-quote.
     stepText: quoteBlock(escapeMarkdown(defangUrls(input.stepText ?? ''))),
+    // Optional completion reason (COMPLETED body only; the mark-done override
+    // passes its mandatory note as stepText, the legacy completion passes nothing):
+    // same sanitization chain as a step note, labeled, with its own blank line —
+    // or the empty string, so a reason-less completion renders exactly as before.
+    reasonBlock:
+      input.event === 'COMPLETED' && input.stepText
+        ? `${lang === 'sk' ? 'Dôvod' : 'Reason'}:\n${quoteBlock(escapeMarkdown(defangUrls(input.stepText)))}\n\n`
+        : '',
     // The Jira issue key is a REMOTE value (JIRA_* bodies only). It was already
     // normalized at the ingest boundary (utils/jira.ts), but it is treated exactly
     // like any other untrusted inline value here — flattened, defanged and
