@@ -655,6 +655,9 @@ describe('createJiraIssue', () => {
     expect(init.redirect).toBe('manual');
     // F4: every request is time-boxed.
     expect(init.signal).toBeInstanceOf(AbortSignal);
+    // A service account has no language preference, so without this header Jira
+    // answers in the SITE default language — see JIRA_ACCEPT_LANGUAGE.
+    expect((init.headers as Record<string, string>)['Accept-Language']).toBe('en-US');
   });
 
   it('sends the description as ADF and the configured issue type, with NO labels', async () => {
@@ -1026,6 +1029,19 @@ describe('getJiraIssue', () => {
       'https://acme.atlassian.net/rest/api/3/issue/10001?fields=status,assignee,resolution'
     );
     expect(fetchCall()[1].method).toBe('GET');
+  });
+
+  // The READ path is where a localized workflow actually bites: statusName is
+  // mirrored onto the idea and matched against cancelResolutions, so the request
+  // must pin its language instead of inheriting the Jira site default.
+  it('asks for en-US so the mirrored status name is never site-localized', async () => {
+    fetchMock.mockResolvedValue(
+      response({ status: 200, json: { id: '10001', key: 'OPS-1', fields: { status: { name: 'In Progress', statusCategory: { key: 'indeterminate' } } } } })
+    );
+
+    await getJiraIssue(cfg(), '10001');
+
+    expect((fetchCall()[1].headers as Record<string, string>)['Accept-Language']).toBe('en-US');
   });
 
   it('reports found:false ONLY for a 404', async () => {

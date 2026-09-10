@@ -43,6 +43,20 @@ const JIRA_TIMEOUT_MS = 10_000;
 // Content-Length and therefore cannot be pre-checked — the 10s abort bounds it.
 const JIRA_MAX_RESPONSE_BYTES = 1_048_576;
 
+// Locale asked of Jira on every credentialed request. Jira resolves a request's
+// language as: the account's own preference -> the Accept-Language header -> the
+// SITE default. Our tech account is an Atlassian SERVICE ACCOUNT, which has no
+// profile UI and therefore no preference, so without this header every mirrored
+// status/resolution name arrives in whatever language the Jira site happens to
+// default to (observed 2026-09-10: Simplified Chinese, "正在进行" for In Progress).
+// That is not merely cosmetic — cancelResolutions matches CLOSING STATUS NAMES,
+// so a localized "Won't Do" silently stops registering as a cancel and wedges the
+// idea (the team-managed-project bug all over again). Pinning en-US makes the
+// mirror language-stable regardless of the site setting, and matches the English
+// DEFAULT_CANCEL_RESOLUTIONS. The canonical IdeaStatus never depended on this —
+// it comes from statusCategory.key, which is an untranslated enum.
+const JIRA_ACCEPT_LANGUAGE = 'en-US';
+
 // Max issue ids per search request. Jira's /search/jql caps maxResults near 100;
 // 50 keeps each JQL clause short and each response small (F4).
 export const JIRA_SEARCH_CHUNK_SIZE = 50;
@@ -280,7 +294,7 @@ interface JiraRequestInit {
 /**
  * Issue one AUTHENTICATED Jira REST request. Every credentialed call in this
  * module funnels through here so the auth header, the ~10s abort,
- * `redirect: 'manual'` (F1) and the JSON headers are IDENTICAL everywhere. The ONE
+ * `redirect: 'manual'` (F1) and the JSON/locale headers are IDENTICAL everywhere. The ONE
  * deliberate bypass is resolveJiraCloudId: it targets a public endpoint and must
  * NOT send the Authorization header, so it issues its own bare fetch carrying the
  * same transport discipline — keep it the only one. The AbortSignal.timeout timer
@@ -290,6 +304,9 @@ function jiraFetch(cfg: EffectiveJiraConfig, path: string, init: JiraRequestInit
   const headers: Record<string, string> = {
     Authorization: basicAuthHeader(cfg),
     Accept: 'application/json',
+    // See JIRA_ACCEPT_LANGUAGE: without it the service account inherits the SITE
+    // default language and the mirrored status names come back translated.
+    'Accept-Language': JIRA_ACCEPT_LANGUAGE,
   };
   if (init.body !== undefined) headers['Content-Type'] = 'application/json';
 
