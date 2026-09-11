@@ -26,6 +26,12 @@ const ssoLimiter = rateLimit({
 router.use(ssoLimiter as any);
 
 // ---------------------------------------------------------------------------
+// HTTP timeout for every openid-client request: discovery, JWKS, token
+// exchange and userinfo. The library default is 3500ms, which our slow IdP exceeds.
+// ---------------------------------------------------------------------------
+custom.setHttpOptionsDefaults({ timeout: 15000 });
+
+// ---------------------------------------------------------------------------
 // OIDC issuer discovery (cached in a module-level promise, cleared on failure
 // so a transient discovery error does not permanently break SSO).
 // ---------------------------------------------------------------------------

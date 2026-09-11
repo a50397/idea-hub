@@ -160,6 +160,63 @@ function craftTxnCookie(data: { state: string; nonce: string; cv: string; iat: n
   return `${payloadB64}.${sig}`;
 }
 
+// A forwarding proxy that stalls `delayMs` before passing the request upstream.
+// oauth2-mock-server emits its lifecycle events through a synchronous
+// EventEmitter and never awaits listeners, so a slow IdP cannot be simulated
+// from a BeforeTokenSigning handler — the response goes out regardless. Putting
+// a deliberately slow hop in front of the endpoint is the only way to exercise
+// openid-client's request timeout.
+interface SlowProxy {
+  url: string;
+  close: () => Promise<void>;
+}
+function startSlowProxy(targetOrigin: string, delayMs: number): Promise<SlowProxy> {
+  return new Promise((resolve) => {
+    const srv = http.createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (c: Buffer) => chunks.push(c));
+      req.on('end', () => {
+        setTimeout(() => {
+          const body = Buffer.concat(chunks);
+          const target = new URL(req.url as string, targetOrigin);
+          // Drop hop-by-hop headers; keep Authorization so client_secret_basic
+          // token-endpoint auth still reaches the mock IdP.
+          const headers = { ...req.headers } as Record<string, unknown>;
+          delete headers.host;
+          delete headers.connection;
+          headers['content-length'] = Buffer.byteLength(body);
+
+          const upstream = http.request(
+            {
+              hostname: target.hostname,
+              port: target.port,
+              path: `${target.pathname}${target.search}`,
+              method: req.method,
+              headers: headers as any,
+            },
+            (upRes) => {
+              res.writeHead(upRes.statusCode ?? 502, upRes.headers);
+              upRes.pipe(res);
+            }
+          );
+          upstream.on('error', () => {
+            res.statusCode = 502;
+            res.end();
+          });
+          upstream.end(body);
+        }, delayMs);
+      });
+    });
+    srv.listen(0, '127.0.0.1', () => {
+      const { port } = srv.address() as { port: number };
+      resolve({
+        url: `http://127.0.0.1:${port}`,
+        close: () => new Promise<void>((done) => srv.close(() => done())),
+      });
+    });
+  });
+}
+
 beforeAll(async () => {
   for (const k of ENV_KEYS) savedEnv[k] = process.env[k];
 
@@ -962,4 +1019,109 @@ describe('GET /api/auth/sso/callback — userinfo claim sourcing', () => {
       discoverSpy.mockRestore();
     }
   });
+});
+
+// ===========================================================================
+// 16. Slow IdP — routes/sso raises openid-client's HTTP timeout
+//
+// openid-client defaults to a 3500ms timeout on every request it makes. A
+// corporate IdP can be slower than that, so routes/sso widens it via
+// custom.setHttpOptionsDefaults. This test pins that: the token endpoint is
+// stalled past the library default but well inside the configured timeout, and
+// the login must still complete.
+//
+// Regression guard — the timeout was originally passed as an `httpOptions` key
+// in the Client metadata, which type-checks but is ignored at runtime. Under
+// that version this test fails with error=sso_failed at ~3500ms.
+// ===========================================================================
+describe('GET /api/auth/sso/callback — slow IdP', () => {
+  // Comfortably past openid-client's 3500ms default, comfortably inside the
+  // 15000ms routes/sso configures.
+  const TOKEN_DELAY_MS = 4500;
+
+  test(
+    'token exchange slower than the library default still completes the login',
+    async () => {
+      const proxy = await startSlowProxy(issuerUrl, TOKEN_DELAY_MS);
+      let slowApp!: express.Application;
+      let discoverSpy!: jest.SpyInstance;
+
+      // Same isolateModules + discover-wrap approach as the legacy-IdP test
+      // above: a fresh routes/sso (fresh discovery cache, and a fresh
+      // openid-client whose HTTP defaults this module re-applies on load).
+      jest.isolateModules(() => {
+        const oidc = require('openid-client');
+        const origDiscover = oidc.Issuer.discover.bind(oidc.Issuer);
+        discoverSpy = jest.spyOn(oidc.Issuer, 'discover').mockImplementation(async (url: any) => {
+          const iss = await origDiscover(url);
+          // Only the token endpoint goes through the slow hop. /authorize stays
+          // direct (it is browser-facing, not fetched by openid-client) and so
+          // do jwks_uri and userinfo, keeping the test to one 4.5s stall.
+          return new oidc.Issuer({ ...iss.metadata, token_endpoint: `${proxy.url}/token` });
+        });
+        const expressLib = require('express');
+        const sessionLib = require('express-session');
+        const ssoRoutes = require('../routes/sso').default;
+        const a = expressLib();
+        a.use(expressLib.json());
+        a.use(expressLib.urlencoded({ extended: true }));
+        a.use(
+          sessionLib({
+            secret: 'test-session-mw-secret',
+            resave: false,
+            saveUninitialized: false,
+            cookie: { secure: false },
+          })
+        );
+        a.use('/api/auth/sso', ssoRoutes);
+        slowApp = a;
+      });
+
+      try {
+        injectedClaims = {
+          sub: 'sub-slow',
+          email: 'slow@corp.example',
+          name: 'Slow IdP User',
+          roles: ['iam-users'],
+        };
+        const created = {
+          id: 'slow-1',
+          name: 'Slow IdP User',
+          email: 'slow@corp.example',
+          role: 'USER',
+          authProvider: 'SSO',
+          department: null,
+          createdAt: new Date(),
+        };
+        mockPrisma.user.findFirst.mockResolvedValue(null);
+        mockPrisma.user.findUnique.mockImplementation((args: any) =>
+          args?.where?.email !== undefined ? Promise.resolve(null) : Promise.resolve(created)
+        );
+        mockPrisma.user.create.mockResolvedValue(created);
+
+        const agent = request.agent(slowApp);
+        const { code, state } = await authorize(agent);
+
+        const startedAt = Date.now();
+        const cbRes = await agent.get(`/api/auth/sso/callback?code=${code}&state=${state}`);
+        const elapsed = Date.now() - startedAt;
+
+        // The stall actually happened — otherwise the test would pass even with
+        // the timeout misconfigured, because nothing would be slow.
+        expect(elapsed).toBeGreaterThan(3500);
+
+        expect(cbRes.status).toBe(302);
+        expect(cbRes.headers.location).not.toContain('error=sso_failed');
+        expect(mockPrisma.user.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ email: 'slow@corp.example', ssoSub: 'sub-slow' }),
+          })
+        );
+      } finally {
+        discoverSpy.mockRestore();
+        await proxy.close();
+      }
+    },
+    30000
+  );
 });
