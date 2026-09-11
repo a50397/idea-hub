@@ -1,4 +1,5 @@
 import client from './client';
+import { EXTERNAL_CALL_TIMEOUT_MS } from './timeouts';
 import type { WebexSettings } from '../types';
 
 // The PUT payload. `token` is WRITE-ONLY and OPTIONAL and drives keep/set/wipe of
@@ -65,7 +66,7 @@ export const webexSettingsApi = {
   // structured WebexTestResult: `{ ok: true }` or `{ ok: false, reason }` (a fixed
   // reason category). The reason NEVER contains any secret-bearing text.
   sendTest: async (to: string): Promise<WebexTestResult> => {
-    const response = await client.post('/webex-settings/test', { to });
+    const response = await client.post('/webex-settings/test', { to }, { timeout: EXTERNAL_CALL_TIMEOUT_MS });
     return response.data;
   },
 
@@ -74,7 +75,7 @@ export const webexSettingsApi = {
   // the caller renders the picker when rooms load and always also allows manual
   // room-id entry. NEVER returns the bot token.
   getRooms: async (): Promise<WebexRoomsResponse> => {
-    const response = await client.get('/webex-settings/rooms');
+    const response = await client.get('/webex-settings/rooms', { timeout: EXTERNAL_CALL_TIMEOUT_MS });
     return response.data;
   },
 };

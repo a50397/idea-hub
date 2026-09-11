@@ -1,4 +1,5 @@
 import client from './client';
+import { EXTERNAL_CALL_TIMEOUT_MS } from './timeouts';
 import type { MailSettings } from '../types';
 
 // The PUT payload. `password` is WRITE-ONLY and OPTIONAL: include it (non-empty)
@@ -50,7 +51,7 @@ export const mailSettingsApi = {
   // structured MailTestResult: 'sent' | 'disabled' | 'failed' (+ a fixed reason
   // category). The reason NEVER contains any secret-bearing text.
   sendTest: async (to: string): Promise<MailTestResult> => {
-    const response = await client.post('/mail-settings/test', { to });
+    const response = await client.post('/mail-settings/test', { to }, { timeout: EXTERNAL_CALL_TIMEOUT_MS });
     return response.data;
   },
 };

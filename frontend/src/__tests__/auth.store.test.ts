@@ -198,6 +198,46 @@ describe('auth store', () => {
       expect(store.user).toBeNull();
       expect(store.loading).toBe(false);
     });
+
+    it('shares one in-flight request across concurrent callers', async () => {
+      const user = makeUser(Role.USER);
+      mockedAuth.getCurrentUser.mockResolvedValueOnce(user);
+      const store = useAuthStore();
+
+      const [first, second] = await Promise.all([store.checkAuth(), store.checkAuth()]);
+
+      expect(mockedAuth.getCurrentUser).toHaveBeenCalledTimes(1);
+      expect(first).toBe(true);
+      expect(second).toBe(true);
+      expect(store.user).toEqual(user);
+    });
+
+    it('does not let a concurrent failure clear a user the shared read just set', async () => {
+      // The second mock must never be consumed — if it is, a duplicate request ran
+      // and its catch would null the user the first call resolved.
+      const user = makeUser(Role.USER);
+      mockedAuth.getCurrentUser
+        .mockResolvedValueOnce(user)
+        .mockRejectedValueOnce({ response: { status: 401 } });
+      const store = useAuthStore();
+
+      await Promise.all([store.checkAuth(), store.checkAuth()]);
+
+      expect(mockedAuth.getCurrentUser).toHaveBeenCalledTimes(1);
+      expect(store.user).toEqual(user);
+      expect(store.isAuthenticated).toBe(true);
+    });
+
+    it('re-reads the session on a sequential call (the shared promise is not a cache)', async () => {
+      const user = makeUser(Role.USER);
+      mockedAuth.getCurrentUser.mockResolvedValue(user);
+      const store = useAuthStore();
+
+      await store.checkAuth();
+      await store.checkAuth();
+
+      expect(mockedAuth.getCurrentUser).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('role computeds', () => {

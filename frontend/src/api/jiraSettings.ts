@@ -1,4 +1,5 @@
 import client from './client';
+import { EXTERNAL_CALL_TIMEOUT_MS } from './timeouts';
 import type { JiraSettings, JiraFailureReason, JiraProject } from '../types';
 
 // The PUT payload. `apiToken` is WRITE-ONLY and OPTIONAL and drives keep/set/wipe of
@@ -51,7 +52,7 @@ export const jiraSettingsApi = {
   // mail/Webex test sends there is no recipient to name). Always resolves 200 with a
   // structured JiraTestResult: `{ ok: true }` or `{ ok: false, reason }`.
   test: async (): Promise<JiraTestResult> => {
-    const response = await client.post('/jira-settings/test');
+    const response = await client.post('/jira-settings/test', undefined, { timeout: EXTERNAL_CALL_TIMEOUT_MS });
     return response.data;
   },
 
@@ -61,7 +62,7 @@ export const jiraSettingsApi = {
   // (failure); the caller renders the picker when projects load and always also
   // allows manual key entry. NEVER returns the API token.
   getProjects: async (): Promise<JiraProjectsResponse> => {
-    const response = await client.get('/jira-settings/projects');
+    const response = await client.get('/jira-settings/projects', { timeout: EXTERNAL_CALL_TIMEOUT_MS });
     return response.data;
   },
 };

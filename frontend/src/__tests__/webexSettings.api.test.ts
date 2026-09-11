@@ -7,6 +7,7 @@ vi.mock('../api/client', () => ({
 }));
 
 import client from '../api/client';
+import { EXTERNAL_CALL_TIMEOUT_MS } from '../api/timeouts';
 import { webexSettingsApi } from '../api/webexSettings';
 
 const mockedClient = vi.mocked(client);
@@ -23,7 +24,9 @@ describe('webexSettingsApi.getRooms', () => {
 
     const result = await webexSettingsApi.getRooms();
 
-    expect(mockedClient.get).toHaveBeenCalledWith('/webex-settings/rooms');
+    expect(mockedClient.get).toHaveBeenCalledWith('/webex-settings/rooms', {
+      timeout: EXTERNAL_CALL_TIMEOUT_MS,
+    });
     expect(result.rooms).toEqual([
       { id: 'r1', title: 'Room One' },
       { id: 'r2', title: 'Room Two' },
