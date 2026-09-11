@@ -13,7 +13,7 @@
         <v-col cols="12" sm="6" md="4" lg="2">
           <v-card class="stat-card">
             <v-card-text>
-              <div class="text-overline mb-1">{{ $t('dashboard.submitted') }}</div>
+              <div class="text-overline mb-1">{{ $t('status.submitted') }}</div>
               <div class="text-h4">{{ summary?.counts.submitted || 0 }}</div>
             </v-card-text>
           </v-card>
@@ -21,7 +21,7 @@
         <v-col cols="12" sm="6" md="4" lg="2">
           <v-card class="stat-card">
             <v-card-text>
-              <div class="text-overline mb-1">{{ $t('dashboard.approved') }}</div>
+              <div class="text-overline mb-1">{{ $t('status.approved') }}</div>
               <div class="text-h4 text-success">{{ summary?.counts.approved || 0 }}</div>
             </v-card-text>
           </v-card>
@@ -29,7 +29,7 @@
         <v-col cols="12" sm="6" md="4" lg="2">
           <v-card class="stat-card">
             <v-card-text>
-              <div class="text-overline mb-1">{{ $t('dashboard.inProgress') }}</div>
+              <div class="text-overline mb-1">{{ $t('status.inProgress') }}</div>
               <div class="text-h4 text-warning">{{ summary?.counts.inProgress || 0 }}</div>
             </v-card-text>
           </v-card>
@@ -37,7 +37,7 @@
         <v-col cols="12" sm="6" md="4" lg="2">
           <v-card class="stat-card">
             <v-card-text>
-              <div class="text-overline mb-1">{{ $t('dashboard.done') }}</div>
+              <div class="text-overline mb-1">{{ $t('status.done') }}</div>
               <div class="text-h4 text-primary">{{ summary?.counts.done || 0 }}</div>
             </v-card-text>
           </v-card>
@@ -45,7 +45,7 @@
         <v-col cols="12" sm="6" md="4" lg="2">
           <v-card class="stat-card">
             <v-card-text>
-              <div class="text-overline mb-1">{{ $t('dashboard.rejected') }}</div>
+              <div class="text-overline mb-1">{{ $t('status.rejected') }}</div>
               <div class="text-h4 text-error">{{ summary?.counts.rejected || 0 }}</div>
             </v-card-text>
           </v-card>

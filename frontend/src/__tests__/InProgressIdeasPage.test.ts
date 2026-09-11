@@ -202,7 +202,7 @@ describe('InProgressIdeasPage', () => {
       const wrapper = mountPage();
       await flushPromises();
 
-      expect(findByText(wrapper, 'button', 'Mark Complete')).toBeTruthy();
+      expect(findByText(wrapper, 'button', 'Mark as completed')).toBeTruthy();
     });
 
     it('does NOT render it on an idea assigned to somebody else', async () => {
@@ -211,7 +211,7 @@ describe('InProgressIdeasPage', () => {
       await flushPromises();
 
       expect(wrapper.findAllComponents({ name: 'IdeaCard' })).toHaveLength(1);
-      expect(findByText(wrapper, 'button', 'Mark Complete')).toBeUndefined();
+      expect(findByText(wrapper, 'button', 'Mark as completed')).toBeUndefined();
     });
   });
 });

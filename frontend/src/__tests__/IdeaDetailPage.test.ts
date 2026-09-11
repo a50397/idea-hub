@@ -477,7 +477,7 @@ describe('IdeaDetailPage Jira sidebar block', () => {
         const wrapper = mountPage();
         await flushPromises();
 
-        expect(wrapper.text()).toContain('Mark as done');
+        expect(wrapper.text()).toContain('Mark as completed');
       }
     );
 
@@ -488,7 +488,7 @@ describe('IdeaDetailPage Jira sidebar block', () => {
       const wrapper = mountPage();
       await flushPromises();
 
-      expect(wrapper.text()).not.toContain('Mark as done');
+      expect(wrapper.text()).not.toContain('Mark as completed');
     });
 
     it.each([IdeaStatus.DONE, IdeaStatus.REJECTED, IdeaStatus.SUBMITTED])(
@@ -500,7 +500,7 @@ describe('IdeaDetailPage Jira sidebar block', () => {
         const wrapper = mountPage();
         await flushPromises();
 
-        expect(wrapper.text()).not.toContain('Mark as done');
+        expect(wrapper.text()).not.toContain('Mark as completed');
       }
     );
 
@@ -512,7 +512,7 @@ describe('IdeaDetailPage Jira sidebar block', () => {
       const wrapper = mountPage();
       await flushPromises();
 
-      const openBtn = wrapper.findAll('.v-btn').find((b) => b.text().trim() === 'Mark as done');
+      const openBtn = wrapper.findAll('.v-btn').find((b) => b.text().trim() === 'Mark as completed');
       expect(openBtn).toBeTruthy();
       await openBtn!.trigger('click');
 
@@ -522,7 +522,7 @@ describe('IdeaDetailPage Jira sidebar block', () => {
 
       const confirm = dialogs[1]
         .findAllComponents({ name: 'VBtn' })
-        .find((b) => b.text().trim() === 'Mark as done');
+        .find((b) => b.text().trim() === 'Mark as completed');
       expect(confirm).toBeTruthy();
       // The reason is mandatory AND must be at least 15 chars: confirm stays
       // disabled while empty or too short.

@@ -146,9 +146,9 @@ describe('translation coverage for components', () => {
       'auth.email', 'auth.password', 'auth.emailRequired', 'auth.passwordRequired',
     ],
     DashboardPage: [
-      'dashboard.title', 'dashboard.submitted', 'dashboard.approved',
-      'dashboard.inProgress', 'dashboard.done', 'dashboard.rejected', 'dashboard.total',
+      'dashboard.title', 'dashboard.total',
       'dashboard.averageTimes', 'dashboard.topContributors', 'dashboard.monthlyTrend',
+      'status.submitted', 'status.approved', 'status.inProgress', 'status.done', 'status.rejected',
     ],
     SubmitIdeaPage: [
       'ideas.submitTitle', 'ideas.title', 'ideas.description', 'ideas.benefits',

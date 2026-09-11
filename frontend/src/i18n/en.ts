@@ -46,15 +46,10 @@ export default {
   },
   dashboard: {
     title: 'Dashboard',
-    submitted: 'Submitted',
-    approved: 'Approved',
-    inProgress: 'In Progress',
-    done: 'Done',
-    rejected: 'Rejected',
     total: 'Total',
     averageTimes: 'Average Times',
     submittedToApproved: 'Submitted → Approved',
-    approvedToDone: 'Approved → Done',
+    approvedToDone: 'Approved → Completed',
     days: 'days',
     topContributors: 'Top Contributors',
     ideasCompleted: 'ideas completed',
@@ -119,14 +114,14 @@ export default {
     jiraResolution: 'Jira resolution',
     jiraSyncHint: 'The status is synced from Jira periodically — changes may take a few minutes to show up here.',
     jiraFinalHint: 'The Jira status is no longer synced for this idea.',
-    markDone: 'Mark as done',
-    markDoneTitle: 'Mark idea as done',
+    markDone: 'Mark as completed',
+    markDoneTitle: 'Mark idea as completed',
     markDoneConfirm: 'This closes the idea, skipping the remaining lifecycle steps. Explain why below — the reason is recorded in the timeline.',
     markDoneReason: 'Reason (required)',
     markDoneReasonMinLength: 'The reason must be at least 15 characters',
     markDoneJiraWarning: 'The linked Jira task will stop being watched but stays open in Jira — close it there yourself if needed.',
-    markDoneSuccess: 'Idea marked as done.',
-    markDoneFailed: 'Failed to mark the idea as done',
+    markDoneSuccess: 'Idea marked as completed.',
+    markDoneFailed: 'Failed to mark the idea as completed',
   },
   effort: {
     lessThanOneDay: '< 1 day',
@@ -137,7 +132,10 @@ export default {
     submitted: 'Submitted',
     approved: 'Approved',
     inProgress: 'In Progress',
-    done: 'Done',
+    // IdeaStatus.DONE. Displayed as "Completed" (not "Done") everywhere it is named —
+    // the menu, page titles, the timeline event and completedAt already say so. The
+    // enum value stays DONE; only the label is unified.
+    done: 'Completed',
     rejected: 'Rejected',
   },
   // Activity-timeline event labels (IdeaDetailPage), one per EventType — see
@@ -181,7 +179,7 @@ export default {
   },
   inProgress: {
     title: 'Ideas In Progress',
-    markComplete: 'Mark Complete',
+    markComplete: 'Mark as completed',
     completeTitle: 'Complete Idea',
     completeConfirm: 'Are you ready to mark this idea as completed?',
     completionNotes: 'Completion notes (optional)',

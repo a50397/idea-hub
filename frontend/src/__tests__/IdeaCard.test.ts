@@ -91,7 +91,7 @@ describe('IdeaCard', () => {
     { status: IdeaStatus.SUBMITTED, label: 'Submitted' },
     { status: IdeaStatus.APPROVED, label: 'Approved' },
     { status: IdeaStatus.IN_PROGRESS, label: 'In Progress' },
-    { status: IdeaStatus.DONE, label: 'Done' },
+    { status: IdeaStatus.DONE, label: 'Completed' },
     { status: IdeaStatus.REJECTED, label: 'Rejected' },
   ];
 
@@ -209,7 +209,7 @@ describe('IdeaCard', () => {
       );
       const chips = wrapper.findAllComponents({ name: 'VChip' });
       expect(chips[0].text()).toBe('OPS-1'); // history + link
-      expect(chips[1].text()).toBe('Done'); // canonical — a frozen raw status would read as live data
+      expect(chips[1].text()).toBe('Completed'); // canonical — a frozen raw status would read as live data
       expect(chipTexts(wrapper)).not.toContain('Resolved');
     });
 

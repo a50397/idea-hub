@@ -103,11 +103,11 @@ describe('DashboardPage', () => {
     expect(cards).toHaveLength(6);
 
     const expected: Array<[string, number]> = [
-      [t('dashboard.submitted'), summary.counts.submitted],
-      [t('dashboard.approved'), summary.counts.approved],
-      [t('dashboard.inProgress'), summary.counts.inProgress],
-      [t('dashboard.done'), summary.counts.done],
-      [t('dashboard.rejected'), summary.counts.rejected],
+      [t('status.submitted'), summary.counts.submitted],
+      [t('status.approved'), summary.counts.approved],
+      [t('status.inProgress'), summary.counts.inProgress],
+      [t('status.done'), summary.counts.done],
+      [t('status.rejected'), summary.counts.rejected],
       [t('dashboard.total'), summary.counts.total],
     ];
 
@@ -190,7 +190,7 @@ describe('DashboardPage', () => {
     expect(cardByTitle(wrapper, t('dashboard.jiraStatuses'))).toBeUndefined();
     // …while the stat tiles, the trend chart and the department chart all render —
     // previously a single shared Promise.all blanked the whole dashboard.
-    expect(wrapper.text()).toContain(t('dashboard.submitted'));
+    expect(wrapper.text()).toContain(t('status.submitted'));
     expect(cardByTitle(wrapper, t('dashboard.monthlyTrend'))).toBeTruthy();
     expect(cardByTitle(wrapper, t('dashboard.ideasByDepartment'))).toBeTruthy();
   });

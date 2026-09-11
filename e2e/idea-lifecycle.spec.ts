@@ -249,7 +249,7 @@ test('idea lifecycle: submit → approve → create Jira task → poller mirrors
         await waitForIdeaCondition(page.request, dispatch1.id, (idea) => idea.status === 'DONE', 'status becomes DONE');
 
         await page.reload();
-        await expect(page.locator('.v-chip', { hasText: 'Done' })).toBeVisible();
+        await expect(page.locator('.v-chip', { hasText: 'Completed' })).toBeVisible();
         // The raw Jira status is HIDDEN once the idea is no longer monitored (a
         // frozen status would read as live data); the resolution row — the final
         // outcome, not a live mirror — remains.

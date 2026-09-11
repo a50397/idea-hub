@@ -46,15 +46,10 @@ export default {
   },
   dashboard: {
     title: 'Prehľad',
-    submitted: 'Odoslané',
-    approved: 'Schválené',
-    inProgress: 'Rozpracované',
-    done: 'Hotové',
-    rejected: 'Zamietnuté',
     total: 'Celkom',
     averageTimes: 'Priemerné časy',
     submittedToApproved: 'Odoslané → Schválené',
-    approvedToDone: 'Schválené → Hotové',
+    approvedToDone: 'Schválené → Dokončené',
     days: 'dní',
     topContributors: 'Najaktívnejší prispievatelia',
     ideasCompleted: 'dokončených nápadov',
@@ -137,7 +132,9 @@ export default {
     submitted: 'Odoslané',
     approved: 'Schválené',
     inProgress: 'Rozpracované',
-    done: 'Hotové',
+    // IdeaStatus.DONE. "Dokončené" (not "Hotové") everywhere it is named — the menu,
+    // page titles, the timeline event and every mail/Webex template already say so.
+    done: 'Dokončené',
     rejected: 'Zamietnuté',
   },
   events: {
@@ -178,7 +175,7 @@ export default {
   },
   inProgress: {
     title: 'Rozpracované nápady',
-    markComplete: 'Označiť ako hotové',
+    markComplete: 'Označiť ako dokončené',
     completeTitle: 'Dokončiť nápad',
     completeConfirm: 'Ste pripravení označiť tento nápad ako dokončený?',
     completionNotes: 'Poznámky k dokončeniu (voliteľné)',
