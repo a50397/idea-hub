@@ -53,7 +53,21 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  async function checkAuth() {
+  // Concurrent callers share one request: a late-FAILING duplicate would otherwise
+  // run its catch and null a user a concurrent successful read just set, signing
+  // the user out. Sequential calls still re-read the session.
+  let inFlight: Promise<boolean> | null = null;
+
+  function checkAuth(): Promise<boolean> {
+    if (!inFlight) {
+      inFlight = doCheckAuth().finally(() => {
+        inFlight = null;
+      });
+    }
+    return inFlight;
+  }
+
+  async function doCheckAuth(): Promise<boolean> {
     loading.value = true;
     try {
       const userData = await authApi.getCurrentUser();

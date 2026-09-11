@@ -130,4 +130,30 @@ router.beforeEach(async (to, from, next) => {
   next();
 });
 
+// Every route is a lazy import. A chunk that fails to load rejects the navigation
+// and leaves <router-view> empty — a blank page, no error shown. Reloading fetches
+// the current manifest and fixes it, so do that automatically, but only once per
+// tab: a genuinely missing chunk would otherwise loop. afterEach re-arms the guard
+// once a navigation succeeds.
+const RELOAD_ATTEMPTED_KEY = 'ideahub:chunk-reload-attempted';
+
+router.onError((err, to) => {
+  console.error('Router navigation failed:', to?.fullPath, err);
+
+  const message = String((err as Error)?.message ?? err);
+  const isChunkLoadFailure =
+    /dynamically imported module|Importing a module script failed|error loading dynamically imported module|Failed to fetch/i.test(
+      message
+    );
+
+  if (isChunkLoadFailure && !sessionStorage.getItem(RELOAD_ATTEMPTED_KEY)) {
+    sessionStorage.setItem(RELOAD_ATTEMPTED_KEY, '1');
+    window.location.reload();
+  }
+});
+
+router.afterEach(() => {
+  sessionStorage.removeItem(RELOAD_ATTEMPTED_KEY);
+});
+
 export default router;

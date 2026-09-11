@@ -7,6 +7,7 @@ vi.mock('../api/client', () => ({
 }));
 
 import client from '../api/client';
+import { EXTERNAL_CALL_TIMEOUT_MS } from '../api/timeouts';
 import { jiraSettingsApi } from '../api/jiraSettings';
 
 const mockedClient = vi.mocked(client);
@@ -74,7 +75,9 @@ describe('jiraSettingsApi', () => {
 
       const result = await jiraSettingsApi.test();
 
-      expect(mockedClient.post).toHaveBeenCalledWith('/jira-settings/test');
+      expect(mockedClient.post).toHaveBeenCalledWith('/jira-settings/test', undefined, {
+        timeout: EXTERNAL_CALL_TIMEOUT_MS,
+      });
       expect(result).toEqual({ ok: true });
     });
 
@@ -95,7 +98,9 @@ describe('jiraSettingsApi', () => {
 
       const result = await jiraSettingsApi.getProjects();
 
-      expect(mockedClient.get).toHaveBeenCalledWith('/jira-settings/projects');
+      expect(mockedClient.get).toHaveBeenCalledWith('/jira-settings/projects', {
+        timeout: EXTERNAL_CALL_TIMEOUT_MS,
+      });
       expect(result.projects).toEqual([
         { key: 'OPS', name: 'Operations' },
         { key: 'MKT', name: 'Marketing' },

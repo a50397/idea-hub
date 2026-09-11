@@ -17,6 +17,8 @@ export const authApi = {
     return response.data;
   },
 
+  // Uses the 10s client default deliberately — the router guard blocks the FIRST
+  // render on this call, so a stall here is a blank page for exactly that long.
   getCurrentUser: async (): Promise<User> => {
     const response = await client.get('/auth/me');
     return response.data;
