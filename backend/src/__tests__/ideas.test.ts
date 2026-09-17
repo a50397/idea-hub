@@ -1862,7 +1862,8 @@ describe('Ideas API', () => {
           ideaId: IDEA_ID,
           type: 'JIRA_CREATED',
           byUserId: user.id,
-          note: 'Jira task OPS-1 created',
+          // Bare key, language-neutral (the localized timeline label names the event).
+          note: 'OPS-1',
         },
       });
     });

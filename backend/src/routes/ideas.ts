@@ -299,12 +299,15 @@ router.post('/', ideaCreateLimiter as any, requireAuth, async (req, res) => {
         },
       });
 
+      // Event notes carry USER text only (or nothing). The auto-generated English
+      // fallbacks that used to be stored here merely duplicated the localized
+      // event label — and as DB data they could never be translated; the timeline
+      // hides the historical ones at render time (IdeaDetailPage displayNote).
       await tx.ideaEvent.create({
         data: {
           ideaId: created.id,
           type: EventType.SUBMITTED,
           byUserId: userId,
-          note: 'Initial submission',
         },
       });
 
@@ -485,7 +488,6 @@ router.patch('/:id', requireAuth, async (req, res) => {
           ideaId: id,
           type: EventType.UPDATED,
           byUserId: userId,
-          note: 'Idea updated',
         },
       });
 
@@ -610,7 +612,7 @@ router.patch('/:id/approve', requireRole(Role.POWER_USER, Role.ADMIN), async (re
           ideaId: id,
           type: EventType.APPROVED,
           byUserId: userId,
-          note: note || 'Idea approved',
+          note: note || undefined,
         },
       });
 
@@ -679,7 +681,7 @@ router.patch('/:id/reject', requireRole(Role.POWER_USER, Role.ADMIN), async (req
           ideaId: id,
           type: EventType.REJECTED,
           byUserId: userId,
-          note: note || 'Idea rejected',
+          note: note || undefined,
         },
       });
 
@@ -886,7 +888,9 @@ router.post('/:id/jira-task', jiraTaskLimiter as any, requireRole(Role.POWER_USE
           // The dispatching user IS the actor here (unlike the poller-written Jira
           // events, which carry a null actor).
           byUserId: userId,
-          note: `Jira task ${created.issueKey} created`,
+          // Bare key, language-neutral — after a re-dispatch this event is the only
+          // record of WHICH issue the idea previously had.
+          note: created.issueKey,
         },
       });
 
@@ -960,7 +964,7 @@ router.patch('/:id/complete', requireAuth, async (req, res) => {
           ideaId: id,
           type: EventType.COMPLETED,
           byUserId: userId,
-          note: note || 'Idea completed',
+          note: note || undefined,
         },
       });
 

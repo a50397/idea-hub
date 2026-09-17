@@ -56,11 +56,12 @@
                   :dot-color="item.kind === 'step' ? 'success' : 'primary'"
                   :icon="item.kind === 'step' ? 'mdi-check-circle-outline' : undefined"
                 >
-                  <template v-slot:opposite>
-                    <div class="text-caption">
-                      {{ formatDateTime(item.timestamp) }}
-                    </div>
-                  </template>
+                  <!-- The timestamp lives IN the item body: under density="compact"
+                       Vuetify never renders the opposite container at all, so a
+                       slot-based timestamp would silently not exist. -->
+                  <div class="text-caption text-medium-emphasis">
+                    {{ formatDateTime(item.timestamp) }}
+                  </div>
                   <div v-if="item.kind === 'event'">
                     <!-- The connective between label and actor is locale-owned: the
                          old hardcoded " by " produced mixed-language Slovak rows
@@ -68,7 +69,7 @@
                     <strong>{{ eventLabel(item.event!) }}</strong>
                     {{ $t('events.actorConnective') }}
                     {{ item.event!.byUser?.name ?? $t('events.actorJira') }}
-                    <p v-if="item.event!.note" class="text-caption mt-1">{{ item.event!.note }}</p>
+                    <p v-if="displayNote(item.event!)" class="text-caption mt-1">{{ displayNote(item.event!) }}</p>
                   </div>
                   <div v-else>
                     <strong>{{ $t('steps.title') }}</strong>
@@ -595,6 +596,38 @@ function eventLabel(event: IdeaEvent): string {
   const i18nKey = key ? `events.${key}` : null;
   if (i18nKey && te(i18nKey)) return t(i18nKey);
   return event.type;
+}
+
+// Auto-notes older backends stored in ENGLISH (current routes write user text or
+// nothing). They merely duplicate the localized event label, so they are hidden at
+// render time — the stored data stays untouched and every locale renders right.
+const LEGACY_AUTO_NOTES = new Set([
+  'Initial submission',
+  'Idea updated',
+  'Idea approved',
+  'Idea rejected',
+  'Idea completed',
+]);
+// 'Jira task RDLAB-42 created' → just the key (current backends store the bare key).
+const LEGACY_JIRA_CREATED_NOTE = /^Jira task (\S+) created$/;
+// Poller-written notes: the raw Jira status/resolution names inside them are
+// deliberately en-US-pinned server-side (cancel detection matches them), so only
+// OUR wrapper text around them is localized here.
+const JIRA_DELETED_NOTE = /^Jira task (\S+) was deleted or is no longer accessible$/;
+const RESOLUTION_SUFFIX = /^(.+) \(resolution: (.+)\)$/;
+
+// Display text for an event's note, or null to hide the note line entirely.
+function displayNote(event: IdeaEvent): string | null {
+  const note = event.note;
+  if (!note) return null;
+  if (LEGACY_AUTO_NOTES.has(note)) return null;
+  const created = note.match(LEGACY_JIRA_CREATED_NOTE);
+  if (created) return created[1];
+  const deleted = note.match(JIRA_DELETED_NOTE);
+  if (deleted) return t('events.noteJiraDeleted', { key: deleted[1] });
+  const resolution = note.match(RESOLUTION_SUFFIX);
+  if (resolution) return `${resolution[1]} (${t('events.noteResolution')}: ${resolution[2]})`;
+  return note;
 }
 
 async function loadIdea() {

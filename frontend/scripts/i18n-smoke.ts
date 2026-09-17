@@ -54,6 +54,10 @@ const PROBES = [
   'ideas.createJiraTaskSuccess',
   'events.actorJira',
   'events.actorConnective',
+  // Timeline note wrappers; noteJiraDeleted carries {key} — the interpolated /
+  // message-compiler class this script exists to catch.
+  'events.noteJiraDeleted',
+  'events.noteResolution',
   'dashboard.jiraStatuses',
   'reports.headerJira',
 ];

@@ -152,6 +152,10 @@ export default {
     actorJira: 'Jira',
     // Spojka medzi názvom udalosti a aktérom na časovej osi ("Schválené — Peter").
     actorConnective: '—',
+    // Render-time obaly poznámok zapisovaných Jira pollerom (surové názvy stavov
+    // v nich zostávajú anglické — sú to identifikátory z Jira workflow).
+    noteJiraDeleted: 'Úloha {key} v Jire bola zmazaná alebo už nie je dostupná',
+    noteResolution: 'riešenie',
   },
   review: {
     title: 'Na posúdenie',
