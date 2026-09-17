@@ -337,6 +337,48 @@ describe('IdeaDetailPage activity timeline', () => {
     expect(wrapper.text()).not.toContain(note);
   });
 
+  // Suppression/mapping is keyed by event type + text: the same words typed by a
+  // USER on a different event kind are real content and must stay visible.
+  it('keeps a user note that matches a legacy auto-text of ANOTHER event type', async () => {
+    mockedIdeas.getOne.mockResolvedValue(
+      makeIdea({ events: [makeEvent({ type: EventType.COMPLETED, note: 'Idea approved' })] })
+    );
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Idea approved');
+  });
+
+  it('keeps a "Jira task X created" lookalike verbatim on a non-dispatch event', async () => {
+    mockedIdeas.getOne.mockResolvedValue(
+      makeIdea({ events: [makeEvent({ type: EventType.COMPLETED, note: 'Jira task OPS-9 created' })] })
+    );
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Jira task OPS-9 created');
+  });
+
+  it('keeps a resolution-suffix lookalike verbatim on a non-cancel event (sk)', async () => {
+    mockedIdeas.getOne.mockResolvedValue(
+      makeIdea({ events: [makeEvent({ type: EventType.COMPLETED, note: 'Hotovo (resolution: fixed)' })] })
+    );
+    const wrapper = mountPage('sk');
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Hotovo (resolution: fixed)');
+  });
+
+  it('hides a whitespace-only note (legacy rows can carry them)', async () => {
+    mockedIdeas.getOne.mockResolvedValue(
+      makeIdea({ events: [makeEvent({ type: EventType.APPROVED, note: '   ' })] })
+    );
+    const wrapper = mountPage();
+    await flushPromises();
+
+    expect(wrapper.find('p.text-caption.mt-1').exists()).toBe(false);
+  });
+
   it('renders a user-written note verbatim', async () => {
     mockedIdeas.getOne.mockResolvedValue(
       makeIdea({ events: [makeEvent({ type: EventType.APPROVED, note: 'Great fit for the Q4 roadmap' })] })

@@ -1485,6 +1485,36 @@ describe('Ideas API', () => {
       );
     });
 
+    test('a whitespace-only note is not persisted (trimmed to absent)', async () => {
+      const { agent, user } = await loginAsUser(app, 'POWER_USER');
+
+      const existingIdea = {
+        id: 'aaaaaaaaaaaaaaaaaaaaa001',
+        title: 'Test Idea',
+        status: 'SUBMITTED',
+        submitterId: 'otheruser',
+      };
+
+      mockPrismaFunctions.idea.findUnique.mockResolvedValue(existingIdea);
+      mockPrismaFunctions.idea.update.mockResolvedValue({
+        ...existingIdea,
+        status: 'APPROVED',
+        approverId: user.id,
+        approvedAt: new Date(),
+        submitter: { id: 'otheruser', name: 'Other User', email: 'other@example.com' },
+        approver: { id: user.id, name: user.name, email: user.email },
+      });
+      mockPrismaFunctions.ideaEvent.create.mockResolvedValue({});
+
+      const response = await agent.patch('/api/ideas/aaaaaaaaaaaaaaaaaaaaa001/approve').send({
+        note: '   ',
+      });
+
+      expect(response.status).toBe(200);
+      const eventArg = mockPrismaFunctions.ideaEvent.create.mock.calls[0][0];
+      expect(eventArg.data.note).toBeUndefined();
+    });
+
     test('should not approve as regular USER', async () => {
       const { agent } = await loginAsUser(app, 'USER');
 

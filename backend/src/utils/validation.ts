@@ -369,7 +369,9 @@ export const updateJiraSettingsSchema = z.object({
 });
 
 export const reviewIdeaSchema = z.object({
-  note: z.string().max(1000).optional(),
+  // Trimmed so a whitespace-only note becomes '' and the write sites
+  // (`note || undefined`) store nothing instead of an invisible note line.
+  note: z.string().trim().max(1000).optional(),
 });
 
 // Force-done override (PATCH /:id/mark-done): unlike the review note, the reason is

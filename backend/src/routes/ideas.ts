@@ -300,9 +300,9 @@ router.post('/', ideaCreateLimiter as any, requireAuth, async (req, res) => {
       });
 
       // Event notes carry USER text only (or nothing). The auto-generated English
-      // fallbacks that used to be stored here merely duplicated the localized
-      // event label — and as DB data they could never be translated; the timeline
-      // hides the historical ones at render time (IdeaDetailPage displayNote).
+      // fallbacks that used to be stored here merely duplicated the event label —
+      // and as DB data they could never be translated; historical documents still
+      // carry them, so timeline rendering must keep tolerating (hiding) them.
       await tx.ideaEvent.create({
         data: {
           ideaId: created.id,
