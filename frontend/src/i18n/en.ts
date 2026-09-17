@@ -156,6 +156,10 @@ export default {
     actorJira: 'Jira',
     // Connective between the event label and the actor on the timeline ("Approved by Peter").
     actorConnective: 'by',
+    // Render-time wrappers for Jira-poller-written notes (the raw status names
+    // inside them stay English — they are Jira workflow identifiers).
+    noteJiraDeleted: 'Jira task {key} was deleted or is no longer accessible',
+    noteResolution: 'resolution',
   },
   review: {
     title: 'Review Queue',
