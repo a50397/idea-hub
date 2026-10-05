@@ -14,6 +14,7 @@
         <v-list-item prepend-icon="mdi-check-circle" :title="$t('nav.approved')" :to="{ name: 'ApprovedIdeas' }"></v-list-item>
         <v-list-item prepend-icon="mdi-progress-clock" :title="$t('nav.inProgress')" :to="{ name: 'InProgressIdeas' }"></v-list-item>
         <v-list-item prepend-icon="mdi-check-all" :title="$t('nav.completed')" :to="{ name: 'CompletedIdeas' }"></v-list-item>
+        <v-list-item prepend-icon="mdi-close-circle" :title="$t('nav.rejected')" :to="{ name: 'RejectedIdeas' }"></v-list-item>
 
         <v-list-item v-if="authStore.isPowerUser" prepend-icon="mdi-clipboard-check" :title="$t('nav.reviewQueue')" :to="{ name: 'ReviewQueue' }"></v-list-item>
 

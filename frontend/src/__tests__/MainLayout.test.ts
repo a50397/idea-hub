@@ -43,6 +43,7 @@ function makeRouter(): Router {
       { path: '/approved', name: 'ApprovedIdeas', component: Dummy },
       { path: '/in-progress', name: 'InProgressIdeas', component: Dummy },
       { path: '/completed', name: 'CompletedIdeas', component: Dummy },
+      { path: '/rejected', name: 'RejectedIdeas', component: Dummy },
       { path: '/review', name: 'ReviewQueue', component: Dummy },
       { path: '/reports', name: 'Reports', component: Dummy },
       { path: '/change-password', name: 'ChangePassword', component: Dummy },
@@ -100,6 +101,7 @@ describe('MainLayout', () => {
       'Approved',
       'In Progress',
       'Completed',
+      'Rejected',
       'Reports',
       'Change Password',
     ]) {

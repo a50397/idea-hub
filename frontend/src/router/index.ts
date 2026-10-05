@@ -52,6 +52,11 @@ const router = createRouter({
           component: () => import('../pages/CompletedIdeasPage.vue'),
         },
         {
+          path: 'rejected',
+          name: 'RejectedIdeas',
+          component: () => import('../pages/RejectedIdeasPage.vue'),
+        },
+        {
           path: 'review',
           name: 'ReviewQueue',
           component: () => import('../pages/ReviewQueuePage.vue'),

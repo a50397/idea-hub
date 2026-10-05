@@ -24,6 +24,7 @@ export default {
     approved: 'Schválené',
     inProgress: 'Rozpracované',
     completed: 'Dokončené',
+    rejected: 'Zamietnuté',
     myIdeas: 'Moje nápady',
     reviewQueue: 'Na posúdenie',
     reports: 'Reporty',
@@ -190,6 +191,10 @@ export default {
   completed: {
     title: 'Dokončené nápady',
     noIdeas: 'Zatiaľ žiadne dokončené nápady.',
+  },
+  rejected: {
+    title: 'Zamietnuté nápady',
+    noIdeas: 'Zatiaľ žiadne zamietnuté nápady.',
   },
   reports: {
     title: 'Reporty',
