@@ -24,6 +24,7 @@ export default {
     approved: 'Approved',
     inProgress: 'In Progress',
     completed: 'Completed',
+    rejected: 'Rejected',
     myIdeas: 'My Ideas',
     reviewQueue: 'Review Queue',
     reports: 'Reports',
@@ -194,6 +195,10 @@ export default {
   completed: {
     title: 'Completed Ideas',
     noIdeas: 'No completed ideas yet.',
+  },
+  rejected: {
+    title: 'Rejected Ideas',
+    noIdeas: 'No rejected ideas yet.',
   },
   reports: {
     title: 'Reports',
