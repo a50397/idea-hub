@@ -11,7 +11,7 @@
     <div v-else>
       <v-row>
         <v-col cols="12" sm="6" md="4" lg="2">
-          <v-card class="stat-card">
+          <v-card class="stat-card" :to="'/submit'">
             <v-card-text>
               <div class="text-overline mb-1">{{ $t('status.submitted') }}</div>
               <div class="text-h4">{{ summary?.counts.submitted || 0 }}</div>
@@ -19,7 +19,7 @@
           </v-card>
         </v-col>
         <v-col cols="12" sm="6" md="4" lg="2">
-          <v-card class="stat-card">
+          <v-card class="stat-card" :to="'/approved'">
             <v-card-text>
               <div class="text-overline mb-1">{{ $t('status.approved') }}</div>
               <div class="text-h4 text-success">{{ summary?.counts.approved || 0 }}</div>
@@ -27,7 +27,7 @@
           </v-card>
         </v-col>
         <v-col cols="12" sm="6" md="4" lg="2">
-          <v-card class="stat-card">
+          <v-card class="stat-card" :to="'/in-progress'">
             <v-card-text>
               <div class="text-overline mb-1">{{ $t('status.inProgress') }}</div>
               <div class="text-h4 text-warning">{{ summary?.counts.inProgress || 0 }}</div>
@@ -35,7 +35,7 @@
           </v-card>
         </v-col>
         <v-col cols="12" sm="6" md="4" lg="2">
-          <v-card class="stat-card">
+          <v-card class="stat-card" :to="'/completed'">
             <v-card-text>
               <div class="text-overline mb-1">{{ $t('status.done') }}</div>
               <div class="text-h4 text-primary">{{ summary?.counts.done || 0 }}</div>
@@ -43,7 +43,7 @@
           </v-card>
         </v-col>
         <v-col cols="12" sm="6" md="4" lg="2">
-          <v-card class="stat-card">
+          <v-card class="stat-card" :to="'/rejected'">
             <v-card-text>
               <div class="text-overline mb-1">{{ $t('status.rejected') }}</div>
               <div class="text-h4 text-error">{{ summary?.counts.rejected || 0 }}</div>
@@ -51,7 +51,7 @@
           </v-card>
         </v-col>
         <v-col cols="12" sm="6" md="4" lg="2">
-          <v-card class="stat-card">
+          <v-card class="stat-card" :to="'/reports'">
             <v-card-text>
               <div class="text-overline mb-1">{{ $t('dashboard.total') }}</div>
               <div class="text-h4">{{ summary?.counts.total || 0 }}</div>

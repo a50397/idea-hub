@@ -271,4 +271,44 @@ describe('DashboardPage', () => {
 
     consoleSpy.mockRestore();
   });
+
+  describe('stat card navigation', () => {
+    it('navigates to the respective list pages on click', async () => {
+      const { wrapper, i18n } = mountPage();
+      await flushPromises();
+      const t = translator(i18n);
+
+      const statCards = wrapper.findAll('.stat-card');
+
+      // Submit -> navigate to new idea form
+      const submittedCard = statCards[0].findComponent({ name: 'VCard' });
+      expect(submittedCard.props('to')).toBe('/submit');
+      expect(statCards[0].find('.text-overline').text()).toBe(t('status.submitted'));
+
+      // Approved
+      const approvedCard = statCards[1].findComponent({ name: 'VCard' });
+      expect(approvedCard.props('to')).toBe('/approved');
+      expect(statCards[1].find('.text-overline').text()).toBe(t('status.approved'));
+
+      // In Progress
+      const inProgressCard = statCards[2].findComponent({ name: 'VCard' });
+      expect(inProgressCard.props('to')).toBe('/in-progress');
+      expect(statCards[2].find('.text-overline').text()).toBe(t('status.inProgress'));
+
+      // Completed
+      const completedCard = statCards[3].findComponent({ name: 'VCard' });
+      expect(completedCard.props('to')).toBe('/completed');
+      expect(statCards[3].find('.text-overline').text()).toBe(t('status.done'));
+
+      // Rejected
+      const rejectedCard = statCards[4].findComponent({ name: 'VCard' });
+      expect(rejectedCard.props('to')).toBe('/rejected');
+      expect(statCards[4].find('.text-overline').text()).toBe(t('status.rejected'));
+
+      // Total - navigate to reports
+      const totalCard = statCards[5].findComponent({ name: 'VCard' });
+      expect(totalCard.props('to')).toBe('/reports');
+      expect(statCards[5].find('.text-overline').text()).toBe(t('dashboard.total'));
+    });
+  });
 });
