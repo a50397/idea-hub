@@ -570,7 +570,7 @@ const timelineItems = computed<TimelineItem[]>(() => {
       items.push({ id: `step-${step.id}`, timestamp: step.createdAt, kind: 'step', step });
     }
   }
-  items.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  items.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   return items;
 });
 
