@@ -7,6 +7,9 @@ import {
   isSsoEnabled,
   getSsoConfig,
   mapRolesToAppRole,
+  getRoleMap,
+  extractRoleCandidates,
+  isMappedRole,
   getBreakGlassEmails,
 } from '../config/sso';
 
@@ -39,10 +42,51 @@ let discovery: Promise<Issuer> | null = null;
 
 function discoverIssuer(issuerUrl: string): Promise<Issuer> {
   if (!discovery) {
-    discovery = Issuer.discover(issuerUrl).catch((err: unknown) => {
-      discovery = null; // allow the next request to retry discovery
-      throw err;
-    });
+    discovery = Issuer.discover(issuerUrl)
+      .then((issuer) => {
+        // Log the discovered endpoint set once per process (the promise is
+        // cached, so this runs once). An IdP may serve userinfo or token from a
+        // different host than the issuer, and a host-specific egress
+        // restriction is otherwise invisible: openid-client races its own timer
+        // against the socket and throws a bare RPError carrying no
+        // code/hostname, so the failure cannot be attributed to a host without
+        // knowing these URLs.
+        const m = issuer.metadata;
+        console.log(
+          'SSO discovery OK:',
+          [
+            `issuer=${m.issuer}`,
+            `authorization_endpoint=${m.authorization_endpoint ?? '(absent)'}`,
+            `token_endpoint=${m.token_endpoint ?? '(absent)'}`,
+            `userinfo_endpoint=${m.userinfo_endpoint ?? '(absent)'}`,
+            `jwks_uri=${m.jwks_uri ?? '(absent)'}`,
+            `end_session_endpoint=${m.end_session_endpoint ?? '(absent)'}`,
+          ].join(' ')
+        );
+
+        // What the IdP says it can release, next to what we currently ask for.
+        // When userinfo is unreachable the only way back to a complete claim set
+        // is to get email/roles into the id_token instead, and these three
+        // fields say whether that is achievable from our side (via the OIDC
+        // `claims` request parameter and/or a wider scope) or needs an IdP-side
+        // config change.
+        const flat = (v: unknown): string =>
+          Array.isArray(v) ? v.join(',') : v === undefined ? '(absent)' : String(v);
+        console.log(
+          'SSO claim capability:',
+          [
+            `configured_scope=${getSsoConfig().scope}`,
+            `claims_parameter_supported=${flat(m.claims_parameter_supported)}`,
+            `scopes_supported=${flat(m.scopes_supported)}`,
+            `claims_supported=${flat(m.claims_supported)}`,
+          ].join(' ')
+        );
+        return issuer;
+      })
+      .catch((err: unknown) => {
+        discovery = null; // allow the next request to retry discovery
+        throw err;
+      });
   }
   return discovery;
 }
@@ -202,6 +246,85 @@ function errorRedirect(): string {
 }
 
 // ---------------------------------------------------------------------------
+// Render an unknown throwable with the fields that actually identify a failed
+// back-channel call to the IdP.
+//
+// Node puts the decisive detail in `code`/`syscall`/`hostname`/`address`, NOT in
+// `message`. Logging the message alone makes these indistinguishable, all of
+// them surfacing as a generic 15s timeout:
+//
+//   EAI_AGAIN / ENOTFOUND  -> DNS: the host cannot resolve the IdP at all
+//   ETIMEDOUT              -> packets leave and nothing returns (blackholed route)
+//   ECONNREFUSED           -> host reachable, nothing listening on that port
+//   UNABLE_TO_VERIFY_LEAF_SIGNATURE / SELF_SIGNED_CERT_IN_CHAIN -> CA trust
+//
+// openid-client wraps transport failures, so walk a bounded `cause` chain —
+// the ErrnoException with the useful code is usually nested one level down.
+// ---------------------------------------------------------------------------
+type ErrnoLike = NodeJS.ErrnoException & {
+  hostname?: string;
+  address?: string;
+  port?: number;
+  cause?: unknown;
+};
+
+// ---------------------------------------------------------------------------
+// Is the signature-verified id_token self-sufficient?
+//
+// Guards the userinfo-outage fallback below. Returns true only when the
+// id_token alone carries BOTH privilege-relevant claims:
+//
+//   - email: the account identity, and the downstream '@' check gates login
+//   - roles: absent/empty would make mapRolesToAppRole() default to 'USER',
+//     silently downgrading an existing admin — the exact privilege-integrity
+//     bug the fail-closed branch exists to prevent
+//
+// `name` is deliberately NOT required: it already falls back to the email and
+// carries no privilege. Claims from an id_token are strictly stronger evidence
+// than userinfo — openid-client verified its signature, issuer, audience,
+// expiry and nonce during client.callback().
+// ---------------------------------------------------------------------------
+function idTokenIsSelfSufficient(
+  claims: Record<string, unknown>,
+  cfg: { emailClaim: string; rolesClaim: string }
+): boolean {
+  const email = claims[cfg.emailClaim];
+  if (typeof email !== 'string' || !email.includes('@')) return false;
+
+  const roles = claims[cfg.rolesClaim];
+  if (Array.isArray(roles)) return roles.length > 0;
+  if (typeof roles === 'string') return roles.trim() !== '';
+  // Object form ({"IH002":"ideahub_admin"}), which is what DIAM sends. Kept in
+  // step with mapRolesToAppRole: if the mapper can read a shape, the fallback
+  // must accept it too, or a userinfo outage would fail closed on a claim set
+  // that is in fact complete.
+  if (roles !== null && typeof roles === 'object') return Object.keys(roles).length > 0;
+  return false;
+}
+
+function describeError(err: unknown): string {
+  const links: string[] = [];
+  let current: unknown = err;
+
+  for (let depth = 0; current instanceof Error && depth < 3; depth++) {
+    const e = current as ErrnoLike;
+    const detail = [
+      depth === 0 ? e.message : `cause: ${e.message}`,
+      e.code ? `code=${e.code}` : '',
+      e.syscall ? `syscall=${e.syscall}` : '',
+      e.hostname ? `hostname=${e.hostname}` : '',
+      e.address ? `address=${e.address}${e.port ? `:${e.port}` : ''}` : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+    links.push(detail);
+    current = e.cause;
+  }
+
+  return links.length > 0 ? links.join(' | ') : String(err);
+}
+
+// ---------------------------------------------------------------------------
 // GET /api/auth/sso/login — start the OIDC authorization-code + PKCE flow.
 // ---------------------------------------------------------------------------
 router.get('/login', async (req: Request, res: Response) => {
@@ -233,7 +356,7 @@ router.get('/login', async (req: Request, res: Response) => {
     return res.redirect(authorizationUrl);
   } catch (err) {
     // Never surface IdP/discovery detail to the browser.
-    console.error('SSO login initiation failed:', (err as Error)?.message ?? err);
+    console.error('SSO login initiation failed:', describeError(err));
     clearTxnCookie(res);
     return res.redirect(errorRedirect());
   }
@@ -280,15 +403,55 @@ router.get('/callback', async (req: Request, res: Response) => {
     // below fails and every login dies. Passing the whole TokenSet makes
     // openid-client enforce that the userinfo `sub` matches the id_token `sub`.
     // id_token claims win: they are signature-verified, so userinfo only
-    // supplements what the id_token omits. A userinfo error is fail-closed — a
-    // partial claim set would re-sync an existing user's role down to USER (a
-    // privilege-integrity bug). No userinfo_endpoint keeps legacy id-token-only.
+    // supplements what the id_token omits. No userinfo_endpoint keeps legacy
+    // id-token-only.
+    //
+    // A userinfo failure is tolerated ONLY when the id_token is self-sufficient
+    // (see idTokenIsSelfSufficient). That keeps the original privilege-integrity
+    // guarantee intact: we proceed on a COMPLETE, signature-verified claim set,
+    // never a partial one that would re-sync an existing user's role down to
+    // USER. When the id_token is minimal, this still fails closed exactly as
+    // before. The condition is evaluated per login, so the flow self-heals the
+    // moment the IdP's userinfo endpoint is reachable again.
     let userinfoClaims: Record<string, unknown> = {};
+    let userinfoDegraded = false;
     if (client.issuer.metadata.userinfo_endpoint && tokenSet.access_token) {
       try {
         userinfoClaims = await client.userinfo(tokenSet);
       } catch (err) {
-        return fail(`userinfo request failed: ${(err as Error)?.message ?? 'unknown error'}`);
+        // Name the endpoint. A timeout here while discovery, JWKS and the token
+        // exchange all succeeded points at a host- or path-specific egress
+        // restriction rather than a broken IdP, and this is the only point in
+        // the flow where the target URL is known.
+        const endpoint = client.issuer.metadata.userinfo_endpoint ?? '(unknown)';
+
+        let idClaims: Record<string, unknown> | null = null;
+        try {
+          idClaims = tokenSet.claims() as Record<string, unknown>;
+        } catch {
+          idClaims = null; // no verifiable id_token to fall back to
+        }
+
+        if (idClaims && idTokenIsSelfSufficient(idClaims, cfg)) {
+          // Degraded but safe. Warn (never silent) so the IdP-side outage stays
+          // visible in the logs while logins keep working.
+          userinfoDegraded = true;
+          console.warn(
+            `SSO userinfo unavailable (endpoint=${endpoint}): ${describeError(err)}` +
+              ' — proceeding on signature-verified id_token claims only;' +
+              ' existing users keep their stored role/department'
+          );
+        } else {
+          // Claim NAMES only — never values, which carry PII.
+          const present = idClaims
+            ? Object.keys(idClaims).sort().join(',') || '(none)'
+            : '(no id_token)';
+          return fail(
+            `userinfo request failed (endpoint=${endpoint}): ${describeError(err)}` +
+              ` | id_token lacks required ${cfg.emailClaim}/${cfg.rolesClaim} claims,` +
+              ` cannot proceed safely | id_token claims present: [${present}]`
+          );
+        }
       }
     }
     const claims = { ...userinfoClaims, ...tokenSet.claims() };
@@ -299,10 +462,59 @@ router.get('/callback', async (req: Request, res: Response) => {
 
     const nameClaim = claims[cfg.nameClaim];
     const name = nameClaim ? String(nameClaim) : email;
-    const role = mapRolesToAppRole(claims[cfg.rolesClaim] as string[] | string | undefined);
+    const role = mapRolesToAppRole(claims[cfg.rolesClaim]);
     const orgClaim = claims[cfg.orgClaim];
     const department =
       typeof orgClaim === 'string' && orgClaim.trim() ? orgClaim.trim() : null;
+
+    // Role-sourcing diagnostic. Three different faults all land every user on
+    // the 'USER' default and are indistinguishable from the outside: the roles
+    // claim was never released, it arrived under a name other than
+    // SSO_ROLES_CLAIM, or its values do not match any SSO_ROLE_MAP key. Printing
+    // the claim names beside the raw roles value and the configured map keys
+    // separates them in one line. Role identifiers are authorisation data, not
+    // personal data, so the value is safe to log; no other claim VALUE is
+    // (notably never the email).
+    console.log(
+      'SSO claims resolved:',
+      [
+        `source=${Object.keys(userinfoClaims).length > 0 ? 'userinfo+id_token' : 'id_token-only'}`,
+        `claim_names=[${Object.keys(claims).sort().join(',')}]`,
+        `roles_claim=${cfg.rolesClaim}`,
+        `roles_value=${JSON.stringify(claims[cfg.rolesClaim] ?? null)}`,
+        `role_map_keys=[${Object.keys(getRoleMap()).join(',')}]`,
+        `resolved_role=${role}`,
+        `org_claim=${cfg.orgClaim}`,
+        // Presence only. The question this answers is "did the org claim arrive
+        // at all" (it does not, on DIAM); the value itself is org data we have
+        // no reason to persist in logs.
+        `department=${department === null ? 'absent' : 'present'}`,
+      ].join(' ')
+    );
+
+    // Guardrail against an unannounced claim-format change (the IAM has already
+    // switched diam:roles from array to object once without notice). A claim in
+    // an unreadable shape, or whose values match no SSO_ROLE_MAP key, is
+    // indistinguishable in the resulting data from a user who genuinely holds no
+    // roles — both produce 'USER'. Say so loudly rather than downgrading in
+    // silence. Deliberately NOT fatal: locking everyone out would be worse than
+    // least-privilege, and break-glass local login stays available.
+    const rawRoles = claims[cfg.rolesClaim];
+    if (rawRoles !== undefined && rawRoles !== null) {
+      const roleMap = getRoleMap();
+      const candidates = extractRoleCandidates(rawRoles);
+      if (!candidates.some((candidate) => isMappedRole(candidate, roleMap))) {
+        console.warn(
+          'SSO roles claim matched NOTHING — this login falls back to USER.' +
+            ` roles_claim=${cfg.rolesClaim}` +
+            ` shape=${Array.isArray(rawRoles) ? 'array' : typeof rawRoles}` +
+            ` roles_value=${JSON.stringify(rawRoles)}` +
+            ` candidates=[${candidates.join(',')}]` +
+            ` role_map_keys=[${Object.keys(roleMap).join(',')}]` +
+            ' — check SSO_ROLE_MAP against the value above, or whether the IdP changed the claim format.'
+        );
+      }
+    }
 
     // (5) Break-glass emails may never authenticate via SSO.
     if (getBreakGlassEmails().includes(email)) {
@@ -311,6 +523,17 @@ router.get('/callback', async (req: Request, res: Response) => {
 
     // (6) Resolve/provision the user (uniqueness enforced here since ssoSub has
     // no DB unique index).
+    //
+    // On the degraded (userinfo-unavailable) path the id_token's roles claim is
+    // non-empty but NOT provably complete — an IdP may release a subset there
+    // and the rest only via userinfo. Writing `role` from a subset would demote
+    // an existing admin, which is precisely what the fallback exists to
+    // prevent; `department` would likewise be nulled when `org` lives only in
+    // userinfo. So for a user who ALREADY EXISTS we leave both fields alone and
+    // let the next healthy login re-sync them. A brand-new user has no prior
+    // value to protect, so JIT provisioning uses whatever the id_token carried
+    // (least privilege when it carried no roles).
+    const idpOwnedFields = userinfoDegraded ? {} : { role, department };
     const sub = claims.sub;
     let resolvedUser = await prisma.user.findFirst({ where: { ssoSub: sub } });
     if (!resolvedUser) {
@@ -324,8 +547,7 @@ router.get('/callback', async (req: Request, res: Response) => {
             authProvider: 'SSO',
             passwordHash: null,
             name,
-            role,
-            department,
+            ...idpOwnedFields,
           },
         });
       } else {
@@ -346,7 +568,7 @@ router.get('/callback', async (req: Request, res: Response) => {
       try {
         resolvedUser = await prisma.user.update({
           where: { id: resolvedUser.id },
-          data: { name, email, role, department },
+          data: { name, email, ...idpOwnedFields },
         });
       } catch {
         // e.g. email now collides with another account's unique index.
@@ -373,7 +595,7 @@ router.get('/callback', async (req: Request, res: Response) => {
       });
     });
   } catch (err) {
-    return fail((err as Error)?.message ?? 'unknown error');
+    return fail(describeError(err));
   }
 });
 

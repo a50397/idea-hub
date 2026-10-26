@@ -92,23 +92,57 @@ export function getRoleMap(): Record<string, AppRole> {
 }
 
 /**
+ * Candidate role identifiers carried by a raw roles claim, before any mapping.
+ *
+ * Shared by mapRolesToAppRole and the caller's "claim matched nothing" warning
+ * so both read the claim identically — a second copy of this shape handling
+ * would be the thing that silently drifts.
+ */
+export function extractRoleCandidates(claimValue: unknown): string[] {
+  if (Array.isArray(claimValue)) {
+    return claimValue.map((v) => String(v));
+  }
+  if (typeof claimValue === 'string') {
+    return claimValue.split(/[,\s]+/);
+  }
+  if (claimValue !== null && typeof claimValue === 'object') {
+    // Role-code -> role-name map. Take keys plus any string values; non-string
+    // values (nested objects/arrays) are skipped rather than stringified, so
+    // nothing like "[object Object]" can ever become a lookup key.
+    const entries = Object.entries(claimValue as Record<string, unknown>);
+    return [
+      ...entries.map(([key]) => key),
+      ...entries.map(([, value]) => value).filter((v): v is string => typeof v === 'string'),
+    ];
+  }
+  return [];
+}
+
+/** True when `candidate` resolves to an app role under the configured map. */
+export function isMappedRole(candidate: string, map: Record<string, AppRole>): boolean {
+  return map[candidate.trim().toLowerCase()] !== undefined;
+}
+
+/**
  * Map IdP role claim values to the single highest-privilege app role.
  *
- * @param claimValue An array of roles, a delimited string (comma/space), or
- *   undefined. Anything with no mapped match resolves to the least-privilege
- *   'USER'.
+ * @param claimValue One of:
+ *   - an array of roles: `["ideahub_admin"]`
+ *   - a delimited string (comma/space): `"ideahub_admin ideahub_user"`
+ *   - an object keyed by role code: `{"IH002":"ideahub_admin"}` — the shape the
+ *     DIAM corporate IAM actually sends for `diam:roles`. BOTH the keys and the
+ *     string values are offered as candidates, so SSO_ROLE_MAP may be keyed on
+ *     either the opaque codes (`IH002`) or the role names (`ideahub_admin`)
+ *     without needing to know which the IdP will use. This cannot over-grant:
+ *     only identifiers explicitly present in SSO_ROLE_MAP map to anything, and
+ *     everything else is ignored.
+ *   - undefined
+ *
+ *   Anything with no mapped match resolves to the least-privilege 'USER'.
  */
-export function mapRolesToAppRole(claimValue: string[] | string | undefined): AppRole {
+export function mapRolesToAppRole(claimValue: unknown): AppRole {
   const map = getRoleMap();
-
-  let incoming: string[];
-  if (Array.isArray(claimValue)) {
-    incoming = claimValue.map((v) => String(v));
-  } else if (typeof claimValue === 'string') {
-    incoming = claimValue.split(/[,\s]+/);
-  } else {
-    incoming = [];
-  }
+  const incoming = extractRoleCandidates(claimValue);
 
   let best: AppRole = 'USER';
   let bestPriority = -1;

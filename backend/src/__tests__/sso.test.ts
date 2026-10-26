@@ -537,6 +537,89 @@ describe('SSO role mapping', () => {
     expect(mapRolesToAppRole(undefined)).toBe('USER');
     expect(mapRolesToAppRole('totally-unknown')).toBe('USER');
   });
+
+  // DIAM sends diam:roles as an OBJECT keyed by opaque role code, not an array.
+  // Before this was handled, every such claim fell through to `incoming = []`
+  // and silently resolved to USER — admins could not manage anything.
+  test('mapRolesToAppRole unit: object claim keyed by role code (DIAM shape)', () => {
+    // Keyed on the CODES, matching role_map_keys=[ih002,ih003,ih001] in prod.
+    process.env.SSO_ROLE_MAP = 'IH002:ADMIN,IH003:POWER_USER,IH001:USER';
+    const real = { IH002: 'ideahub_admin', IH001: 'ideahub_user', IH003: 'ideahub_power' };
+    expect(mapRolesToAppRole(real)).toBe('ADMIN'); // highest privilege wins
+    expect(mapRolesToAppRole({ IH001: 'ideahub_user' })).toBe('USER');
+    expect(mapRolesToAppRole({ IH003: 'ideahub_power' })).toBe('POWER_USER');
+
+    // Keyed on the role NAMES instead: the same claim must still resolve, so a
+    // deployment can configure either side of the object without code changes.
+    process.env.SSO_ROLE_MAP = 'ideahub_admin:ADMIN,ideahub_power:POWER_USER,ideahub_user:USER';
+    expect(mapRolesToAppRole(real)).toBe('ADMIN');
+    expect(mapRolesToAppRole({ IH003: 'ideahub_power' })).toBe('POWER_USER');
+  });
+
+  test('mapRolesToAppRole unit: object claim cannot over-grant or crash', () => {
+    process.env.SSO_ROLE_MAP = 'IH002:ADMIN,IH003:POWER_USER,IH001:USER';
+    // Nothing in the map -> least privilege, never an accidental elevation.
+    expect(mapRolesToAppRole({ IH999: 'some_other_app_admin' })).toBe('USER');
+    expect(mapRolesToAppRole({})).toBe('USER');
+    // Non-string values must be skipped, not stringified into a lookup key.
+    expect(mapRolesToAppRole({ IH999: { nested: true } })).toBe('USER');
+    expect(mapRolesToAppRole({ IH999: ['a'] })).toBe('USER');
+    expect(mapRolesToAppRole(null)).toBe('USER');
+    // A matching key still wins even when a sibling value is unusable.
+    expect(mapRolesToAppRole({ IH002: { nested: true } })).toBe('ADMIN');
+  });
+
+  // The IAM changed diam:roles from array to object without notice, and the old
+  // mapper degraded to USER silently. These pin the warning that makes the next
+  // such change visible — and, just as importantly, that it does NOT cry wolf
+  // for a user who is legitimately a plain USER.
+  describe('unmapped roles claim warning', () => {
+    const warnFor = async (roles: unknown): Promise<string[]> => {
+      injectedClaims = { sub: 'sub-warn', email: 'warn@corp.example', name: 'Warn' };
+      injectedUserinfo = { sub: 'sub-warn', [`${process.env.SSO_ROLES_CLAIM}`]: roles };
+      const created = {
+        id: 'warn-1',
+        name: 'Warn',
+        email: 'warn@corp.example',
+        role: 'USER',
+        authProvider: 'SSO',
+        department: null,
+        createdAt: new Date(),
+      };
+      mockPrisma.user.findFirst.mockResolvedValue(null);
+      mockPrisma.user.findUnique.mockImplementation((args: any) =>
+        args?.where?.email !== undefined ? Promise.resolve(null) : Promise.resolve(created)
+      );
+      mockPrisma.user.create.mockResolvedValue(created);
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const agent = request.agent(app);
+      const { code, state } = await authorize(agent);
+      await agent.get(`/api/auth/sso/callback?code=${code}&state=${state}`);
+
+      const lines = warnSpy.mock.calls.map((c) => String(c[0]));
+      warnSpy.mockRestore();
+      return lines.filter((l) => l.includes('SSO roles claim matched NOTHING'));
+    };
+
+    test('warns when the claim shape changed and nothing maps', async () => {
+      process.env.SSO_ROLE_MAP = 'iam-admins:ADMIN';
+      const warnings = await warnFor({ SOMETHING: 'brand_new_format' });
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain('shape=object');
+      expect(warnings[0]).toContain('brand_new_format');
+    });
+
+    test('does NOT warn for a user who legitimately maps to USER', async () => {
+      process.env.SSO_ROLE_MAP = 'iam-users:USER,iam-admins:ADMIN';
+      expect(await warnFor(['iam-users'])).toHaveLength(0);
+    });
+
+    test('does NOT warn when the roles claim is absent entirely', async () => {
+      process.env.SSO_ROLE_MAP = 'iam-admins:ADMIN';
+      expect(await warnFor(undefined)).toHaveLength(0);
+    });
+  });
 });
 
 // ===========================================================================
@@ -913,9 +996,135 @@ describe('GET /api/auth/sso/callback — userinfo claim sourcing', () => {
     expect(data.role).toBe('ADMIN'); // ...and the roles conflict
   });
 
-  test('userinfo rejecting fails the login closed (no user created/updated)', async () => {
-    injectedClaims = { sub: 'sub-uifail', email: 'uifail@corp.example', name: 'UI Fail', roles: ['iam-admins'] };
+  // A userinfo outage is tolerated ONLY when the signature-verified id_token is
+  // self-sufficient. The three tests below pin both sides of that condition:
+  // the claim set we proceed on must always be COMPLETE, never partial, so a
+  // userinfo failure can never silently downgrade a role to USER.
+  test('userinfo rejecting proceeds on a self-sufficient id_token (email + roles present)', async () => {
+    injectedClaims = {
+      sub: 'sub-uifail',
+      email: 'uifail@corp.example',
+      name: 'UI Fail',
+      roles: ['iam-admins'],
+    };
     failUserinfo = true; // userinfo endpoint returns 500 -> client.userinfo() throws
+    const created = {
+      id: 'uifail-1',
+      name: 'UI Fail',
+      email: 'uifail@corp.example',
+      role: 'ADMIN',
+      authProvider: 'SSO',
+      department: null,
+      createdAt: new Date(),
+    };
+    mockPrisma.user.findFirst.mockResolvedValue(null);
+    mockPrisma.user.findUnique.mockImplementation((args: any) =>
+      args?.where?.email !== undefined ? Promise.resolve(null) : Promise.resolve(created)
+    );
+    mockPrisma.user.create.mockResolvedValue(created);
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const agent = request.agent(app);
+    const { code, state } = await authorize(agent);
+    const cbRes = await agent.get(`/api/auth/sso/callback?code=${code}&state=${state}`);
+
+    expect(cbRes.status).toBe(302);
+    expect(cbRes.headers.location).not.toContain('error=sso_failed');
+    // Role comes from the id_token roles claim — NOT downgraded to USER.
+    expect(mockPrisma.user.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ email: 'uifail@corp.example', role: 'ADMIN' }),
+      })
+    );
+    // The IdP-side outage must stay visible rather than degrading silently.
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('SSO userinfo unavailable'));
+    warnSpy.mockRestore();
+
+    const me = await agent.get('/api/auth/me');
+    expect(me.status).toBe(200);
+  });
+
+  test('userinfo rejecting does NOT overwrite an existing user’s role/department', async () => {
+    // PR #45 review (high): a non-empty id_token roles claim is not provably
+    // COMPLETE — the IdP may release only a subset there. Writing it would
+    // demote a stored ADMIN to USER during an outage, the exact privilege
+    // regression the fallback is supposed to prevent.
+    injectedClaims = {
+      sub: 'sub-existing-admin',
+      email: 'admin@corp.example',
+      name: 'Existing Admin',
+      roles: ['iam-users'], // subset: maps to USER, strictly lower than stored
+    };
+    failUserinfo = true;
+    const storedAdmin = {
+      id: 'admin-1',
+      name: 'Existing Admin',
+      email: 'admin@corp.example',
+      role: 'ADMIN', // already an admin in our DB
+      authProvider: 'SSO',
+      department: 'Engineering',
+      createdAt: new Date(),
+    };
+    mockPrisma.user.findFirst.mockResolvedValue(storedAdmin); // known SSO user
+    mockPrisma.user.update.mockResolvedValue(storedAdmin);
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const agent = request.agent(app);
+    const { code, state } = await authorize(agent);
+    const cbRes = await agent.get(`/api/auth/sso/callback?code=${code}&state=${state}`);
+
+    expect(cbRes.status).toBe(302);
+    expect(cbRes.headers.location).not.toContain('error=sso_failed');
+    // The update must touch name/email but leave the privilege fields alone.
+    const data = mockPrisma.user.update.mock.calls[0][0].data;
+    expect(data).not.toHaveProperty('role');
+    expect(data).not.toHaveProperty('department');
+    expect(data).toMatchObject({ email: 'admin@corp.example' });
+    warnSpy.mockRestore();
+  });
+
+  test('userinfo rejecting still provisions a NEW user from the id_token roles', async () => {
+    // A brand-new user has no stored role to protect, so the degraded path must
+    // still create them rather than refuse the login.
+    injectedClaims = {
+      sub: 'sub-new-power',
+      email: 'new@corp.example',
+      name: 'New Power',
+      roles: ['iam-power'],
+    };
+    failUserinfo = true;
+    const created = {
+      id: 'new-1',
+      name: 'New Power',
+      email: 'new@corp.example',
+      role: 'POWER_USER',
+      authProvider: 'SSO',
+      department: null,
+      createdAt: new Date(),
+    };
+    mockPrisma.user.findFirst.mockResolvedValue(null);
+    mockPrisma.user.findUnique.mockImplementation((args: any) =>
+      args?.where?.email !== undefined ? Promise.resolve(null) : Promise.resolve(created)
+    );
+    mockPrisma.user.create.mockResolvedValue(created);
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const agent = request.agent(app);
+    const { code, state } = await authorize(agent);
+    const cbRes = await agent.get(`/api/auth/sso/callback?code=${code}&state=${state}`);
+
+    expect(cbRes.status).toBe(302);
+    expect(mockPrisma.user.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ email: 'new@corp.example', role: 'POWER_USER' }),
+      })
+    );
+    warnSpy.mockRestore();
+  });
+
+  test('userinfo rejecting fails closed when the id_token carries only sub', async () => {
+    injectedClaims = { sub: 'sub-uimin' }; // minimal id_token: no email, no roles
+    failUserinfo = true;
     mockPrisma.user.findFirst.mockResolvedValue(null);
     mockPrisma.user.findUnique.mockResolvedValue(null);
 
@@ -930,6 +1139,24 @@ describe('GET /api/auth/sso/callback — userinfo claim sourcing', () => {
 
     const me = await agent.get('/api/auth/me');
     expect(me.status).toBe(401);
+  });
+
+  test('userinfo rejecting fails closed when the id_token has email but NO roles claim', async () => {
+    // The privilege-integrity case: proceeding here would hand out USER via
+    // mapRolesToAppRole()'s default and silently demote an existing admin.
+    injectedClaims = { sub: 'sub-uinorole', email: 'norole@corp.example', name: 'No Role' };
+    failUserinfo = true;
+    mockPrisma.user.findFirst.mockResolvedValue(null);
+    mockPrisma.user.findUnique.mockResolvedValue(null);
+
+    const agent = request.agent(app);
+    const { code, state } = await authorize(agent);
+    const cbRes = await agent.get(`/api/auth/sso/callback?code=${code}&state=${state}`);
+
+    expect(cbRes.status).toBe(302);
+    expect(cbRes.headers.location).toContain('error=sso_failed');
+    expect(mockPrisma.user.create).not.toHaveBeenCalled();
+    expect(mockPrisma.user.update).not.toHaveBeenCalled();
   });
 
   test('no userinfo_endpoint keeps legacy id-token-only behaviour (userinfo never called)', async () => {

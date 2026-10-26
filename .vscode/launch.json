@@ -12,7 +12,6 @@
         "NODE_ENV": "development",
         "DATABASE_URL": "mongodb://root:example-dev-password@localhost:27017/ideahub?replicaSet=rs0&authSource=admin&directConnection=true",
         "FRONTEND_URL": "http://localhost:5173",
-        "COOKIE_SECURE": "false"
       },
       "console": "integratedTerminal",
       "skipFiles": ["<node_internals>/**", "**/node_modules/**"],

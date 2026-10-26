@@ -1,3 +1,6 @@
+// MUST stay first: installs the ISO-8601 timestamp prefix on console before any
+// other module is evaluated, so module-scope logging below is stamped too.
+import './lib/log-timestamps';
 import express from 'express';
 import session from 'express-session';
 import MongoStore from 'connect-mongo';
